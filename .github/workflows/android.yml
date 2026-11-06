@@ -109,8 +109,12 @@ jobs:
       - name: Ferramentas do sistema
         shell: bash
         run: |
+          # As ferramentas de host do Qt (qmlimportscanner) vêm compiladas com GCC 13+.
+          # Com o libstdc++ do GCC 12 do Ubuntu 22.04 elas travam (segfault no std::cout).
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test > /dev/null
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ccache ninja-build gettext python3-venv patchelf > /dev/null
+          sudo apt-get install -y -qq libstdc++6 ccache ninja-build gettext python3-venv patchelf > /dev/null
+          strings /lib/x86_64-linux-gnu/libstdc++.so.6 | grep -E '^GLIBCXX_3\.4\.3[0-9]' | tail -1
           cmake --version | head -1; python3 --version; java -version 2>&1 | head -1
 
       - name: Restaurar cache de compilação
@@ -153,6 +157,9 @@ jobs:
           . venv/bin/activate
           unset VIRTUAL_ENV
           export CI_COMMIT_SHORT_SHA="$KRITA_SHA"
+          echo "## teste rápido do qmlimportscanner"
+          /mnt/wd/krita/_install/bin/qmlimportscanner -importPath /mnt/wd/krita/_install/qml < /dev/null | head -c 300 || true
+          echo
           python3 -u build-tools/ci-scripts/build-android-package.py 2>&1 | tee build-apk.log
           ls -la /mnt/wd/krita/_packaging
 
