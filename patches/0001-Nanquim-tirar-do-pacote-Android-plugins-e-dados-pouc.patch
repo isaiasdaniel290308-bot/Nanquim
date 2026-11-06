@@ -1,0 +1,450 @@
+From 5a4e7f54441eaa23d520b8a0077396627ef6de43 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 10:54:08 -0300
+Subject: [PATCH 1/3] Nanquim: tirar do pacote Android plugins e dados pouco
+ usados
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reduz o tamanho do APK e o trabalho na abertura do app (menos plugins
+para carregar, menos painéis criados na janela principal, menos
+recursos para indexar). Só afeta o build Android.
+
+Removidos no Android:
+- Painéis: misturador digital, seletor artístico, conjuntos de tarefas,
+  composições, histograma, máscara de gama, gravador, log, storyboard,
+  canais, snapshots.
+- Extensões: dividir imagem, array de clones, decomposição wavelet,
+  G'MIC, Python, explorador do banco, editor de metadados, separar canais.
+- Filtros raros: exemplo, gotas de chuva, cantos arredondados,
+  pequenos ladrilhos, onda, pintura a óleo, relevo Phong, mapa normal,
+  ASC CDL, escolha aleatória, transferência rápida de cor.
+- Geradores: ruído simplex, padrão multigrade, SeExpr.
+- Formatos: CSV, EXR, PDF, JPEG 2000, RAW, QML, heightmap, Spriter,
+  RGBE, JPEG XL.
+- Motores de pincel: experimento, partículas, grade, hachura, curva,
+  normal tangente.
+- Ferramenta dinâmica; modelos de animação, DSLR e textura;
+  modelos de storyboard; scripts e bundle de exemplos SeExpr.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ krita/data/CMakeLists.txt           |  6 ++--
+ krita/data/bundles/CMakeLists.txt   |  2 +-
+ krita/data/templates/CMakeLists.txt | 12 ++++++--
+ plugins/dockers/CMakeLists.txt      | 44 +++++++++++++++++++++--------
+ plugins/extensions/CMakeLists.txt   | 32 +++++++++++++++------
+ plugins/filters/CMakeLists.txt      | 44 +++++++++++++++++++++--------
+ plugins/generators/CMakeLists.txt   | 12 ++++++--
+ plugins/impex/CMakeLists.txt        | 40 +++++++++++++++++++-------
+ plugins/paintops/CMakeLists.txt     | 24 ++++++++++++----
+ plugins/tools/CMakeLists.txt        |  4 ++-
+ 10 files changed, 164 insertions(+), 56 deletions(-)
+
+diff --git a/krita/data/CMakeLists.txt b/krita/data/CMakeLists.txt
+index 204e249..e04d4ed 100644
+--- a/krita/data/CMakeLists.txt
++++ b/krita/data/CMakeLists.txt
+@@ -5,7 +5,9 @@ add_subdirectory( patterns )
+ add_subdirectory( gradients )
+ add_subdirectory( profiles )
+ add_subdirectory( templates )
+-add_subdirectory( storyboard_templates )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(storyboard_templates)
++endif()
+ add_subdirectory( workspaces )
+ add_subdirectory( themes )
+ add_subdirectory( predefined_image_sizes )
+@@ -17,7 +19,7 @@ add_subdirectory( symbols )
+ add_subdirectory( preset_icons )
+ add_subdirectory( metadata/schemas )
+ add_subdirectory( gamutmasks )
+-if(HAVE_SEEXPR)
++if(HAVE_SEEXPR AND NOT ANDROID) # Nanquim
+ add_subdirectory( seexpr_scripts )
+ endif()
+ 
+diff --git a/krita/data/bundles/CMakeLists.txt b/krita/data/bundles/CMakeLists.txt
+index bcce740..5b83a03 100644
+--- a/krita/data/bundles/CMakeLists.txt
++++ b/krita/data/bundles/CMakeLists.txt
+@@ -1,13 +1,13 @@
+ set (krita_BUNDLE_FILES
+      README
+      Krita_4_Default_Resources.bundle
+-     Krita_Artists_SeExpr_examples.bundle
+      RGBA_brushes.bundle
+ )
+ 
+ if (NOT ANDROID)
+     set (krita_BUNDLE_FILES
+          ${krita_BUNDLE_FILES}
++         Krita_Artists_SeExpr_examples.bundle
+          Krita_3_Default_Resources.bundle
+          )
+ endif()
+diff --git a/krita/data/templates/CMakeLists.txt b/krita/data/templates/CMakeLists.txt
+index 26ed3a8..b25b6d7 100644
+--- a/krita/data/templates/CMakeLists.txt
++++ b/krita/data/templates/CMakeLists.txt
+@@ -1,5 +1,11 @@
+-add_subdirectory( animation )
++if (NOT ANDROID) # Nanquim
++    add_subdirectory( animation )
++endif()
+ add_subdirectory( comics )
+ add_subdirectory( design )
+-add_subdirectory( dslr )
+-add_subdirectory( texture )
++if (NOT ANDROID) # Nanquim
++    add_subdirectory( dslr )
++endif()
++if (NOT ANDROID) # Nanquim
++    add_subdirectory( texture )
++endif()
+diff --git a/plugins/dockers/CMakeLists.txt b/plugins/dockers/CMakeLists.txt
+index f71b5b1..0052549 100644
+--- a/plugins/dockers/CMakeLists.txt
++++ b/plugins/dockers/CMakeLists.txt
+@@ -3,14 +3,24 @@ if(HAVE_OPENEXR AND NOT ANDROID)
+     add_subdirectory(smallcolorselector)
+ endif()
+ add_subdirectory(specificcolorselector)
+-add_subdirectory(digitalmixer)
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(digitalmixer)
++endif()
+ add_subdirectory(advancedcolorselector)
+ add_subdirectory(presetdocker)
+ add_subdirectory(historydocker)
+-add_subdirectory(channeldocker)
+-add_subdirectory(artisticcolorselector)
+-add_subdirectory(tasksetdocker)
+-add_subdirectory(compositiondocker)
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(channeldocker)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(artisticcolorselector)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(tasksetdocker)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(compositiondocker)
++endif()
+ add_subdirectory(patterndocker)
+ add_subdirectory(griddocker)
+ add_subdirectory(arrangedocker)
+@@ -22,13 +32,25 @@ add_subdirectory(palettedocker)
+ add_subdirectory(animation)
+ add_subdirectory(presethistory)
+ add_subdirectory(svgcollectiondocker)
+-add_subdirectory(histogram)
+-add_subdirectory(gamutmask)
+-add_subdirectory(recorder)
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(histogram)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(gamutmask)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(recorder)
++endif()
+ add_subdirectory(touchdocker)
+-add_subdirectory(logdocker)
+-add_subdirectory(snapshotdocker)
+-add_subdirectory(storyboarddocker)
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(logdocker)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(snapshotdocker)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(storyboarddocker)
++endif()
+ add_subdirectory(widegamutcolorselector)
+ add_subdirectory(brushhud)
+ add_subdirectory(textproperties)
+diff --git a/plugins/extensions/CMakeLists.txt b/plugins/extensions/CMakeLists.txt
+index e9ba03f..2222775 100644
+--- a/plugins/extensions/CMakeLists.txt
++++ b/plugins/extensions/CMakeLists.txt
+@@ -1,22 +1,38 @@
+-add_subdirectory( imagesplit )
+-add_subdirectory( clonesarray )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(imagesplit)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(clonesarray)
++endif()
+ add_subdirectory( colorrange )
+ add_subdirectory( colorspaceconversion )
+-add_subdirectory( metadataeditor )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(metadataeditor)
++endif()
+ add_subdirectory( modify_selection )
+ add_subdirectory( offsetimage )
+ add_subdirectory( rotateimage )
+-add_subdirectory( separate_channels )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(separate_channels)
++endif()
+ add_subdirectory( shearimage )
+ add_subdirectory( layergroupswitcher )
+ add_subdirectory( resourcemanager )
+ add_subdirectory( layersplit )
+-add_subdirectory( waveletdecompose )
+-add_subdirectory( pykrita )
+-add_subdirectory( qmic )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(waveletdecompose)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(pykrita)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(qmic)
++endif()
+ add_subdirectory( buginfo )
+ add_subdirectory( samplescreencolor )
+-add_subdirectory( dbexplorer )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(dbexplorer)
++endif()
+ 
+ if (ANDROID)
+     add_subdirectory( spensettings )
+diff --git a/plugins/filters/CMakeLists.txt b/plugins/filters/CMakeLists.txt
+index dbbca61..a606fc1 100644
+--- a/plugins/filters/CMakeLists.txt
++++ b/plugins/filters/CMakeLists.txt
+@@ -5,21 +5,39 @@ add_subdirectory( colorsfilters )
+ add_subdirectory( convolutionfilters )
+ add_subdirectory( gaussianhighpass)
+ add_subdirectory( embossfilter )
+-add_subdirectory( example )
+-add_subdirectory( fastcolortransfer )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(example)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(fastcolortransfer)
++endif()
+ add_subdirectory( imageenhancement )
+ add_subdirectory( noisefilter )
+-add_subdirectory( oilpaintfilter )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(oilpaintfilter)
++endif()
+ add_subdirectory( pixelizefilter )
+-add_subdirectory( raindropsfilter )
+-add_subdirectory( randompickfilter )
+-add_subdirectory( roundcorners )
+-add_subdirectory( smalltilesfilter )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(raindropsfilter)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(randompickfilter)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(roundcorners)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(smalltilesfilter)
++endif()
+ add_subdirectory( unsharp )
+-add_subdirectory( wavefilter )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(wavefilter)
++endif()
+ add_subdirectory( levelfilter )
+ add_subdirectory( dodgeburn )
+-add_subdirectory( phongbumpmap )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(phongbumpmap)
++endif()
+ add_subdirectory( posterize )
+ add_subdirectory( indexcolors )
+ add_subdirectory( normalize )
+@@ -27,8 +45,12 @@ add_subdirectory( gradientmap )
+ add_subdirectory( threshold )
+ add_subdirectory( halftone )
+ add_subdirectory( edgedetection )
+-add_subdirectory( convertheightnormalmap )
+-add_subdirectory( asccdl )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(convertheightnormalmap)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(asccdl)
++endif()
+ add_subdirectory( palettize )
+ add_subdirectory( resettransparent )
+ add_subdirectory( propagatecolors )
+diff --git a/plugins/generators/CMakeLists.txt b/plugins/generators/CMakeLists.txt
+index 1093dfd..77b9321 100644
+--- a/plugins/generators/CMakeLists.txt
++++ b/plugins/generators/CMakeLists.txt
+@@ -1,9 +1,15 @@
+ add_subdirectory(gradient)
+ add_subdirectory(solid)
+ add_subdirectory(pattern)
+-add_subdirectory(simplexnoise)
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(simplexnoise)
++endif()
+ add_subdirectory(screentone)
+-add_subdirectory(multigridpattern)
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(multigridpattern)
++endif()
+ if(KSeExpr_FOUND)
+-  add_subdirectory(seexpr)
++  if (NOT ANDROID) # Nanquim: fora do pacote Android
++      add_subdirectory(seexpr)
++  endif()
+ endif()
+diff --git a/plugins/impex/CMakeLists.txt b/plugins/impex/CMakeLists.txt
+index e2758ac..a4c8cdd 100644
+--- a/plugins/impex/CMakeLists.txt
++++ b/plugins/impex/CMakeLists.txt
+@@ -12,34 +12,50 @@ endif()
+ 
+ if(PNG_FOUND)
+     add_subdirectory(png)
+-    add_subdirectory(csv)
++    if (NOT ANDROID) # Nanquim: fora do pacote Android
++        add_subdirectory(csv)
++    endif()
+ endif()
+ 
+ if(OpenEXR_FOUND)
+-    add_subdirectory(exr)
++    if (NOT ANDROID) # Nanquim: fora do pacote Android
++        add_subdirectory(exr)
++    endif()
+ endif()
+ 
+ if(Poppler_Qt${QT_MAJOR_VERSION}_FOUND)
+-    add_subdirectory(pdf)
++    if (NOT ANDROID) # Nanquim: fora do pacote Android
++        add_subdirectory(pdf)
++    endif()
+ endif()
+ 
+ if(OpenJPEG_FOUND AND NOT ${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
+-    add_subdirectory(jp2)
++    if (NOT ANDROID) # Nanquim: fora do pacote Android
++        add_subdirectory(jp2)
++    endif()
+ endif()
+ 
+ if(KF5KDcraw_FOUND OR KDcrawQt6_FOUND)
+-    add_subdirectory(raw)
++    if (NOT ANDROID) # Nanquim: fora do pacote Android
++        add_subdirectory(raw)
++    endif()
+ endif()
+ 
+ add_subdirectory(svg)
+ add_subdirectory(qimageio)
+ add_subdirectory(ora)
+ add_subdirectory(psd)
+-add_subdirectory(qml)
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(qml)
++endif()
+ add_subdirectory(tga)
+-add_subdirectory(heightmap)
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(heightmap)
++endif()
+ add_subdirectory(brush)
+-add_subdirectory(spriter)
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(spriter)
++endif()
+ add_subdirectory(kra)
+ 
+ if (GIF_FOUND)
+@@ -57,7 +73,11 @@ if (WebP_FOUND)
+ endif()
+ 
+ if (JPEGXL_FOUND)
+-    add_subdirectory(jxl)
++    if (NOT ANDROID) # Nanquim: fora do pacote Android
++        add_subdirectory(jxl)
++    endif()
+ endif()
+ 
+-add_subdirectory(rgbe)
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(rgbe)
++endif()
+diff --git a/plugins/paintops/CMakeLists.txt b/plugins/paintops/CMakeLists.txt
+index ae0b64d..d07a14f 100644
+--- a/plugins/paintops/CMakeLists.txt
++++ b/plugins/paintops/CMakeLists.txt
+@@ -4,17 +4,29 @@ add_subdirectory( libpaintop )
+ add_subdirectory( defaultpaintops )
+ add_subdirectory( hairy )
+ add_subdirectory( deform )
+-add_subdirectory( curvebrush )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(curvebrush)
++endif()
+ add_subdirectory( spray )
+ add_subdirectory( filterop )
+-add_subdirectory( experiment )
+-add_subdirectory( particle )
+-add_subdirectory( gridbrush )
+-add_subdirectory( hatching)
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(experiment)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(particle)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(gridbrush)
++endif()
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(hatching)
++endif()
+ add_subdirectory( sketch )
+ add_subdirectory( colorsmudge )
+ add_subdirectory( roundmarker )
+-add_subdirectory( tangentnormal )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(tangentnormal)
++endif()
+ 
+ if(LibMyPaint_FOUND)
+     add_subdirectory( mypaint )
+diff --git a/plugins/tools/CMakeLists.txt b/plugins/tools/CMakeLists.txt
+index abf3ba2..999e3a0 100644
+--- a/plugins/tools/CMakeLists.txt
++++ b/plugins/tools/CMakeLists.txt
+@@ -5,7 +5,9 @@ add_subdirectory( tool_crop )
+ add_subdirectory( tool_polygon )
+ add_subdirectory( tool_polyline )
+ add_subdirectory( tool_transform2 )
+-add_subdirectory( tool_dyna )
++if (NOT ANDROID) # Nanquim: fora do pacote Android
++    add_subdirectory(tool_dyna)
++endif()
+ add_subdirectory( karbonplugins )
+ add_subdirectory( tool_lazybrush )
+ add_subdirectory( tool_smart_patch )
+-- 
+2.43.0
+

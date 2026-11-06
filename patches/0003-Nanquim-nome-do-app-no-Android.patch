@@ -1,0 +1,27 @@
+From dfc08833f0c2785d8e2b96744ef016c0ec9307dc Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 10:54:20 -0300
+Subject: [PATCH 3/3] Nanquim: nome do app no Android
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ packaging/android/apk/flavors/next/AndroidManifest.xml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packaging/android/apk/flavors/next/AndroidManifest.xml b/packaging/android/apk/flavors/next/AndroidManifest.xml
+index 3e6087e..a8d1243 100644
+--- a/packaging/android/apk/flavors/next/AndroidManifest.xml
++++ b/packaging/android/apk/flavors/next/AndroidManifest.xml
+@@ -7,7 +7,7 @@
+         <activity
+             android:name="org.krita.android.MainActivity"
+             tools:replace="android:label"
+-            android:label="Krita Next" />
++            android:label="Nanquim" />
+ 
+     </application>
+ </manifest>
+-- 
+2.43.0
+

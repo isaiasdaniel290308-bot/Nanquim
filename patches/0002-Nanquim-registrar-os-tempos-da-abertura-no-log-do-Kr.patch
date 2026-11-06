@@ -1,0 +1,70 @@
+From 3df38325d7f23288788256251fb9c91ef4a76898 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 10:54:20 -0300
+Subject: [PATCH 2/3] Nanquim: registrar os tempos da abertura no log do Krita
+ (Android)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+O Krita já mede cada etapa da abertura (plugins, recursos, janela
+principal, cada painel), mas só mostra isso com depuração ligada.
+No Android, os tempos agora vão sempre para o log de uso, que dá
+para ver no próprio app em Ajuda > Mostrar log do Krita.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/global/KisScopedPerformanceLogger.h | 19 +++++++++++++++----
+ 1 file changed, 15 insertions(+), 4 deletions(-)
+
+diff --git a/libs/global/KisScopedPerformanceLogger.h b/libs/global/KisScopedPerformanceLogger.h
+index 39ad19a..4b77fa0 100644
+--- a/libs/global/KisScopedPerformanceLogger.h
++++ b/libs/global/KisScopedPerformanceLogger.h
+@@ -9,6 +9,7 @@
+ 
+ #include "kis_debug.h"
+ #include "kritaglobal_export.h"
++#include "KisUsageLogger.h"
+ 
+ class KRITAGLOBAL_EXPORT KisScopedPerformanceLogger
+ {
+@@ -17,9 +18,15 @@ public:
+     explicit KisScopedPerformanceLogger(const QString &title)
+         : m_title(title)
+     {
++#ifdef Q_OS_ANDROID
++        // Nanquim: no Android os tempos sempre vão para o log do Krita
++        // (Ajuda > Mostrar log do Krita), para medir a abertura do app.
++        m_timer.start();
++#else
+         if (dbgPerformanceIsEnabled()) {
+             m_timer.start();
+         }
++#endif
+     }
+ 
+     ~KisScopedPerformanceLogger()
+@@ -29,10 +36,14 @@ public:
+             // and long durations are reasonably comprehensible without having
+             // to decipher excessively long numbers.
+             qint64 nsecs = m_timer.nsecsElapsed();
+-            dbgPerformance.noquote() << QStringLiteral("%1: %2.%3 ms")
+-                                            .arg(m_title)
+-                                            .arg(nsecs / 1000000LL)
+-                                            .arg(nsecs % 1000000LL, 6, 10, QChar('0'));
++            const QString message = QStringLiteral("%1: %2.%3 ms")
++                                        .arg(m_title)
++                                        .arg(nsecs / 1000000LL)
++                                        .arg(nsecs % 1000000LL, 6, 10, QChar('0'));
++            dbgPerformance.noquote() << message;
++#ifdef Q_OS_ANDROID
++            KisUsageLogger::log(QStringLiteral("[Nanquim tempo] ") + message);
++#endif
+         }
+     }
+ 
+-- 
+2.43.0
+

@@ -34,7 +34,7 @@ jobs:
       KDECI_WORKDIR_PATH: /mnt/wd
       KDECI_CACHE_PATH: /mnt/cache/artifacts/
       KDECI_CC_CACHE: /mnt/cache/ccache/
-      KRITACI_ANDROID_PACKAGE_TYPE: debug
+      KRITACI_ANDROID_PACKAGE_TYPE: nightly
       KRITACI_SKIP_UPLOAD_NIGHTLY_PACKAGE: "True"
       KRITACI_ARCHIVE_ARTIFACTS: "False"
       KRITACI_SKIP_COMMON_ARTIFACTS: "False"
@@ -150,6 +150,44 @@ jobs:
             --platform "Android/${KDECI_ANDROID_ABI}/Qt5/Shared" \
             --only-build --skip-publishing 2>&1 | tee build-krita.log
 
+      - name: Restaurar chave de assinatura do Nanquim
+        id: keycache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/nanquim-key
+          key: nanquim-signing-key-v1
+
+      - name: Preparar chave de assinatura
+        shell: bash
+        env:
+          KS_B64: ${{ secrets.NANQUIM_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.NANQUIM_KEYSTORE_PASS }}
+        run: |
+          mkdir -p ~/nanquim-key
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ]; then
+            echo "## Usando a chave permanente dos segredos do repositório"
+            echo "$KS_B64" | base64 -d > ~/nanquim-key/nanquim.jks
+            printf '%s' "$KS_PASS" > ~/nanquim-key/pass
+          elif [ ! -f ~/nanquim-key/nanquim.jks ]; then
+            echo "## Criando uma chave nova (fica no cache privado do repositório)"
+            python3 -c "import secrets;print(secrets.token_urlsafe(24), end='')" > ~/nanquim-key/pass
+            keytool -genkeypair -keystore ~/nanquim-key/nanquim.jks -alias nanquim \
+              -keyalg RSA -keysize 4096 -validity 11000 \
+              -storepass "$(cat ~/nanquim-key/pass)" -keypass "$(cat ~/nanquim-key/pass)" \
+              -dname "CN=Nanquim, O=Nanquim, C=BR" > /dev/null 2>&1
+            echo "NEW_KEY=1" >> "$GITHUB_ENV"
+          else
+            echo "## Usando a chave do cache"
+          fi
+          keytool -list -keystore ~/nanquim-key/nanquim.jks -storepass "$(cat ~/nanquim-key/pass)" | grep -i "SHA-256\|SHA256" || true
+
+      - name: Guardar chave nova no cache
+        if: env.NEW_KEY == '1'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/nanquim-key
+          key: nanquim-signing-key-v1
+
       - name: Gerar o APK
         shell: bash
         working-directory: krita
@@ -162,6 +200,14 @@ jobs:
           echo
           python3 -u build-tools/ci-scripts/build-android-package.py 2>&1 | tee build-apk.log
           ls -la /mnt/wd/krita/_packaging
+          UNSIGNED=$(ls /mnt/wd/krita/_packaging/*.apk | head -1)
+          OUT="/mnt/wd/krita/_packaging/Nanquim-arm64-${KRITA_SHA}-build${{ github.run_number }}.apk"
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" sign \
+            --ks ~/nanquim-key/nanquim.jks --ks-key-alias nanquim \
+            --ks-pass file:$HOME/nanquim-key/pass --key-pass file:$HOME/nanquim-key/pass \
+            --out "$OUT" "$UNSIGNED"
+          rm -f "$UNSIGNED"
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" verify "$OUT" && ls -la /mnt/wd/krita/_packaging
 
       - name: Diagnóstico do qmlimportscanner
         if: failure()
@@ -238,6 +284,7 @@ jobs:
           name: Nanquim build ${{ github.run_number }} (Krita ${{ env.KRITA_SHA }})
           prerelease: true
           body: |
-            APK de teste para Android arm64 (Galaxy Tab S10 Lite).
-            Baseado no Krita ${{ env.KRITA_SHA }} + patches do Nanquim.
+            APK otimizado para Android arm64 (Galaxy Tab S10 Lite), assinado com a chave do Nanquim.
+            Baseado no Krita ${{ env.KRITA_SHA }} + patches do Nanquim (pasta patches/).
+            Instala lado a lado com o Krita oficial (pacote org.krita.next).
           files: /mnt/wd/krita/_packaging/*.apk
