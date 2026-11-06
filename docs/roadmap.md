@@ -13,6 +13,8 @@
 | Interface nova (galeria, barra híbrida, painéis sob demanda) | Projetada | — |
 | Importador `.sut` (Clip Studio) | Planejado | — |
 | Liquidificar mais rápido (prévia leve + aplicação em resolução total) | Planejado | — |
+| Modo de interface "Clássico" (desktop), alternável nas configurações | Projetado | — |
+| Versão para Windows (usa o modo Clássico por padrão) | Ideia | — |
 
 ## Importador `.sut`
 
@@ -24,3 +26,14 @@ A ferramenta já existe no Krita (Transformar → Liquidificar). Plano:
 1. Enquanto o dedo ou a caneta arrasta, deformar uma versão reduzida da camada (nível de detalhe), só na área do pincel.
 2. Ao soltar, aplicar a deformação em resolução total, em várias threads.
 3. Interface própria: barra inferior com Empurrar, Girar, Inflar, Encolher e Restaurar.
+
+## Modos de interface: Tablet e Clássico
+
+Duas interfaces sobre o mesmo motor, trocadas em Configurações → Interface (e por um botão no topo):
+
+- **Tablet** (padrão no Android): barra fina, ferramentas recolhíveis, painéis que abrem só quando tocados.
+- **Clássico** (padrão no Windows): menus no topo, barra de opções da ferramenta, caixa de ferramentas à esquerda, abas de documentos, coluna de pincéis rápidos ao lado da tela e painéis fixos à direita (cor, histórico, camadas).
+
+Como fazer no código: o Krita já salva e troca arranjos de janela ("workspaces", arquivos `.kws`). O modo Clássico pode começar como um workspace do Nanquim mais um tema escuro com o azul-ciano. O modo Tablet é a interface nova. A troca salva a escolha e reabre a janela no modo escolhido.
+
+Para Windows, o mesmo repositório pode ganhar um segundo workflow que compila o instalador `.exe`, com os mesmos patches.
