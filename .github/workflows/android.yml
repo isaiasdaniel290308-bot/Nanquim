@@ -114,7 +114,7 @@ jobs:
           cmake --version | head -1; python3 --version; java -version 2>&1 | head -1
 
       - name: Restaurar cache de compilação
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: /mnt/cache/ccache
           key: ccache-android-arm64-${{ github.run_id }}
@@ -156,10 +156,58 @@ jobs:
           python3 -u build-tools/ci-scripts/build-android-package.py 2>&1 | tee build-apk.log
           ls -la /mnt/wd/krita/_packaging
 
+      - name: Diagnóstico do qmlimportscanner
+        if: failure()
+        shell: bash
+        working-directory: krita
+        run: |
+          set +e
+          B=/mnt/wd/krita/_build
+          S=/mnt/wd/krita/_install/bin/qmlimportscanner
+          J=$(ls "$B"/*deployment*.json 2>/dev/null | head -1)
+          echo "## json: $J"
+          python3 - "$J" <<'PYEOF'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          print("## chaves:", sorted(d.keys()))
+          for k, v in d.items():
+              if "qml" in k or k in ("qt", "sdk", "ndk", "stdcpp-path", "extraPrefixDirs"):
+                  print("##", k, "=", v)
+          PYEOF
+          echo "## binário"; file "$S"; ldd "$S" | head -40
+          ARGS=$(python3 - "$J" <<'PYEOF'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          roots = d.get("qml-root-path", [])
+          roots = [roots] if isinstance(roots, str) else roots
+          imps = d.get("qml-import-paths", "")
+          imps = imps.split(",") if isinstance(imps, str) else imps
+          a = []
+          for r in roots:
+              a += ["-rootPath", r]
+          for i in imps + ["/mnt/wd/krita/_install/qml"]:
+              if i:
+                  a += ["-importPath", i]
+          print(" ".join(a))
+          PYEOF
+          )
+          echo "## args: $ARGS"
+          timeout 600 "$S" $ARGS > /tmp/scan.json 2> /tmp/scan.err; echo "## exit=$?"
+          head -c 1500 /tmp/scan.json; echo; tail -40 /tmp/scan.err
+          sudo apt-get install -y -qq gdb > /dev/null 2>&1
+          timeout 900 gdb -batch -ex run -ex bt -ex "info sharedlibrary" --args "$S" $ARGS 2>&1 | tail -90
+
+      - name: Salvar cache de compilação (mesmo se falhar)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: /mnt/cache/ccache
+          key: ccache-android-arm64-${{ github.run_id }}
+
       - name: Espaço usado
         if: always()
         shell: bash
-        run: df -h / /mnt; ccache -s 2>/dev/null | head -20 || true
+        run: df -h / ; CCACHE_DIR=/mnt/cache/ccache ccache -s 2>/dev/null | head -20 || true; du -sh /mnt/cache/ccache || true
 
       - name: Guardar logs
         if: always()
