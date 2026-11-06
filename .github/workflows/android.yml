@@ -1,0 +1,188 @@
+# Compila o Nanquim (Krita + nossos patches) para Android arm64 e publica o APK.
+# Baseado no script oficial do Krita: krita/build-tools/ci-scripts/android.yml
+name: Android arm64
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "patches/**"
+      - "KRITA_REF"
+      - ".github/workflows/android.yml"
+
+concurrency:
+  group: android-build
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 355
+    env:
+      NDK_VERSION: "27.3.13750724"
+      KDECI_ANDROID_ABI: arm64-v8a
+      KDECI_BUILD_TYPE: Release
+      KDECI_GITLAB_SERVER: https://invent.kde.org/
+      KDECI_COMPRESS_PACKAGES_ON_DOWNLOAD: "False"
+      KDECI_SKIP_ECM_ANDROID_TOOLCHAIN: "True"
+      KDECI_EXTRA_CMAKE_ARGS: "-DHIDE_SAFE_ASSERTS=ON -DBUILD_TESTING=OFF"
+      KDECI_PACKAGE_PROJECT: teams/ci-artifacts/krita-android-arm64-v8a
+      KDECI_WORKDIR_PATH: /mnt/wd
+      KDECI_CACHE_PATH: /mnt/cache/artifacts/
+      KDECI_CC_CACHE: /mnt/cache/ccache/
+      KRITACI_ANDROID_PACKAGE_TYPE: debug
+      KRITACI_SKIP_UPLOAD_NIGHTLY_PACKAGE: "True"
+      KRITACI_ARCHIVE_ARTIFACTS: "False"
+      KRITACI_SKIP_COMMON_ARTIFACTS: "False"
+      CI_PROJECT_NAME: krita
+      CI_COMMIT_REF_NAME: master
+      CI_PROJECT_DIR: ${{ github.workspace }}/krita
+
+    steps:
+      - name: Liberar espaço em disco (mantém o Android SDK)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          android: false
+          tool-cache: false
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - name: Preparar pastas de trabalho em /mnt
+        shell: bash
+        run: |
+          sudo mkdir -p /mnt/wd /mnt/cache/artifacts /mnt/cache/ccache
+          sudo chown -R "$USER" /mnt/wd /mnt/cache
+          df -h / /mnt
+
+      - name: Baixar o repositório Nanquim
+        uses: actions/checkout@v4
+        with:
+          path: nanquim
+
+      - name: Baixar o Krita e aplicar os patches do Nanquim
+        shell: bash
+        run: |
+          REF=$(tr -d '[:space:]' < nanquim/KRITA_REF 2>/dev/null || true)
+          REF=${REF:-master}
+          git clone --filter=blob:none https://github.com/KDE/krita.git krita
+          cd krita
+          git checkout "$REF"
+          git config user.name "Nanquim CI"
+          git config user.email "ci@nanquim.invalid"
+          shopt -s nullglob
+          for p in ../nanquim/patches/*.patch; do
+            echo "## Aplicando $p"
+            git am --3way "$p"
+          done
+          echo "KRITA_SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          git log -1 --oneline
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK, build-tools e NDK
+        shell: bash
+        run: |
+          SDKM="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-36" "build-tools;36.0.0" "platform-tools" "ndk;${NDK_VERSION}" > /dev/null
+          {
+            echo "ANDROID_HOME=$ANDROID_SDK_ROOT"
+            echo "ANDROID_ROOT=$ANDROID_SDK_ROOT"
+            echo "KDECI_ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+            echo "KDECI_ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}"
+            echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}"
+            echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}"
+          } >> "$GITHUB_ENV"
+          ls "$ANDROID_SDK_ROOT/ndk"
+
+      - name: Ferramentas do sistema
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ccache ninja-build gettext python3-venv patchelf > /dev/null
+          cmake --version | head -1; python3 --version; java -version 2>&1 | head -1
+
+      - name: Restaurar cache de compilação
+        uses: actions/cache@v4
+        with:
+          path: /mnt/cache/ccache
+          key: ccache-android-arm64-${{ github.run_id }}
+          restore-keys: ccache-android-arm64-
+
+      - name: Compilar o Krita (pode levar algumas horas na primeira vez)
+        shell: bash
+        working-directory: krita
+        run: |
+          git clone https://invent.kde.org/packaging/krita-deps-management.git -b master --depth=1
+          git clone https://invent.kde.org/packaging/krita-ci-utilities.git krita-deps-management/ci-utilities --depth=1
+
+          python3 -m venv venv --upgrade-deps
+          . venv/bin/activate
+          pip install -q -r krita-deps-management/requirements.txt
+          . venv/bin/activate
+          unset VIRTUAL_ENV
+
+          export KDECI_REPO_METADATA_PATH="$PWD/krita-deps-management/repo-metadata"
+          export CMAKE_TOOLCHAIN_FILE="$PWD/krita-deps-management/tools/android-toolchain-krita.cmake"
+          git config --global --add safe.directory "$PWD"
+
+          python3 -u krita-deps-management/tools/replace-branch-in-seed-file.py \
+            krita-deps-management/latest/krita-deps.yml -p -o branch-corrected-deps.yml -d master
+          python3 -u krita-deps-management/tools/generate-deps-file.py \
+            -s branch-corrected-deps.yml -o .kde-ci.yml
+          python3 -u krita-deps-management/ci-utilities/run-ci-build.py \
+            --project krita --branch master \
+            --platform "Android/${KDECI_ANDROID_ABI}/Qt5/Shared" \
+            --only-build --skip-publishing 2>&1 | tee build-krita.log
+
+      - name: Gerar o APK
+        shell: bash
+        working-directory: krita
+        run: |
+          . venv/bin/activate
+          unset VIRTUAL_ENV
+          export CI_COMMIT_SHORT_SHA="$KRITA_SHA"
+          python3 -u build-tools/ci-scripts/build-android-package.py 2>&1 | tee build-apk.log
+          ls -la /mnt/wd/krita/_packaging
+
+      - name: Espaço usado
+        if: always()
+        shell: bash
+        run: df -h / /mnt; ccache -s 2>/dev/null | head -20 || true
+
+      - name: Guardar logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: |
+            krita/*.log
+          if-no-files-found: ignore
+
+      - name: Guardar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanquim-arm64-v8a
+          path: /mnt/wd/krita/_packaging/*.apk
+
+      - name: Publicar APK numa Release (link direto para baixar no tablet)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Nanquim build ${{ github.run_number }} (Krita ${{ env.KRITA_SHA }})
+          prerelease: true
+          body: |
+            APK de teste para Android arm64 (Galaxy Tab S10 Lite).
+            Baseado no Krita ${{ env.KRITA_SHA }} + patches do Nanquim.
+          files: /mnt/wd/krita/_packaging/*.apk
