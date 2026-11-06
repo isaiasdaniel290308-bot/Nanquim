@@ -204,7 +204,7 @@ jobs:
           OUT="/mnt/wd/krita/_packaging/Nanquim-arm64-${KRITA_SHA}-build${{ github.run_number }}.apk"
           "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" sign \
             --ks ~/nanquim-key/nanquim.jks --ks-key-alias nanquim \
-            --ks-pass file:$HOME/nanquim-key/pass --key-pass file:$HOME/nanquim-key/pass \
+            --ks-pass "pass:$(cat ~/nanquim-key/pass)" \
             --out "$OUT" "$UNSIGNED"
           rm -f "$UNSIGNED"
           "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" verify "$OUT" && ls -la /mnt/wd/krita/_packaging
