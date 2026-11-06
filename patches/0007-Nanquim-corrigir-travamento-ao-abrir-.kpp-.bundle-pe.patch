@@ -1,0 +1,330 @@
+From 8b2ad3c6a3b07ba8b823a1821fb6e315bab1f391 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 17:12:47 -0300
+Subject: [PATCH] Nanquim: corrigir travamento ao abrir .kpp/.bundle pelo
+ "Abrir com"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+No Galaxy Tab S10 Lite, abrir um .kpp pelo "Abrir com" criava uma
+segunda janela do app que ficava presa na tela de abertura. Duas causas:
+
+- A MainActivity (Qt) recebia o arquivo direto do gerenciador de
+  arquivos. Agora uma atividade leve, NanquimImportActivity, recebe o
+  arquivo, copia para o cache e entrega só o caminho para a MainActivity
+  (singleTask), sem abrir outra janela.
+- A importação abria diálogos durante a inicialização. Agora ela
+  acontece 1,5 s depois, com a janela principal já na tela.
+
+O código de cópia foi para NanquimImport.java, usado pelos dois lados.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/KisApplication.cpp                    | 14 +++-
+ packaging/android/apk/AndroidManifest.xml     | 26 ++++++--
+ .../src/org/krita/android/MainActivity.java   | 59 ++---------------
+ .../src/org/krita/android/NanquimImport.java  | 66 +++++++++++++++++++
+ .../krita/android/NanquimImportActivity.java  | 33 ++++++++++
+ 5 files changed, 138 insertions(+), 60 deletions(-)
+ create mode 100644 packaging/android/apk/src/org/krita/android/NanquimImport.java
+ create mode 100644 packaging/android/apk/src/org/krita/android/NanquimImportActivity.java
+
+diff --git a/libs/ui/KisApplication.cpp b/libs/ui/KisApplication.cpp
+index ca98ad6..2e4e10b 100644
+--- a/libs/ui/KisApplication.cpp
++++ b/libs/ui/KisApplication.cpp
+@@ -30,6 +30,8 @@
+ #include <QLocale>
+ #include <QMessageBox>
+ #include <QUrl>
++#include <QPointer>
++#include <QTimer>
+ #include <KoResource.h>
+ 
+ namespace {
+@@ -1155,6 +1157,15 @@ bool nanquimImportResourceFile(QWidget *parent, const QString &url)
+         return false;
+     }
+ 
++    // Nunca abrir diálogos durante a inicialização: no Android isso trava o
++    // app na tela de abertura. Importamos depois que a janela aparece.
++    QPointer<QWidget> parentPtr(parent);
++    QTimer::singleShot(1500, qApp, [parentPtr, path, suffix, info]() {
++        QWidget *parent = parentPtr.data();
++        if (KisApplication *app = qobject_cast<KisApplication*>(qApp)) {
++            app->hideSplashScreen();
++        }
++
+     if (suffix == QStringLiteral("kpp")) {
+         KoResourceSP resource = KisResourceUserOperations::importResourceFileWithUserInput(
+             parent, QString(), ResourceType::PaintOpPresets, path);
+@@ -1163,7 +1174,7 @@ bool nanquimImportResourceFile(QWidget *parent, const QString &url)
+                                      QStringLiteral("Pincel importado: %1").arg(resource->name()));
+         }
+         KisUsageLogger::log(QStringLiteral("[Nanquim] Import .kpp %1: %2").arg(info.fileName()).arg(resource ? "ok" : "falhou"));
+-        return true;
++        return;
+     }
+ 
+     const bool ok = KisStorageModel::instance()->importStorage(path, KisStorageModel::None);
+@@ -1171,6 +1182,7 @@ bool nanquimImportResourceFile(QWidget *parent, const QString &url)
+                              ok ? QStringLiteral("Pacote importado: %1\nOs pincéis já estão na biblioteca.").arg(info.fileName())
+                                 : QStringLiteral("Não foi possível importar %1.\nTalvez ele já esteja instalado, ou o arquivo não é um pacote do Krita válido.").arg(info.fileName()));
+     KisUsageLogger::log(QStringLiteral("[Nanquim] Import .bundle %1: %2").arg(info.fileName()).arg(ok ? "ok" : "falhou"));
++    });
+     return true;
+ }
+ }
+diff --git a/packaging/android/apk/AndroidManifest.xml b/packaging/android/apk/AndroidManifest.xml
+index 37cfe6a..1483875 100644
+--- a/packaging/android/apk/AndroidManifest.xml
++++ b/packaging/android/apk/AndroidManifest.xml
+@@ -10,6 +10,27 @@
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:hasFragileUserData="true" >
+ 
++        <!-- Nanquim: "Abrir com" para pincéis (.kpp) e pacotes (.bundle) -->
++        <activity android:name="org.krita.android.NanquimImportActivity"
++                  android:exported="true"
++                  android:excludeFromRecents="true"
++                  android:noHistory="true"
++                  android:taskAffinity=""
++                  android:label="Importar no Nanquim"
++                  android:theme="@android:style/Theme.Translucent.NoTitleBar">
++            <intent-filter>
++                <action android:name="android.intent.action.VIEW" />
++                <category android:name="android.intent.category.DEFAULT" />
++                <category android:name="android.intent.category.BROWSABLE" />
++                <data android:scheme="content" />
++                <data android:scheme="file" />
++                <data android:mimeType="application/x-krita-paintoppreset" />
++                <data android:mimeType="application/x-krita-resourcebundle" />
++                <data android:mimeType="application/octet-stream" />
++                <data android:mimeType="application/zip" />
++            </intent-filter>
++        </activity>
++
+         <activity android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|mcc|mnc|density"
+                   android:name="org.krita.android.MainActivity"
+                   android:label="Krita"
+@@ -67,11 +88,6 @@
+                 <data android:mimeType="application/x-krita" />
+                 <data android:mimeType="application/x-krita-archive" />
+                 <data android:mimeType="application/x-extension-exr" />
+-                <data android:mimeType="application/x-krita-paintoppreset" />
+-                <!-- Nanquim: pincéis .kpp e pacotes .bundle chegam assim pelo "Abrir com" -->
+-                <data android:mimeType="application/x-krita-resourcebundle" />
+-                <data android:mimeType="application/octet-stream" />
+-                <data android:mimeType="application/zip" />
+                 <data android:mimeType="application/pdf" />
+ 
+                 <data android:mimeType="image/jxl" />
+diff --git a/packaging/android/apk/src/org/krita/android/MainActivity.java b/packaging/android/apk/src/org/krita/android/MainActivity.java
+index 3b794e7..e6b76ff 100644
+--- a/packaging/android/apk/src/org/krita/android/MainActivity.java
++++ b/packaging/android/apk/src/org/krita/android/MainActivity.java
+@@ -15,8 +15,6 @@ import android.app.ApplicationExitInfo;
+ import android.app.ForegroundServiceStartNotAllowedException;
+ import android.app.ServiceStartNotAllowedException;
+ import android.content.Intent;
+-import android.database.Cursor;
+-import android.provider.OpenableColumns;
+ import android.graphics.Bitmap;
+ import android.graphics.BitmapFactory;
+ import android.net.Uri;
+@@ -32,10 +30,6 @@ import android.widget.Toast;
+ import androidx.annotation.RequiresApi;
+ 
+ import java.util.List;
+-import java.io.File;
+-import java.io.FileOutputStream;
+-import java.io.InputStream;
+-import java.io.OutputStream;
+ 
+ import org.krita.R;
+ import org.libsdl.app.SDLAudioManager;
+@@ -111,9 +105,13 @@ public class MainActivity extends QtActivity {
+ 
+     private String getUri(Intent intent) {
+         if (intent != null) {
++            String imported = intent.getStringExtra(NanquimImport.EXTRA_PATH);
++            if (imported != null) {
++                return imported;
++            }
+             Uri fileUri = intent.getData();
+             if (fileUri != null) {
+-                String localResource = copyResourceFileIfNeeded(fileUri);
++                String localResource = NanquimImport.copyResourceFileIfNeeded(this, fileUri);
+                 if (localResource != null) {
+                     return localResource;
+                 }
+@@ -123,53 +121,6 @@ public class MainActivity extends QtActivity {
+         return null;
+     }
+ 
+-    /**
+-     * Nanquim: pincéis (.kpp) e pacotes (.bundle) chegam do "Abrir com" como
+-     * content:// sem extensão. Copiamos para uma pasta do app com o nome
+-     * original, para o lado C++ reconhecer a extensão e importar o recurso.
+-     */
+-    private String copyResourceFileIfNeeded(Uri uri) {
+-        String name = null;
+-        try (Cursor c = getContentResolver().query(uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+-            if (c != null && c.moveToFirst()) {
+-                name = c.getString(0);
+-            }
+-        } catch (Exception e) {
+-            Log.w(TAG, "Nanquim: não consegui ler o nome do arquivo", e);
+-        }
+-        if (name == null) {
+-            name = uri.getLastPathSegment();
+-        }
+-        if (name == null) {
+-            return null;
+-        }
+-        String lower = name.toLowerCase();
+-        if (!lower.endsWith(".kpp") && !lower.endsWith(".bundle")) {
+-            return null;
+-        }
+-        name = new File(name).getName();
+-        File dir = new File(getCacheDir(), "nanquim-import");
+-        if (!dir.exists() && !dir.mkdirs()) {
+-            return null;
+-        }
+-        File out = new File(dir, name);
+-        try (InputStream in = getContentResolver().openInputStream(uri);
+-             OutputStream os = new FileOutputStream(out)) {
+-            if (in == null) {
+-                return null;
+-            }
+-            byte[] buf = new byte[1 << 16];
+-            int n;
+-            while ((n = in.read(buf)) > 0) {
+-                os.write(buf, 0, n);
+-            }
+-        } catch (Exception e) {
+-            Log.w(TAG, "Nanquim: falha ao copiar " + name, e);
+-            return null;
+-        }
+-        return out.getAbsolutePath();
+-    }
+-
+     @Override
+     public void onPause() {
+         super.onPause();
+diff --git a/packaging/android/apk/src/org/krita/android/NanquimImport.java b/packaging/android/apk/src/org/krita/android/NanquimImport.java
+new file mode 100644
+index 0000000..63fca2b
+--- /dev/null
++++ b/packaging/android/apk/src/org/krita/android/NanquimImport.java
+@@ -0,0 +1,66 @@
++package org.krita.android;
++
++import android.content.Context;
++import android.database.Cursor;
++import android.net.Uri;
++import android.provider.OpenableColumns;
++import android.util.Log;
++
++import java.io.File;
++import java.io.FileOutputStream;
++import java.io.InputStream;
++import java.io.OutputStream;
++
++/**
++ * Nanquim: pincéis (.kpp) e pacotes (.bundle) chegam do "Abrir com" como
++ * content:// sem extensão. Copiamos para uma pasta do app com o nome
++ * original, para o lado C++ reconhecer a extensão e importar o recurso.
++ */
++public final class NanquimImport {
++    private static final String TAG = "nanquim.Import";
++    public static final String EXTRA_PATH = "nanquim_import_path";
++
++    private NanquimImport() {}
++
++    public static String copyResourceFileIfNeeded(Context ctx, Uri uri) {
++        String name = null;
++        try (Cursor c = ctx.getContentResolver().query(uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
++            if (c != null && c.moveToFirst()) {
++                name = c.getString(0);
++            }
++        } catch (Exception e) {
++            Log.w(TAG, "não consegui ler o nome do arquivo", e);
++        }
++        if (name == null) {
++            name = uri.getLastPathSegment();
++        }
++        if (name == null) {
++            return null;
++        }
++        String lower = name.toLowerCase();
++        if (!lower.endsWith(".kpp") && !lower.endsWith(".bundle")) {
++            return null;
++        }
++        name = new File(name).getName();
++        File dir = new File(ctx.getCacheDir(), "nanquim-import");
++        if (!dir.exists() && !dir.mkdirs()) {
++            return null;
++        }
++        File out = new File(dir, name);
++        try (InputStream in = ctx.getContentResolver().openInputStream(uri);
++             OutputStream os = new FileOutputStream(out)) {
++            if (in == null) {
++                return null;
++            }
++            byte[] buf = new byte[1 << 16];
++            int n;
++            while ((n = in.read(buf)) > 0) {
++                os.write(buf, 0, n);
++            }
++        } catch (Exception e) {
++            Log.w(TAG, "falha ao copiar " + name, e);
++            return null;
++        }
++        return out.getAbsolutePath();
++    }
++}
+diff --git a/packaging/android/apk/src/org/krita/android/NanquimImportActivity.java b/packaging/android/apk/src/org/krita/android/NanquimImportActivity.java
+new file mode 100644
+index 0000000..f8b4e7c
+--- /dev/null
++++ b/packaging/android/apk/src/org/krita/android/NanquimImportActivity.java
+@@ -0,0 +1,33 @@
++package org.krita.android;
++
++import android.app.Activity;
++import android.content.Intent;
++import android.net.Uri;
++import android.os.Bundle;
++import android.widget.Toast;
++
++/**
++ * Nanquim: recebe o "Abrir com" de pincéis e pacotes sem abrir uma segunda
++ * janela do app. Copia o arquivo e entrega o caminho para a MainActivity
++ * (singleTask), que já existe ou é aberta normalmente.
++ */
++public class NanquimImportActivity extends Activity {
++    @Override
++    protected void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        Intent in = getIntent();
++        Uri uri = (in != null) ? in.getData() : null;
++        if (uri != null) {
++            String local = NanquimImport.copyResourceFileIfNeeded(this, uri);
++            if (local != null) {
++                Intent out = new Intent(this, MainActivity.class);
++                out.putExtra(NanquimImport.EXTRA_PATH, local);
++                out.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
++                startActivity(out);
++            } else {
++                Toast.makeText(this, "O Nanquim só importa pincéis .kpp e pacotes .bundle por aqui.", Toast.LENGTH_LONG).show();
++            }
++        }
++        finish();
++    }
++}
+-- 
+2.43.0
+

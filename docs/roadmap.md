@@ -7,7 +7,7 @@
 | Cronômetro da abertura no log | Feito | 0002 |
 | Nome "Nanquim" no Android | Feito | 0003 |
 | Abertura em ~15 s (sem o painel QML de texto) | Feito | 0004 |
-| Abrir `.kpp` e `.bundle` pelo "Abrir com" | Em teste | 0005 |
+| Abrir `.kpp` e `.bundle` pelo "Abrir com" | Em teste | 0005, 0007 |
 | Abertura com a arte do Tyson Tan e a logo | Em teste | 0006 |
 | Medir os ~11 s restantes da janela principal | Próximo | — |
 | Interface nova (galeria, barra híbrida, painéis sob demanda) | Projetada | — |
