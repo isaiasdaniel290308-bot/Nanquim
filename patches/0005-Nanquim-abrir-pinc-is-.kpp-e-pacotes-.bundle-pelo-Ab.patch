@@ -1,0 +1,236 @@
+From ef56e00adc5406d5fe7c9ab5a70acd2320246838 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 16:18:33 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20abrir=20pinc=C3=A9is=20.kpp=20e=20pa?=
+ =?UTF-8?q?cotes=20.bundle=20pelo=20"Abrir=20com"=20do=20Android?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Manifesto: o app aparece no "Abrir com" para .kpp e .bundle
+  (application/x-krita-resourcebundle, octet-stream e zip, que é
+  como os gerenciadores de arquivos costumam mandar esses arquivos).
+- MainActivity: arquivos .kpp/.bundle que chegam como content:// são
+  copiados para o cache do app com o nome original.
+- KisApplication: .kpp é importado como pincel (com o diálogo de
+  conflito de nome do Krita) e .bundle é instalado na hora com
+  KisStorageModel::importStorage, em vez de abrir como imagem.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/KisApplication.cpp                    | 58 ++++++++++++++++++-
+ packaging/android/apk/AndroidManifest.xml     |  4 ++
+ .../src/org/krita/android/MainActivity.java   | 57 ++++++++++++++++++
+ 3 files changed, 117 insertions(+), 2 deletions(-)
+
+diff --git a/libs/ui/KisApplication.cpp b/libs/ui/KisApplication.cpp
+index 6bf08aa..ca98ad6 100644
+--- a/libs/ui/KisApplication.cpp
++++ b/libs/ui/KisApplication.cpp
+@@ -29,6 +29,12 @@
+ #include <QFile>
+ #include <QLocale>
+ #include <QMessageBox>
++#include <QUrl>
++#include <KoResource.h>
++
++namespace {
++bool nanquimImportResourceFile(QWidget *parent, const QString &url);
++}
+ #include <QProcessEnvironment>
+ #include <QStringList>
+ #include <QStyle>
+@@ -78,6 +84,10 @@
+ #include <KisResourceServerProvider.h>
+ #include <KoResourceServerProvider.h>
+ #include "opengl/kis_opengl.h"
++#include <KisResourceUserOperations.h>
++#include <KisStorageModel.h>
++#include <KisResourceTypes.h>
++#include <QMessageBox>
+ #include "kis_spin_box_unit_manager.h"
+ #include "kis_document_aware_spin_box_unit_manager.h"
+ #include "KisViewManager.h"
+@@ -796,8 +806,8 @@ bool KisApplication::start(const KisApplicationArguments &args)
+                     return true;
+                 }
+                 else if (d->mainWindow) {
+-                    if (QFileInfo(fileName).fileName().endsWith(".bundle", Qt::CaseInsensitive)) {
+-                        d->mainWindow->installBundle(fileName);
++                    if (nanquimImportResourceFile(d->mainWindow, fileName)) {
++                        // Nanquim: .kpp e .bundle viram recursos instalados
+                     }
+                     else {
+                         KisMainWindow::OpenFlags flags = d->batchRun ? KisMainWindow::BatchMode : KisMainWindow::None;
+@@ -849,6 +859,7 @@ bool KisApplication::start(const KisApplicationArguments &args)
+     if (!d->earlyFileOpenEvents.isEmpty()) {
+         hideSplashScreen();
+         Q_FOREACH(QString fileName, d->earlyFileOpenEvents) {
++            if (nanquimImportResourceFile(d->mainWindow, fileName)) continue;
+             d->mainWindow->openDocument(fileName, QFlags<KisMainWindow::OpenFlag>());
+         }
+     }
+@@ -1125,6 +1136,45 @@ void KisApplication::remoteArguments(const QString &message)
+     executeRemoteArguments(unpackedMessage, mw);
+ }
+ 
++namespace {
++// Nanquim: abrir um pincel (.kpp) ou pacote (.bundle) instala o recurso,
++// em vez de tentar abri-lo como imagem. Usado quando o arquivo chega pelo
++// "Abrir com" do Android ou pela linha de comando.
++bool nanquimImportResourceFile(QWidget *parent, const QString &url)
++{
++    QString path = url;
++    if (path.startsWith(QStringLiteral("file://"))) {
++        path = QUrl(path).toLocalFile();
++    }
++    const QFileInfo info(path);
++    const QString suffix = info.suffix().toLower();
++    if (suffix != QStringLiteral("kpp") && suffix != QStringLiteral("bundle")) {
++        return false;
++    }
++    if (!info.exists()) {
++        return false;
++    }
++
++    if (suffix == QStringLiteral("kpp")) {
++        KoResourceSP resource = KisResourceUserOperations::importResourceFileWithUserInput(
++            parent, QString(), ResourceType::PaintOpPresets, path);
++        if (resource) {
++            QMessageBox::information(parent, QStringLiteral("Nanquim"),
++                                     QStringLiteral("Pincel importado: %1").arg(resource->name()));
++        }
++        KisUsageLogger::log(QStringLiteral("[Nanquim] Import .kpp %1: %2").arg(info.fileName()).arg(resource ? "ok" : "falhou"));
++        return true;
++    }
++
++    const bool ok = KisStorageModel::instance()->importStorage(path, KisStorageModel::None);
++    QMessageBox::information(parent, QStringLiteral("Nanquim"),
++                             ok ? QStringLiteral("Pacote importado: %1\nOs pincéis já estão na biblioteca.").arg(info.fileName())
++                                : QStringLiteral("Não foi possível importar %1.\nTalvez ele já esteja instalado, ou o arquivo não é um pacote do Krita válido.").arg(info.fileName()));
++    KisUsageLogger::log(QStringLiteral("[Nanquim] Import .bundle %1: %2").arg(info.fileName()).arg(ok ? "ok" : "falhou"));
++    return true;
++}
++}
++
+ void KisApplication::fileOpenRequested(const QString &url)
+ {
+     if (!d->mainWindow) {
+@@ -1132,6 +1182,10 @@ void KisApplication::fileOpenRequested(const QString &url)
+         return;
+     }
+ 
++    if (nanquimImportResourceFile(d->mainWindow, url)) {
++        return;
++    }
++
+     KisMainWindow::OpenFlags flags = d->batchRun ? KisMainWindow::BatchMode : KisMainWindow::None;
+     d->mainWindow->openDocument(url, flags);
+ }
+diff --git a/packaging/android/apk/AndroidManifest.xml b/packaging/android/apk/AndroidManifest.xml
+index 553aff4..37cfe6a 100644
+--- a/packaging/android/apk/AndroidManifest.xml
++++ b/packaging/android/apk/AndroidManifest.xml
+@@ -68,6 +68,10 @@
+                 <data android:mimeType="application/x-krita-archive" />
+                 <data android:mimeType="application/x-extension-exr" />
+                 <data android:mimeType="application/x-krita-paintoppreset" />
++                <!-- Nanquim: pincéis .kpp e pacotes .bundle chegam assim pelo "Abrir com" -->
++                <data android:mimeType="application/x-krita-resourcebundle" />
++                <data android:mimeType="application/octet-stream" />
++                <data android:mimeType="application/zip" />
+                 <data android:mimeType="application/pdf" />
+ 
+                 <data android:mimeType="image/jxl" />
+diff --git a/packaging/android/apk/src/org/krita/android/MainActivity.java b/packaging/android/apk/src/org/krita/android/MainActivity.java
+index 093be86..3b794e7 100644
+--- a/packaging/android/apk/src/org/krita/android/MainActivity.java
++++ b/packaging/android/apk/src/org/krita/android/MainActivity.java
+@@ -15,6 +15,8 @@ import android.app.ApplicationExitInfo;
+ import android.app.ForegroundServiceStartNotAllowedException;
+ import android.app.ServiceStartNotAllowedException;
+ import android.content.Intent;
++import android.database.Cursor;
++import android.provider.OpenableColumns;
+ import android.graphics.Bitmap;
+ import android.graphics.BitmapFactory;
+ import android.net.Uri;
+@@ -30,6 +32,10 @@ import android.widget.Toast;
+ import androidx.annotation.RequiresApi;
+ 
+ import java.util.List;
++import java.io.File;
++import java.io.FileOutputStream;
++import java.io.InputStream;
++import java.io.OutputStream;
+ 
+ import org.krita.R;
+ import org.libsdl.app.SDLAudioManager;
+@@ -107,12 +113,63 @@ public class MainActivity extends QtActivity {
+         if (intent != null) {
+             Uri fileUri = intent.getData();
+             if (fileUri != null) {
++                String localResource = copyResourceFileIfNeeded(fileUri);
++                if (localResource != null) {
++                    return localResource;
++                }
+                 return fileUri.toString();
+             }
+         }
+         return null;
+     }
+ 
++    /**
++     * Nanquim: pincéis (.kpp) e pacotes (.bundle) chegam do "Abrir com" como
++     * content:// sem extensão. Copiamos para uma pasta do app com o nome
++     * original, para o lado C++ reconhecer a extensão e importar o recurso.
++     */
++    private String copyResourceFileIfNeeded(Uri uri) {
++        String name = null;
++        try (Cursor c = getContentResolver().query(uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
++            if (c != null && c.moveToFirst()) {
++                name = c.getString(0);
++            }
++        } catch (Exception e) {
++            Log.w(TAG, "Nanquim: não consegui ler o nome do arquivo", e);
++        }
++        if (name == null) {
++            name = uri.getLastPathSegment();
++        }
++        if (name == null) {
++            return null;
++        }
++        String lower = name.toLowerCase();
++        if (!lower.endsWith(".kpp") && !lower.endsWith(".bundle")) {
++            return null;
++        }
++        name = new File(name).getName();
++        File dir = new File(getCacheDir(), "nanquim-import");
++        if (!dir.exists() && !dir.mkdirs()) {
++            return null;
++        }
++        File out = new File(dir, name);
++        try (InputStream in = getContentResolver().openInputStream(uri);
++             OutputStream os = new FileOutputStream(out)) {
++            if (in == null) {
++                return null;
++            }
++            byte[] buf = new byte[1 << 16];
++            int n;
++            while ((n = in.read(buf)) > 0) {
++                os.write(buf, 0, n);
++            }
++        } catch (Exception e) {
++            Log.w(TAG, "Nanquim: falha ao copiar " + name, e);
++            return null;
++        }
++        return out.getAbsolutePath();
++    }
++
+     @Override
+     public void onPause() {
+         super.onPause();
+-- 
+2.43.0
+

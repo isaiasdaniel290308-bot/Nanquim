@@ -27,3 +27,9 @@ Aba **Actions** → **Android arm64** → **Run workflow**. Também roda sozinho
 ## Licença
 
 O Krita é software livre sob a GNU GPL v3 ou posterior, e o Nanquim segue a mesma licença. "Krita" é marca da Krita Foundation. O Nanquim é um projeto independente, sem vínculo com ela.
+
+## Créditos
+
+- **Krita**: Krita Foundation e toda a comunidade do Krita e do KDE (GNU GPL v3).
+- **Arte de abertura**: Tyson Tan, ilustração da Kiki feita para o Krita. As artes do Tyson Tan para o Krita são licenciadas em Creative Commons BY-SA e GNU GPL ([krita.org/en/about/mascot](https://krita.org/en/about/mascot/)).
+- **Logo do Nanquim** (gota-pena): CC BY-SA 4.0.
