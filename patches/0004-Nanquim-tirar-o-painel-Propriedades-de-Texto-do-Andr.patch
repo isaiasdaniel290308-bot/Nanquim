@@ -1,0 +1,34 @@
+From 913fd8534c0cd06e108dd5694686ba1c300c2e96 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 14:41:37 -0300
+Subject: [PATCH] Nanquim: tirar o painel Propriedades de Texto do Android
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+No Galaxy Tab S10 Lite, criar esse painel (QML) levava 60,6 s de um
+total de 73,5 s na abertura do app (log de uso, segunda abertura).
+A ferramenta de texto continua funcionando: ela já trata a ausência
+do painel (SvgTextTool verifica se dockWidget("TextProperties") existe).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ plugins/dockers/CMakeLists.txt | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/plugins/dockers/CMakeLists.txt b/plugins/dockers/CMakeLists.txt
+index 0052549..54d01c9 100644
+--- a/plugins/dockers/CMakeLists.txt
++++ b/plugins/dockers/CMakeLists.txt
+@@ -53,4 +53,6 @@ if (NOT ANDROID) # Nanquim: fora do pacote Android
+ endif()
+ add_subdirectory(widegamutcolorselector)
+ add_subdirectory(brushhud)
+-add_subdirectory(textproperties)
++if (NOT ANDROID) # Nanquim: este painel QML levava ~60 s para abrir no Galaxy Tab S10 Lite
++    add_subdirectory(textproperties)
++endif()
+-- 
+2.43.0
+
