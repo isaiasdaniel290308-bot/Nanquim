@@ -1,4 +1,4 @@
-From 027eedab9e59c5c942b08d805580424cbdbd4932 Mon Sep 17 00:00:00 2001
+From dd997ea4c17492c3e8b94a2980f97badc2b833d4 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 9 Nov 2026 16:56:57 -0300
 Subject: [PATCH] =?UTF-8?q?Nanquim:=20interface=20do=20design=20(barra=20d?=
@@ -10,15 +10,15 @@ Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 ---
- libs/ui/NanquimTabletUi.cpp | 818 +++++++++++++++++++++++++++---------
+ libs/ui/NanquimTabletUi.cpp | 819 +++++++++++++++++++++++++++---------
  libs/ui/NanquimTabletUi.h   |   6 +-
- 2 files changed, 617 insertions(+), 207 deletions(-)
+ 2 files changed, 618 insertions(+), 207 deletions(-)
 
 diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
-index b262f3f..72a6a86 100644
+index b262f3f..a3dbcf1 100644
 --- a/libs/ui/NanquimTabletUi.cpp
 +++ b/libs/ui/NanquimTabletUi.cpp
-@@ -8,78 +8,132 @@
+@@ -8,78 +8,133 @@
  
  #include <QAction>
  #include <QApplication>
@@ -52,6 +52,7 @@ index b262f3f..72a6a86 100644
  #include <ktoolbar.h>
  #include <klocalizedstring.h>
  
++#include <KoCanvasController.h>
 +#include <KoCanvasResourceProvider.h>
 +#include <KoCanvasResourcesIds.h>
 +#include <KoColor.h>
@@ -197,7 +198,7 @@ index b262f3f..72a6a86 100644
  class NanquimOverlay : public QWidget
  {
  public:
-@@ -117,9 +171,11 @@ private:
+@@ -117,9 +172,11 @@ private:
  };
  
  QPointer<NanquimOverlay> s_panelOverlay;
@@ -210,7 +211,7 @@ index b262f3f..72a6a86 100644
  {
      if (slot) {
          slot->deleteLater();
-@@ -133,48 +189,51 @@ void runOverlay(QPointer<NanquimOverlay> &slot, NanquimOverlay *overlay, int dur
+@@ -133,48 +190,51 @@ void runOverlay(QPointer<NanquimOverlay> &slot, NanquimOverlay *overlay, int dur
      QObject::connect(anim, &QVariantAnimation::valueChanged, overlay, [overlay](const QVariant &v) {
          overlay->setProgress(v.toReal());
      });
@@ -278,7 +279,7 @@ index b262f3f..72a6a86 100644
  }
  
  // troca de tela (inicial <-> desenho): a nova tela surge de um fundo escuro
-@@ -191,13 +250,17 @@ void animateScreenIn(KisMainWindow *mw)
+@@ -191,13 +251,17 @@ void animateScreenIn(KisMainWindow *mw)
      runOverlay(s_screenOverlay, o, 320, QEasingCurve::OutCubic);
  }
  
@@ -301,7 +302,7 @@ index b262f3f..72a6a86 100644
      b->setAutoRaise(true);
      b->setFocusPolicy(Qt::NoFocus);
      return b;
-@@ -213,28 +276,29 @@ QDockWidget *findDock(KisMainWindow *mw, const QStringList &ids)
+@@ -213,28 +277,29 @@ QDockWidget *findDock(KisMainWindow *mw, const QStringList &ids)
      return nullptr;
  }
  
@@ -340,7 +341,7 @@ index b262f3f..72a6a86 100644
      if (!mw->tabifiedDockWidgets(dw).isEmpty()) {
          mw->removeDockWidget(dw);
          mw->addDockWidget(Qt::RightDockWidgetArea, dw);
-@@ -245,138 +309,204 @@ void togglePanel(KisMainWindow *mw, QDockWidget *dw, const QList<QPointer<QDockW
+@@ -245,138 +310,204 @@ void togglePanel(KisMainWindow *mw, QDockWidget *dw, const QList<QPointer<QDockW
      }
      dw->show();
      dw->raise();
@@ -641,7 +642,7 @@ index b262f3f..72a6a86 100644
      QMenu *moreMenu = new QMenu(more);
      QObject::connect(moreMenu, &QMenu::aboutToShow, mw, [mw, moreMenu]() {
          moreMenu->clear();
-@@ -386,68 +516,346 @@ QToolBar *createRail(KisMainWindow *mw)
+@@ -386,68 +517,346 @@ QToolBar *createRail(KisMainWindow *mw)
      });
      more->setMenu(moreMenu);
      more->setPopupMode(QToolButton::InstantPopup);
