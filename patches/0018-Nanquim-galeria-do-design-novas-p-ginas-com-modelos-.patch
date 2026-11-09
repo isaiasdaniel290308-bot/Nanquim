@@ -1,0 +1,430 @@
+From a63451fab025dc48d823e53aa0c9e0f79627b7b7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 20:24:35 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20galeria=20do=20design=20(novas=20p?=
+ =?UTF-8?q?=C3=A1ginas=20com=20modelos=20de=20quadrinho,=20recentes=20em?=
+ =?UTF-8?q?=20miniatura,=20busca)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ libs/ui/NanquimTabletUi.cpp | 367 +++++++++++++++++++++++++++++++++++-
+ 1 file changed, 365 insertions(+), 2 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index 326f409..d062579 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -15,6 +15,13 @@
+ #include <QHBoxLayout>
+ #include <QImageReader>
+ #include <QLabel>
++#include <QLineEdit>
++#include <QListView>
++#include <QPushButton>
++#include <QSortFilterProxyModel>
++#include <QStackedWidget>
++#include <QStandardItemModel>
++#include <QStyledItemDelegate>
+ #include <QMenu>
+ #include <QMenuBar>
+ #include <QPainter>
+@@ -42,6 +49,11 @@
+ #include <kis_image.h>
+ 
+ #include "KisDocument.h"
++#include "KisPart.h"
++#include "KisRecentDocumentsModelWrapper.h"
++#include <KisKineticScroller.h>
++#include <KoColorSpaceRegistry.h>
++#include "kis_config.h"
+ #include "KisMainWindow.h"
+ #include "KisView.h"
+ #include "KisViewManager.h"
+@@ -353,6 +365,12 @@ void updateSafeTop(KisMainWindow *mw)
+     const int availTop = screen->availableGeometry().top();
+     const int winTop = mw->mapToGlobal(QPoint(0, 0)).y();
+     const int inset = qMax(0, availTop - winTop);
++    if (QWidget *header = mw->findChild<QWidget*>(QStringLiteral("nanquimGalleryHeader"))) {
++        header->setFixedHeight(64 + inset);
++        if (header->layout()) {
++            header->layout()->setContentsMargins(28, inset, 20, 0);
++        }
++    }
+     if (top->property("nanquimInset").toInt() == inset && !top->styleSheet().isEmpty()) {
+         return;
+     }
+@@ -800,12 +818,352 @@ void setNavCollapsed(KisMainWindow *mw, bool collapsed, bool animate)
+     }
+ }
+ 
++
++// ---------------------------------------------------------------------------
++// Galeria (design "Main"): substitui a tela inicial do Krita
++// ---------------------------------------------------------------------------
++const QString GALLERY_ID = QStringLiteral("nanquimGallery");
++
++QPixmap renderSvg(const QString &svg, const QSize &logical)
++{
++    const qreal dpr = qApp->devicePixelRatio();
++    QByteArray data = svg.toUtf8();
++    QBuffer buffer(&data);
++    buffer.open(QIODevice::ReadOnly);
++    QImageReader reader(&buffer, "svg");
++    reader.setScaledSize(logical * dpr);
++    QImage image = reader.read();
++    if (image.isNull()) {
++        return QPixmap();
++    }
++    image.setDevicePixelRatio(dpr);
++    return QPixmap::fromImage(image);
++}
++
++const char *DROP_SVG =
++    "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'>"
++    "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>"
++    "<stop offset='0' stop-color='#3d8bff'/><stop offset='1' stop-color='#22d3ee'/></linearGradient></defs>"
++    "<path d='M32 4C40 16 50 27 50 40a18 18 0 0 1-36 0C14 27 24 16 32 4z' fill='url(#g)'/>"
++    "<path d='M32 30v20' stroke='#0d1420' stroke-width='3.2' stroke-linecap='round'/>"
++    "<circle cx='32' cy='27' r='4.2' fill='#0d1420'/></svg>";
++
++const char *GALLERY_STYLE =
++    "QWidget#nanquimGallery { background: #141417; }"
++    "QWidget#nanquimGallery QLabel { color: #ececf1; }"
++    "QWidget#nanquimGalleryHeader { background: #141417; border-bottom: 1px solid #26262c; }"
++    "QLabel#nanquimBrand { font-size: 23px; font-weight: 700; }"
++    "QLabel#nanquimSection { color: #a3a3ae; font-size: 15px; font-weight: 600; letter-spacing: 1px; }"
++    "QLabel#nanquimFooter { color: #6f6f7a; font-size: 12px; }"
++    "QLabel#nanquimEmpty { color: #8a8a96; font-size: 15px; }"
++    "QLineEdit#nanquimSearch { min-height: 42px; padding: 0 14px; border-radius: 12px; background: #1f1f24;"
++    "  border: 1px solid #2c2c33; color: #ececf1; font-size: 15px; }"
++    "QPushButton.nanquimGhost, QToolButton.nanquimGhost { min-height: 42px; padding: 0 16px; border-radius: 12px;"
++    "  border: 1px solid #2c2c33; background: #1f1f24; color: #ececf1; font-size: 15px; font-weight: 500; }"
++    "QToolButton.nanquimGhost::menu-indicator { image: none; width: 0px; }"
++    "QPushButton.nanquimGhost:pressed, QToolButton.nanquimGhost:pressed { background: #26262c; }"
++    "QPushButton#nanquimBackToDrawing { border: none; color: #04131f; font-weight: 600;"
++    "  background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3d8bff, stop:1 #22d3ee); }"
++    "QPushButton.nanquimPreset { min-height: 112px; border-radius: 16px; border: 1px solid #2c2c33;"
++    "  background: #1c1c21; text-align: left; }"
++    "QPushButton.nanquimPreset:pressed { background: #24242b; border-color: #3d8bff; }"
++    "QPushButton.nanquimPreset QLabel { background: transparent; }"
++    "QLabel#nanquimPresetName { font-size: 17px; font-weight: 600; }"
++    "QLabel#nanquimPresetDetail { color: #a3a3ae; font-size: 13px; }"
++    "QListView#nanquimRecents { background: transparent; border: none; }";
++
++// miniatura de papel com sombra e o nome embaixo
++class RecentDelegate : public QStyledItemDelegate
++{
++public:
++    using QStyledItemDelegate::QStyledItemDelegate;
++
++    static QSize cell() { return QSize(186, 300); }
++
++    QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override { return cell(); }
++
++    void paint(QPainter *g, const QStyleOptionViewItem &option, const QModelIndex &index) const override
++    {
++        g->save();
++        g->setRenderHint(QPainter::Antialiasing);
++        g->setRenderHint(QPainter::SmoothPixmapTransform);
++        const QRect r = option.rect.adjusted(9, 6, -9, -6);
++        const int paperW = r.width();
++        const int paperH = qMin(qRound(paperW / 0.707), r.height() - 46);
++        const QRect paper(r.left(), r.top(), paperW, paperH);
++
++        // sombra suave e papel
++        for (int i = 6; i >= 1; --i) {
++            g->setPen(Qt::NoPen);
++            g->setBrush(QColor(0, 0, 0, 10 + 4 * (6 - i)));
++            g->drawRoundedRect(paper.adjusted(-i / 2, i / 2, i / 2, i), 10 + i, 10 + i);
++        }
++        g->setBrush(QColor(0xfa, 0xfa, 0xf7));
++        g->drawRoundedRect(paper, 10, 10);
++
++        const QIcon icon = index.data(Qt::DecorationRole).value<QIcon>();
++        if (!icon.isNull()) {
++            const QRect inner = paper.adjusted(8, 8, -8, -8);
++            const QPixmap pm = icon.pixmap(inner.size());
++            if (!pm.isNull()) {
++                QSize sz = pm.size() / pm.devicePixelRatio();
++                sz.scale(inner.size(), Qt::KeepAspectRatio);
++                const QRect target(QPoint(inner.center().x() - sz.width() / 2, inner.center().y() - sz.height() / 2), sz);
++                g->drawPixmap(target, pm);
++            }
++        }
++        if (option.state & QStyle::State_MouseOver || option.state & QStyle::State_Selected) {
++            g->setPen(QPen(C_ACCENT, 2));
++            g->setBrush(Qt::NoBrush);
++            g->drawRoundedRect(paper, 10, 10);
++        }
++
++        QString name = index.data(Qt::DisplayRole).toString();
++        if (name.endsWith(QLatin1String(".kra"), Qt::CaseInsensitive)) {
++            name.chop(4);
++        }
++        QFont f = option.font;
++        f.setPixelSize(14);
++        f.setWeight(QFont::DemiBold);
++        g->setFont(f);
++        g->setPen(C_TEXT);
++        const QRect textRect(r.left(), paper.bottom() + 10, r.width(), 20);
++        g->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
++                    QFontMetrics(f).elidedText(name, Qt::ElideRight, textRect.width()));
++        g->restore();
++    }
++};
++
++struct PagePreset {
++    const char *name;
++    const char *detail;
++    int width;
++    int height;
++    int dpi;
++};
++
++void createPage(const PagePreset &p)
++{
++    const KoColorSpace *cs = KoColorSpaceRegistry::instance()->rgb8();
++    KisDocument *doc = KisPart::instance()->createDocument();
++    KoColor white(Qt::white, cs);
++    if (!doc->newImage(i18n(p.name), p.width, p.height, cs, white, KisConfig::RASTER_LAYER, 2, QString(), p.dpi / 72.0)) {
++        delete doc;
++        return;
++    }
++    doc->setModified(false);
++    KisPart::instance()->startCustomDocument(doc);
++}
++
++QToolButton *makeMoreButton(KisMainWindow *mw, QWidget *parent)
++{
++    QToolButton *more = new QToolButton(parent);
++    more->setIcon(designIcon(Svg::MORE));
++    more->setIconSize(QSize(22, 22));
++    more->setToolTip(i18n("Mais opções"));
++    more->setFocusPolicy(Qt::NoFocus);
++    QMenu *moreMenu = new QMenu(more);
++    QObject::connect(moreMenu, &QMenu::aboutToShow, mw, [mw, moreMenu]() {
++        moreMenu->clear();
++        Q_FOREACH (QAction *a, mw->menuBar()->actions()) {
++            moreMenu->addAction(a);
++        }
++    });
++    more->setMenu(moreMenu);
++    more->setPopupMode(QToolButton::InstantPopup);
++    return more;
++}
++
++QLabel *sectionLabel(const QString &text, QWidget *parent)
++{
++    QLabel *l = new QLabel(text.toUpper(), parent);
++    l->setObjectName(QStringLiteral("nanquimSection"));
++    return l;
++}
++
++QWidget *buildGallery(KisMainWindow *mw)
++{
++    QWidget *gallery = new QWidget();
++    gallery->setObjectName(GALLERY_ID);
++    gallery->setAttribute(Qt::WA_StyledBackground);
++    gallery->setStyleSheet(QLatin1String(GALLERY_STYLE));
++    QVBoxLayout *root = new QVBoxLayout(gallery);
++    root->setContentsMargins(0, 0, 0, 0);
++    root->setSpacing(0);
++
++    // --- cabeçalho -------------------------------------------------------
++    QWidget *header = new QWidget(gallery);
++    header->setObjectName(QStringLiteral("nanquimGalleryHeader"));
++    header->setAttribute(Qt::WA_StyledBackground);
++    header->setFixedHeight(64);
++    QHBoxLayout *hl = new QHBoxLayout(header);
++    hl->setContentsMargins(28, 0, 20, 0);
++    hl->setSpacing(12);
++    QLabel *logo = new QLabel(header);
++    logo->setPixmap(renderSvg(QLatin1String(DROP_SVG), QSize(34, 34)));
++    QLabel *brand = new QLabel(QStringLiteral("Nanquim"), header);
++    brand->setObjectName(QStringLiteral("nanquimBrand"));
++    hl->addWidget(logo);
++    hl->addWidget(brand);
++    hl->addStretch(1);
++
++    QLineEdit *search = new QLineEdit(header);
++    search->setObjectName(QStringLiteral("nanquimSearch"));
++    search->setPlaceholderText(i18n("Buscar desenhos"));
++    search->setClearButtonEnabled(true);
++    search->setFixedWidth(280);
++    hl->addWidget(search);
++
++    QPushButton *back = new QPushButton(i18n("Voltar ao desenho"), header);
++    back->setObjectName(QStringLiteral("nanquimBackToDrawing"));
++    back->setProperty("class", QStringLiteral("nanquimGhost"));
++    back->setFocusPolicy(Qt::NoFocus);
++    QObject::connect(back, &QPushButton::clicked, mw, [mw]() { mw->showWelcomeScreen(false); });
++    hl->addWidget(back);
++
++    QPushButton *open = new QPushButton(i18n("Abrir"), header);
++    open->setProperty("class", QStringLiteral("nanquimGhost"));
++    open->setFocusPolicy(Qt::NoFocus);
++    QObject::connect(open, &QPushButton::clicked, mw, [mw]() {
++        if (QAction *a = act(mw, "file_open")) {
++            a->trigger();
++        }
++    });
++    hl->addWidget(open);
++
++    QToolButton *more = makeMoreButton(mw, header);
++    more->setProperty("class", QStringLiteral("nanquimGhost"));
++    hl->addWidget(more);
++    root->addWidget(header);
++
++    // --- corpo -------------------------------------------------------------
++    QWidget *body = new QWidget(gallery);
++    QVBoxLayout *bl = new QVBoxLayout(body);
++    bl->setContentsMargins(28, 24, 28, 12);
++    bl->setSpacing(14);
++
++    bl->addWidget(sectionLabel(i18n("Nova página"), body));
++    QHBoxLayout *presetsRow = new QHBoxLayout();
++    presetsRow->setSpacing(14);
++    const QList<PagePreset> presets = {
++        {"Página de mangá", "B4 · 600 dpi · 6071 × 8598", 6071, 8598, 600},
++        {"Comic americano", "6,625 × 10,25 pol · 400 dpi", 2650, 4100, 400},
++        {"Tirinha", "4 quadros na horizontal · 300 dpi", 4000, 1250, 300},
++        {"Ilustração", "A4 · 300 dpi · 2480 × 3508", 2480, 3508, 300},
++        {"Personalizado", "Escolha tamanho e resolução", 0, 0, 0},
++    };
++    Q_FOREACH (const PagePreset &p, presets) {
++        QPushButton *card = new QPushButton(body);
++        card->setProperty("class", QStringLiteral("nanquimPreset"));
++        card->setFocusPolicy(Qt::NoFocus);
++        card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
++        QVBoxLayout *cl = new QVBoxLayout(card);
++        cl->setContentsMargins(16, 16, 16, 16);
++        QLabel *n = new QLabel(i18n(p.name), card);
++        n->setObjectName(QStringLiteral("nanquimPresetName"));
++        QLabel *d = new QLabel(i18n(p.detail), card);
++        d->setObjectName(QStringLiteral("nanquimPresetDetail"));
++        d->setWordWrap(true);
++        n->setAttribute(Qt::WA_TransparentForMouseEvents);
++        d->setAttribute(Qt::WA_TransparentForMouseEvents);
++        cl->addWidget(n);
++        cl->addStretch(1);
++        cl->addWidget(d);
++        QObject::connect(card, &QPushButton::clicked, mw, [mw, p]() {
++            if (p.width == 0) {
++                mw->slotFileNew();
++            } else {
++                createPage(p);
++            }
++        });
++        presetsRow->addWidget(card);
++    }
++    bl->addLayout(presetsRow);
++    bl->addSpacing(14);
++
++    bl->addWidget(sectionLabel(i18n("Recentes"), body));
++
++    QSortFilterProxyModel *proxy = new QSortFilterProxyModel(gallery);
++    proxy->setSourceModel(&KisRecentDocumentsModelWrapper::instance()->model());
++    proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
++    QObject::connect(search, &QLineEdit::textChanged, proxy, &QSortFilterProxyModel::setFilterFixedString);
++
++    QListView *recents = new QListView(body);
++    recents->setObjectName(QStringLiteral("nanquimRecents"));
++    recents->setModel(proxy);
++    recents->setItemDelegate(new RecentDelegate(recents));
++    recents->setViewMode(QListView::IconMode);
++    recents->setResizeMode(QListView::Adjust);
++    recents->setMovement(QListView::Static);
++    recents->setUniformItemSizes(true);
++    recents->setGridSize(RecentDelegate::cell());
++    recents->setSelectionMode(QAbstractItemView::NoSelection);
++    recents->setEditTriggers(QAbstractItemView::NoEditTriggers);
++    recents->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++    recents->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
++    recents->setFocusPolicy(Qt::NoFocus);
++    recents->setMouseTracking(false);
++    KisKineticScroller::createPreconfiguredScroller(recents);
++    QObject::connect(recents, &QListView::clicked, mw, [mw](const QModelIndex &index) {
++        const QString path = index.data(Qt::ToolTipRole).toString();
++        if (!path.isEmpty()) {
++            mw->openDocument(path, KisMainWindow::None);
++        }
++    });
++
++    QLabel *empty = new QLabel(i18n("Seus desenhos aparecem aqui. Comece com uma nova página acima."), body);
++    empty->setObjectName(QStringLiteral("nanquimEmpty"));
++    empty->setAlignment(Qt::AlignCenter);
++    auto refreshEmpty = [proxy, empty, recents]() {
++        const bool none = proxy->rowCount() == 0;
++        empty->setVisible(none);
++        recents->setVisible(!none);
++    };
++    QObject::connect(proxy, &QAbstractItemModel::rowsInserted, empty, refreshEmpty);
++    QObject::connect(proxy, &QAbstractItemModel::rowsRemoved, empty, refreshEmpty);
++    QObject::connect(proxy, &QAbstractItemModel::modelReset, empty, refreshEmpty);
++    QObject::connect(proxy, &QAbstractItemModel::layoutChanged, empty, refreshEmpty);
++    refreshEmpty();
++
++    bl->addWidget(recents, 1);
++    bl->addWidget(empty, 1);
++
++    QLabel *footer = new QLabel(i18n("O Nanquim é feito sobre o Krita, software livre da comunidade KDE. "
++                                     "Arte da abertura: Tyson Tan (CC BY-SA)."), body);
++    footer->setObjectName(QStringLiteral("nanquimFooter"));
++    footer->setAlignment(Qt::AlignCenter);
++    bl->addWidget(footer);
++
++    root->addWidget(body, 1);
++    return gallery;
++}
++
++// troca a tela inicial do Krita pela galeria, no mesmo lugar da pilha
++void installGallery(KisMainWindow *mw)
++{
++    QStackedWidget *stack = qobject_cast<QStackedWidget*>(mw->centralWidget());
++    if (!stack || stack->count() < 2) {
++        KisUsageLogger::log(QStringLiteral("[Nanquim] pilha de telas não encontrada; tela inicial do Krita mantida"));
++        return;
++    }
++    const bool wasCurrent = stack->currentIndex() == 0;
++    QWidget *old = stack->widget(0);
++    QWidget *gallery = buildGallery(mw);
++    stack->removeWidget(old);
++    old->hide();
++    stack->insertWidget(0, gallery);
++    if (wasCurrent) {
++        stack->setCurrentIndex(0);
++    }
++}
++
+ } // namespace
+ 
+ void NanquimTabletUi::install(KisMainWindow *mw)
+ {
+     buildTopBar(mw);
+     buildToolNav(mw);
++    installGallery(mw);
+     KisUsageLogger::log(QStringLiteral("[Nanquim] interface de tablet instalada"));
+ }
+ 
+@@ -828,9 +1186,14 @@ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+         tb->setVisible(false);
+     }
+ 
+-    top->setVisible(true);
+-    updateSafeTop(mw);
+     const bool hasDrawing = mw->activeView() != nullptr;
++    const bool hasGallery = mw->findChild<QWidget*>(GALLERY_ID) != nullptr;
++    // na galeria, o cabeçalho dela faz o papel da barra do topo
++    top->setVisible(canvasMode || !hasGallery);
++    updateSafeTop(mw);
++    if (QWidget *back = mw->findChild<QWidget*>(QStringLiteral("nanquimBackToDrawing"))) {
++        back->setVisible(hasDrawing);
++    }
+     Q_FOREACH (QWidget *w, top->findChildren<QWidget*>()) {
+         if (w->property(WELCOME_ONLY).toBool()) {
+             // o botão fica dentro de uma QWidgetAction da barra: mostra a ação
+-- 
+2.43.0
+

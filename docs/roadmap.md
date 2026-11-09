@@ -16,7 +16,8 @@
 | Abertura: caixa de pincéis (KisPaintopBox, ~2,3 s) criada sob demanda | Próximo | — |
 | Animações: saída da abertura, painéis deslizando, troca de tela | Feito | 0015 |
 | Interface nova, peça 2 (design "Desenho"): barra do topo com título, ferramentas à esquerda, tamanho/opacidade verticais, recolher | Em teste | 0016 |
-| Interface nova, peça 3 (design "Main"): galeria com novas páginas e recentes | Próximo | — |
+| Interface nova, peça 3 (design "Main"): galeria com novas páginas e recentes | Em teste | 0018 |
+| Pincéis do Nanquim (motor nativo, leves) no lugar dos MyPaint no conjunto inicial | Próximo | — |
 | Interface nova, próximas peças: galeria inicial, ferramentas recolhíveis, boas-vindas | Próximo | — |
 | Importador `.sut` (Clip Studio) | Planejado | — |
 | Liquidificar mais rápido (prévia leve + aplicação em resolução total) | Planejado | — |
