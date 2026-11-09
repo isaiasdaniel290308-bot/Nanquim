@@ -1,0 +1,159 @@
+From f23267dc2e269685fb3eec009213fc70da36edeb Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 15:21:22 -0300
+Subject: [PATCH 12/13] =?UTF-8?q?Nanquim:=20cron=C3=B4metro=20por=20etapa?=
+ =?UTF-8?q?=20no=20KisViewManager=20e=20teto=20de=20mem=C3=B3ria=20menor?=
+ =?UTF-8?q?=20no=20Android?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ libs/global/NanquimStepTimer.h  | 49 +++++++++++++++++++++++++++++++++
+ libs/image/kis_image_config.cpp | 10 ++++++-
+ libs/ui/KisViewManager.cpp      |  8 ++++++
+ 3 files changed, 66 insertions(+), 1 deletion(-)
+ create mode 100644 libs/global/NanquimStepTimer.h
+
+diff --git a/libs/global/NanquimStepTimer.h b/libs/global/NanquimStepTimer.h
+new file mode 100644
+index 0000000..3ef489c
+--- /dev/null
++++ b/libs/global/NanquimStepTimer.h
+@@ -0,0 +1,49 @@
++/*
++ *  SPDX-FileCopyrightText: 2026 Nanquim
++ *
++ *  SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++#ifndef NANQUIM_STEP_TIMER_H
++#define NANQUIM_STEP_TIMER_H
++
++#include <QElapsedTimer>
++#include <QString>
++
++#include "KisUsageLogger.h"
++
++/**
++ * Nanquim: cronômetro de etapas. Cada mark() escreve no log do Krita
++ * ("[Nanquim tempo] <prefixo>: <etapa> - N ms") o tempo desde a marca anterior.
++ * Só registra no Android; no desktop não faz nada.
++ */
++class NanquimStepTimer
++{
++public:
++    explicit NanquimStepTimer(const QString &prefix)
++        : m_prefix(prefix)
++    {
++        m_timer.start();
++    }
++
++    // minMs: só registra etapas que levaram pelo menos isso (evita poluir o log)
++    void mark(const QString &step, qint64 minMs = 0)
++    {
++        const qint64 ms = m_timer.restart();
++#ifdef Q_OS_ANDROID
++        if (ms >= minMs) {
++            KisUsageLogger::log(QStringLiteral("[Nanquim tempo] %1: %2 - %3 ms").arg(m_prefix, step).arg(ms));
++        }
++#else
++        Q_UNUSED(step);
++        Q_UNUSED(minMs);
++        Q_UNUSED(ms);
++#endif
++    }
++
++private:
++    QString m_prefix;
++    QElapsedTimer m_timer;
++};
++
++#endif
+diff --git a/libs/image/kis_image_config.cpp b/libs/image/kis_image_config.cpp
+index eba8c3c..2a46689 100644
+--- a/libs/image/kis_image_config.cpp
++++ b/libs/image/kis_image_config.cpp
+@@ -194,8 +194,16 @@ int KisImageConfig::poolLimit() const
+ 
+ qreal KisImageConfig::memoryHardLimitPercent(bool requestDefault) const
+ {
++#ifdef Q_OS_ANDROID
++    // Nanquim: o Android mata o app bem antes de ele usar metade da RAM.
++    // Com um teto menor, o Krita passa a guardar blocos da imagem no disco
++    // (swap próprio) antes de o sistema fechar o app por falta de memória.
++    const qreal fallback = 35.;
++#else
++    const qreal fallback = 50.;
++#endif
+     return !requestDefault ?
+-        m_config.readEntry("memoryHardLimitPercent", 50.) : 50.;
++        m_config.readEntry("memoryHardLimitPercent", fallback) : fallback;
+ }
+ 
+ void KisImageConfig::setMemoryHardLimitPercent(qreal value)
+diff --git a/libs/ui/KisViewManager.cpp b/libs/ui/KisViewManager.cpp
+index 0d561f9..a99c10a 100644
+--- a/libs/ui/KisViewManager.cpp
++++ b/libs/ui/KisViewManager.cpp
+@@ -14,6 +14,7 @@
+  */
+ 
+ 
++#include <NanquimStepTimer.h>
+ #include "KisViewManager.h"
+ #include <QPrinter>
+ 
+@@ -282,6 +283,7 @@ public:
+ KisViewManager::KisViewManager(QWidget *parent, KisKActionCollection *_actionCollection)
+     : d(new KisViewManagerPrivate(this, _actionCollection, parent))
+ {
++    NanquimStepTimer nanquimTimer(QStringLiteral("KisViewManager"));
+     d->actionCollection = _actionCollection;
+     d->mainWindow = dynamic_cast<QMainWindow*>(parent);
+     d->canvasResourceProvider.setResourceManager(&d->canvasResourceManager);
+@@ -289,6 +291,7 @@ KisViewManager::KisViewManager(QWidget *parent, KisKActionCollection *_actionCol
+ 
+     createActions();
+     setupManagers();
++    nanquimTimer.mark(QStringLiteral("acoes e gerenciadores"));
+ 
+     // These initialization functions must wait until KisViewManager ctor is complete.
+     d->statusBar.setup();
+@@ -313,14 +316,17 @@ KisViewManager::KisViewManager(QWidget *parent, KisKActionCollection *_actionCol
+     // just a clumsy way to mark the updater as completed, the subtask will
+     // be automatically deleted on completion...
+     d->persistentUnthreadedProgressUpdaterRouter->startSubtask()->setProgress(100);
++    nanquimTimer.mark(QStringLiteral("barra de status"));
+ 
+     d->controlFrame.setup(parent);
++    nanquimTimer.mark(QStringLiteral("controles do pincel (controlFrame)"));
+ 
+ 
+     //Check to draw scrollbars after "Canvas only mode" toggle is created.
+     this->showHideScrollbars();
+ 
+     d->toolManager.initializeToolActions();
++    nanquimTimer.mark(QStringLiteral("acoes das ferramentas"));
+ 
+     connect(&d->toolManager, SIGNAL(inputDeviceChanged(KoInputDevice)),
+             d->controlFrame.paintopBox(), SLOT(slotInputDeviceChanged(KoInputDevice)));
+@@ -342,6 +348,7 @@ KisViewManager::KisViewManager(QWidget *parent, KisKActionCollection *_actionCol
+     connect(&d->toolManager, SIGNAL(createOpacityResource(bool, KoToolBase*)), SLOT(slotCreateOpacityResource(bool, KoToolBase*)));
+ 
+     KisInputProfileManager::instance()->loadProfiles();
++    nanquimTimer.mark(QStringLiteral("perfis de entrada"));
+ 
+     KisConfig cfg(true);
+     d->showFloatingMessage = cfg.showCanvasMessages();
+@@ -355,6 +362,7 @@ KisViewManager::KisViewManager(QWidget *parent, KisKActionCollection *_actionCol
+ 
+     // Initialize the old imagesize plugin
+     new ImageSize(this);
++    nanquimTimer.mark(QStringLiteral("cores e resto"));
+ }
+ 
+ 
+-- 
+2.43.0
+
