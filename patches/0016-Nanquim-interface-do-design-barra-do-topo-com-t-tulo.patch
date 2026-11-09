@@ -1,4 +1,4 @@
-From b85b14a481b167d552973c9904b03aa964225604 Mon Sep 17 00:00:00 2001
+From 027eedab9e59c5c942b08d805580424cbdbd4932 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 9 Nov 2026 16:56:57 -0300
 Subject: [PATCH] =?UTF-8?q?Nanquim:=20interface=20do=20design=20(barra=20d?=
@@ -10,12 +10,12 @@ Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 ---
- libs/ui/NanquimTabletUi.cpp | 817 +++++++++++++++++++++++++++---------
+ libs/ui/NanquimTabletUi.cpp | 818 +++++++++++++++++++++++++++---------
  libs/ui/NanquimTabletUi.h   |   6 +-
- 2 files changed, 616 insertions(+), 207 deletions(-)
+ 2 files changed, 617 insertions(+), 207 deletions(-)
 
 diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
-index b262f3f..a9dae7f 100644
+index b262f3f..72a6a86 100644
 --- a/libs/ui/NanquimTabletUi.cpp
 +++ b/libs/ui/NanquimTabletUi.cpp
 @@ -8,78 +8,132 @@
@@ -641,7 +641,7 @@ index b262f3f..a9dae7f 100644
      QMenu *moreMenu = new QMenu(more);
      QObject::connect(moreMenu, &QMenu::aboutToShow, mw, [mw, moreMenu]() {
          moreMenu->clear();
-@@ -386,68 +516,345 @@ QToolBar *createRail(KisMainWindow *mw)
+@@ -386,68 +516,346 @@ QToolBar *createRail(KisMainWindow *mw)
      });
      more->setMenu(moreMenu);
      more->setPopupMode(QToolButton::InstantPopup);
@@ -746,6 +746,7 @@ index b262f3f..a9dae7f 100644
 +    };
 +
 +    QAction *erase = act(mw, "erase_action");
++    KoToolManager *toolManager = mw->viewManager()->toolManager();
 +    QList<QPair<QToolButton*, ToolEntry>> buttons;
 +
 +    Q_FOREACH (const ToolEntry &t, tools) {
@@ -769,8 +770,8 @@ index b262f3f..a9dae7f 100644
 -        KisUsageLogger::log(QStringLiteral("[Nanquim] barra BrushesAndStuff não encontrada; interface padrão mantida"));
 +
 +    // marca a ferramenta ativa (inclusive quando ela muda por atalho ou pelo Krita)
-+    auto sync = [buttons, erase]() {
-+        const QString active = KoToolManager::instance()->activeToolId();
++    auto sync = [buttons, erase, toolManager]() {
++        const QString active = toolManager->activeToolId();
 +        const bool erasing = erase && erase->isChecked();
 +        for (const auto &pair : buttons) {
 +            const bool isBrush = QLatin1String(pair.second.toolId) == QLatin1String("KritaShape/KisToolBrush");
@@ -778,7 +779,7 @@ index b262f3f..a9dae7f 100644
 +            pair.first->setChecked(on);
 +        }
 +    };
-+    QObject::connect(KoToolManager::instance(), &KoToolManager::changedTool, nav, [sync](KoCanvasController *) { sync(); });
++    QObject::connect(toolManager, &KoToolManager::changedTool, nav, [sync](KoCanvasController *) { sync(); });
 +    if (erase) {
 +        QObject::connect(erase, &QAction::toggled, nav, [sync](bool) { sync(); });
 +    }
@@ -852,7 +853,7 @@ index b262f3f..a9dae7f 100644
 +            }
 +        });
 +    }
-+    QObject::connect(KoToolManager::instance(), &KoToolManager::changedTool, nav, [pull](KoCanvasController *) { pull(); });
++    QObject::connect(toolManager, &KoToolManager::changedTool, nav, [pull](KoCanvasController *) { pull(); });
 +    QTimer::singleShot(0, nav, pull);
 +
 +    // recolher
