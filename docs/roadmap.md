@@ -14,7 +14,9 @@
 | Interface nova, peça 1: barra do topo, trilho de painéis à direita, menu em "Mais" | Feito (testado no Tab S10 Lite) | 0011, 0013, 0014 |
 | Abertura: ações repetidas das ferramentas (6,1 s → 1,9 s; abertura total ~10 s) | Feito | 0014 |
 | Abertura: caixa de pincéis (KisPaintopBox, ~2,3 s) criada sob demanda | Próximo | — |
-| Animações: saída da abertura, painéis deslizando, troca de tela | Em teste | 0015 |
+| Animações: saída da abertura, painéis deslizando, troca de tela | Feito | 0015 |
+| Interface nova, peça 2 (design "Desenho"): barra do topo com título, ferramentas à esquerda, tamanho/opacidade verticais, recolher | Em teste | 0016 |
+| Interface nova, peça 3 (design "Main"): galeria com novas páginas e recentes | Próximo | — |
 | Interface nova, próximas peças: galeria inicial, ferramentas recolhíveis, boas-vindas | Próximo | — |
 | Importador `.sut` (Clip Studio) | Planejado | — |
 | Liquidificar mais rápido (prévia leve + aplicação em resolução total) | Planejado | — |

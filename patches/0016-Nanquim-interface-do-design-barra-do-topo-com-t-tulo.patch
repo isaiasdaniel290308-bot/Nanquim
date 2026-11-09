@@ -1,0 +1,1041 @@
+From b85b14a481b167d552973c9904b03aa964225604 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 16:56:57 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20interface=20do=20design=20(barra=20d?=
+ =?UTF-8?q?o=20topo=20com=20t=C3=ADtulo=20e=20pain=C3=A9is,=20ferramentas?=
+ =?UTF-8?q?=20=C3=A0=20esquerda=20com=20tamanho=20e=20opacidade,=20recolhe?=
+ =?UTF-8?q?r)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ libs/ui/NanquimTabletUi.cpp | 817 +++++++++++++++++++++++++++---------
+ libs/ui/NanquimTabletUi.h   |   6 +-
+ 2 files changed, 616 insertions(+), 207 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index b262f3f..a9dae7f 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -8,78 +8,132 @@
+ 
+ #include <QAction>
+ #include <QApplication>
+-#include <QEasingCurve>
+-#include <QPainter>
+-#include <QVariantAnimation>
+-#include <functional>
+-#include <QComboBox>
++#include <QBuffer>
+ #include <QDockWidget>
++#include <QEasingCurve>
++#include <QEvent>
++#include <QHBoxLayout>
++#include <QImageReader>
++#include <QLabel>
+ #include <QMenu>
+ #include <QMenuBar>
++#include <QPainter>
+ #include <QPointer>
++#include <QSlider>
++#include <QTimer>
+ #include <QToolBar>
+ #include <QToolButton>
++#include <QVBoxLayout>
++#include <QVariantAnimation>
++#include <QWidgetAction>
++#include <functional>
++#include <cmath>
+ 
+ #include <kactioncollection.h>
+ #include <ktoolbar.h>
+ #include <klocalizedstring.h>
+ 
++#include <KoCanvasResourceProvider.h>
++#include <KoCanvasResourcesIds.h>
++#include <KoColor.h>
++#include <KoToolManager.h>
++#include <kis_image.h>
++
++#include "KisDocument.h"
+ #include "KisMainWindow.h"
+-#include "kis_icon_utils.h"
++#include "KisView.h"
++#include "KisViewManager.h"
++#include "kis_canvas_resource_provider.h"
+ #include "KisUsageLogger.h"
+ 
+ namespace
+ {
+ 
+-struct Panel {
+-    const char *label;
+-    const char *icon;
+-    QStringList dockIds;   // o primeiro que existir no app
+-};
++// ---------------------------------------------------------------------------
++// Cores do design (artboards "Desenho" e "Main")
++// ---------------------------------------------------------------------------
++const QColor C_HEADER(0x17, 0x17, 0x1a);
++const QColor C_NAV(0x1c, 0x1c, 0x20);
++const QColor C_TEXT(0xec, 0xec, 0xf1);
++const QColor C_MUTED(0xa3, 0xa3, 0xae);
++const QColor C_DISABLED(0x4a, 0x4a, 0x55);
++const QColor C_ACCENT(0x3d, 0x8b, 0xff);
++
++const QString TOP_ID = QStringLiteral("nanquimTop");
++const QString NAV_ID = QStringLiteral("nanquimTools");
++const QString OLD_TOP_ID = QStringLiteral("BrushesAndStuff");
++const QString TOOLBOX_ID = QStringLiteral("ToolBox");
++const char *NEEDS_CANVAS = "nanquimNeedsCanvas";
++const char *WELCOME_ONLY = "nanquimWelcomeOnly";
++
++bool s_canvasCleaned = false;
++bool s_navCollapsed = false;
+ 
+-QList<Panel> panels()
++// ---------------------------------------------------------------------------
++// Ícones do design, desenhados a partir do SVG (traço 1.8, cantos redondos)
++// ---------------------------------------------------------------------------
++QPixmap svgPixmap(const QString &body, const QColor &color, int logicalSize)
+ {
+-    return {
+-        {"Pincéis", "krita_tool_freehand", {QStringLiteral("PresetDocker")}},
+-        {"Cor", "extended_color_selector", {QStringLiteral("ColorSelectorNg"), QStringLiteral("WideGamutColorSelector")}},
+-        {"Camadas", "all-layers", {QStringLiteral("KisLayerBox")}},
+-        {"Opções", "configure", {QStringLiteral("sharedtooldocker")}},
+-    };
++    const qreal dpr = qApp->devicePixelRatio();
++    const QString svg = QStringLiteral(
++        "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' "
++        "fill='none' stroke='%1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'>%2</svg>")
++            .arg(color.name(), QString(body).replace(QLatin1String("currentColor"), color.name()));
++    QByteArray data = svg.toUtf8();
++    QBuffer buffer(&data);
++    buffer.open(QIODevice::ReadOnly);
++    QImageReader reader(&buffer, "svg");
++    const int px = qRound(logicalSize * dpr);
++    reader.setScaledSize(QSize(px, px));
++    QImage image = reader.read();
++    if (image.isNull()) {
++        return QPixmap();
++    }
++    image.setDevicePixelRatio(dpr);
++    return QPixmap::fromImage(image);
+ }
+ 
+-const QString TOP_BAR_ID = QStringLiteral("BrushesAndStuff");
+-const QString RAIL_ID = QStringLiteral("nanquimRail");
+-const QString TOOLBOX_ID = QStringLiteral("ToolBox");
+-const char *NEEDS_CANVAS = "nanquimNeedsCanvas";
++QIcon designIcon(const char *body, int size = 22)
++{
++    const QString b = QString::fromUtf8(body);
++    QIcon icon;
++    icon.addPixmap(svgPixmap(b, C_TEXT, size), QIcon::Normal, QIcon::Off);
++    icon.addPixmap(svgPixmap(b, C_ACCENT, size), QIcon::Normal, QIcon::On);
++    icon.addPixmap(svgPixmap(b, C_DISABLED, size), QIcon::Disabled, QIcon::Off);
++    icon.addPixmap(svgPixmap(b, C_DISABLED, size), QIcon::Disabled, QIcon::On);
++    return icon;
++}
+ 
+-bool s_canvasCleaned = false;
++namespace Svg
++{
++const char *GALLERY = "<rect x='3.5' y='3.5' width='7' height='7' rx='1.5'/><rect x='13.5' y='3.5' width='7' height='7' rx='1.5'/><rect x='3.5' y='13.5' width='7' height='7' rx='1.5'/><rect x='13.5' y='13.5' width='7' height='7' rx='1.5'/>";
++const char *BACK = "<path d='M15 6l-6 6 6 6'/>";
++const char *FORWARD = "<path d='M9 6l6 6-6 6'/>";
++const char *UNDO = "<path d='M9 14L4 9l5-5'/><path d='M4 9h10.5a5.5 5.5 0 0 1 0 11H11'/>";
++const char *REDO = "<path d='M15 14l5-5-5-5'/><path d='M20 9H9.5a5.5 5.5 0 0 0 0 11H13'/>";
++const char *PEN = "<path d='M15 4l5 5L9.5 19.5 4 20l.5-5.5z'/><path d='M13 6l5 5'/>";
++const char *LAYERS = "<path d='M12 3.5l8.5 4.5-8.5 4.5L3.5 8z'/><path d='M3.5 12.5l8.5 4.5 8.5-4.5'/><path d='M3.5 16.5L12 21l8.5-4.5'/>";
++const char *RULER = "<path d='M3 17L17 3l4 4L7 21z'/><path d='M7 13l2 2M10 10l2 2M13 7l2 2'/>";
++const char *REFERENCE = "<rect x='3.5' y='4.5' width='17' height='15' rx='2'/><circle cx='9' cy='10' r='1.8'/><path d='M20.5 16l-5-5-8 8.5'/>";
++const char *MORE = "<circle cx='5' cy='12' r='1.8' fill='currentColor' stroke='none'/><circle cx='12' cy='12' r='1.8' fill='currentColor' stroke='none'/><circle cx='19' cy='12' r='1.8' fill='currentColor' stroke='none'/>";
++const char *OPTIONS = "<path d='M4 7h9M17 7h3M4 17h3M11 17h9'/><circle cx='15' cy='7' r='2'/><circle cx='9' cy='17' r='2'/>";
++const char *ERASER = "<path d='M9 20h11'/><path d='M4.6 14.6l8.8-8.8a2 2 0 0 1 2.8 0l2.6 2.6a2 2 0 0 1 0 2.8L11 19H8.9z'/>";
++const char *MOVE = "<path d='M12 3v18M3 12h18'/><path d='M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3'/>";
++const char *BUCKET = "<path d='M4.5 11.5L11 5l7 7-6.5 6.5a2 2 0 0 1-2.8 0l-4.2-4.2a2 2 0 0 1 0-2.8z'/><path d='M4.5 12h13.5'/><path d='M20 15.5c.8 1.2 1.3 2 1.3 2.7a1.3 1.3 0 0 1-2.6 0c0-.7.5-1.5 1.3-2.7z'/>";
++const char *SELECT = "<rect x='4' y='4' width='16' height='16' rx='1' stroke-dasharray='3 2.5'/>";
++const char *TRANSFORM = "<rect x='6' y='6' width='12' height='12' rx='1'/><rect x='3' y='3' width='4' height='4' rx='.8'/><rect x='17' y='3' width='4' height='4' rx='.8'/><rect x='3' y='17' width='4' height='4' rx='.8'/><rect x='17' y='17' width='4' height='4' rx='.8'/>";
++const char *TEXT = "<path d='M12 4c5 0 9 2.9 9 6.5S17 17 12 17c-.9 0-1.8-.1-2.6-.3L5 19.5l1.2-3.6C4.2 14.7 3 12.7 3 10.5 3 6.9 7 4 12 4z'/><path d='M9 9h6M12 9v5'/>";
++const char *PICKER = "<path d='M16.5 3.5a2.1 2.1 0 0 1 3 3l-2 2-3-3z'/><path d='M14.5 7.5L6 16v3h3l8.5-8.5'/>";
++const char *ALL_TOOLS = "<circle cx='6' cy='6' r='1.6'/><circle cx='12' cy='6' r='1.6'/><circle cx='18' cy='6' r='1.6'/><circle cx='6' cy='12' r='1.6'/><circle cx='12' cy='12' r='1.6'/><circle cx='18' cy='12' r='1.6'/><circle cx='6' cy='18' r='1.6'/><circle cx='12' cy='18' r='1.6'/><circle cx='18' cy='18' r='1.6'/>";
++}
+ 
+-const char *TOP_STYLE =
+-    "QToolBar#BrushesAndStuff { background: #0d1320; border: none; border-bottom: 1px solid #1c2535;"
+-    "  spacing: 4px; padding: 2px 6px; }"
+-    "QToolBar#BrushesAndStuff QToolButton { border-radius: 8px; padding: 3px; }"
+-    "QToolBar#BrushesAndStuff QToolButton:pressed { background: #1c2535; }"
+-    "QToolBar#BrushesAndStuff QToolButton::menu-indicator { image: none; width: 0px; }";
+-
+-const char *RAIL_STYLE =
+-    "QToolBar#nanquimRail { background: #0d1320; border: none; border-left: 1px solid #1c2535;"
+-    "  spacing: 6px; padding: 8px 4px; }"
+-    "QToolBar#nanquimRail QToolButton { border-radius: 10px; padding: 6px 2px; color: #cfe0f2;"
+-    "  font-size: 11px; min-width: 58px; }"
+-    "QToolBar#nanquimRail QToolButton:pressed { background: #1c2535; }"
+-    "QToolBar#nanquimRail QToolButton:checked {"
+-    "  background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3d8bff, stop:1 #22d3ee);"
+-    "  color: #0b1019; }"
+-    "QToolBar#nanquimRail QToolButton:disabled { color: #4a5a70; }"
+-    "QToolBar#nanquimRail QToolButton::menu-indicator { image: none; width: 0px; }";
+-
+-// --- animações ---------------------------------------------------------------
++// ---------------------------------------------------------------------------
++// Animações
+ // O Krita desliga as animações nativas de painéis no Android (eram lentas e
+ // davam crash). Aqui a animação é feita por cima: uma camada leve, que não
+ // recebe toques, desenha uma "foto" do painel deslizando e aparecendo. O painel
+-// de verdade já está no lugar por baixo, então nada é redimensionado a cada
+-// quadro e a tela de desenho não é recalculada durante a animação.
+-
++// de verdade já está no lugar, então nada é redimensionado a cada quadro.
++// ---------------------------------------------------------------------------
+ class NanquimOverlay : public QWidget
+ {
+ public:
+@@ -117,9 +171,11 @@ private:
+ };
+ 
+ QPointer<NanquimOverlay> s_panelOverlay;
++QPointer<NanquimOverlay> s_navOverlay;
+ QPointer<NanquimOverlay> s_screenOverlay;
+ 
+-void runOverlay(QPointer<NanquimOverlay> &slot, NanquimOverlay *overlay, int durationMs, QEasingCurve::Type easing)
++void runOverlay(QPointer<NanquimOverlay> &slot, NanquimOverlay *overlay, int durationMs,
++                QEasingCurve::Type easing, std::function<void()> onDone = {})
+ {
+     if (slot) {
+         slot->deleteLater();
+@@ -133,48 +189,51 @@ void runOverlay(QPointer<NanquimOverlay> &slot, NanquimOverlay *overlay, int dur
+     QObject::connect(anim, &QVariantAnimation::valueChanged, overlay, [overlay](const QVariant &v) {
+         overlay->setProgress(v.toReal());
+     });
+-    QObject::connect(anim, &QVariantAnimation::finished, overlay, &QObject::deleteLater);
++    QObject::connect(anim, &QVariantAnimation::finished, overlay, [overlay, onDone]() {
++        if (onDone) {
++            onDone();
++        }
++        overlay->deleteLater();
++    });
+     anim->start();
+ }
+ 
+-// aplica já o layout pendente, para saber a posição final do painel antes de desenhar
++// aplica já o layout pendente, para saber a posição final antes de desenhar
+ void flushLayouts()
+ {
+     QApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+ }
+ 
+-const int SLIDE_DP = 56;
++const int SLIDE = 56;
+ 
+-void animatePanelIn(KisMainWindow *mw, QDockWidget *dw)
++// direction: +1 entra/sai pela direita, -1 pela esquerda
++void animateIn(QPointer<NanquimOverlay> &slot, QWidget *host, QWidget *w, int direction, const QColor &bg)
+ {
+     flushLayouts();
+-    const QRect geom = dw->geometry();
++    const QRect geom(w->mapTo(host, QPoint(0, 0)), w->size());
+     if (geom.isEmpty()) {
+         return;
+     }
+-    const QPixmap shot = dw->grab();
+-    const QColor bg = dw->palette().color(QPalette::Window);
+-    NanquimOverlay *o = new NanquimOverlay(mw, geom, [shot, bg](QPainter &g, const QRect &r, qreal p) {
+-        // fundo do painel firme; o conteúdo entra da direita e aparece
++    const QPixmap shot = w->grab();
++    NanquimOverlay *o = new NanquimOverlay(host, geom, [shot, bg, direction](QPainter &g, const QRect &r, qreal p) {
+         g.fillRect(r, bg);
+         g.setOpacity(p);
+-        g.drawPixmap(QPointF((1.0 - p) * SLIDE_DP, 0), shot);
++        g.drawPixmap(QPointF(direction * (1.0 - p) * SLIDE, 0), shot);
+     });
+-    runOverlay(s_panelOverlay, o, 240, QEasingCurve::OutCubic);
++    runOverlay(slot, o, 240, QEasingCurve::OutCubic);
+ }
+ 
+-void animatePanelOut(KisMainWindow *mw, const QRect &geom, const QPixmap &shot)
++void animateOut(QPointer<NanquimOverlay> &slot, QWidget *host, const QRect &geom, const QPixmap &shot, int direction)
+ {
+     if (geom.isEmpty() || shot.isNull()) {
+         return;
+     }
+     flushLayouts();
+-    NanquimOverlay *o = new NanquimOverlay(mw, geom, [shot](QPainter &g, const QRect &, qreal p) {
+-        // o painel sai para a direita e se dissolve sobre o desenho
++    NanquimOverlay *o = new NanquimOverlay(host, geom, [shot, direction](QPainter &g, const QRect &, qreal p) {
+         g.setOpacity(1.0 - p);
+-        g.drawPixmap(QPointF(p * SLIDE_DP, 0), shot);
++        g.drawPixmap(QPointF(direction * p * SLIDE, 0), shot);
+     });
+-    runOverlay(s_panelOverlay, o, 190, QEasingCurve::InCubic);
++    runOverlay(slot, o, 190, QEasingCurve::InCubic);
+ }
+ 
+ // troca de tela (inicial <-> desenho): a nova tela surge de um fundo escuro
+@@ -191,13 +250,17 @@ void animateScreenIn(KisMainWindow *mw)
+     runOverlay(s_screenOverlay, o, 320, QEasingCurve::OutCubic);
+ }
+ 
+-QToolButton *makeButton(QWidget *parent, const QString &text, const char *icon, Qt::ToolButtonStyle style)
++// ---------------------------------------------------------------------------
++// Peças
++// ---------------------------------------------------------------------------
++QToolButton *iconButton(QWidget *parent, const QString &tip, const QIcon &icon, bool checkable = false)
+ {
+     QToolButton *b = new QToolButton(parent);
+-    b->setText(text);
+-    b->setToolTip(text);
+-    b->setIcon(KisIconUtils::loadIcon(QLatin1String(icon)));
+-    b->setToolButtonStyle(style);
++    b->setToolTip(tip);
++    b->setIcon(icon);
++    b->setIconSize(QSize(22, 22));
++    b->setToolButtonStyle(Qt::ToolButtonIconOnly);
++    b->setCheckable(checkable);
+     b->setAutoRaise(true);
+     b->setFocusPolicy(Qt::NoFocus);
+     return b;
+@@ -213,28 +276,29 @@ QDockWidget *findDock(KisMainWindow *mw, const QStringList &ids)
+     return nullptr;
+ }
+ 
+-// Toca num painel: abre ao lado do trilho e fecha os outros do trilho.
+-void togglePanel(KisMainWindow *mw, QDockWidget *dw, const QList<QPointer<QDockWidget>> &all)
++QAction *act(KisMainWindow *mw, const char *name)
++{
++    return mw->actionCollection()->action(QLatin1String(name));
++}
++
++// Toca num painel: abre na lateral direita (um de cada vez) ou fecha.
++void togglePanel(KisMainWindow *mw, QDockWidget *dw)
+ {
+     if (!dw) {
+         return;
+     }
+     if (dw->isVisible()) {
+-        const QRect geom = dw->geometry();
++        const QRect geom(dw->mapTo(mw, QPoint(0, 0)), dw->size());
+         const QPixmap shot = dw->grab();
+         dw->hide();
+-        animatePanelOut(mw, geom, shot);
++        animateOut(s_panelOverlay, mw, geom, shot, +1);
+         return;
+     }
+-    Q_UNUSED(all);
+-    // um painel de cada vez: fecha qualquer outro aberto (menos a caixa de
+-    // ferramentas), inclusive painéis abertos pelo menu "Mais"
+     Q_FOREACH (QDockWidget *other, mw->dockWidgets()) {
+-        if (other != dw && other->objectName() != TOOLBOX_ID && other->isVisible()) {
++        if (other != dw && other->isVisible()) {
+             other->hide();
+         }
+     }
+-    // se o painel estava empilhado em abas com outros, solta ele sozinho
+     if (!mw->tabifiedDockWidgets(dw).isEmpty()) {
+         mw->removeDockWidget(dw);
+         mw->addDockWidget(Qt::RightDockWidgetArea, dw);
+@@ -245,138 +309,204 @@ void togglePanel(KisMainWindow *mw, QDockWidget *dw, const QList<QPointer<QDockW
+     }
+     dw->show();
+     dw->raise();
+-    // largura confortável para o dedo, sem engolir a tela
+     mw->resizeDocks({dw}, {qBound(300, mw->width() / 4, 420)}, Qt::Horizontal);
+-    animatePanelIn(mw, dw);
++    animateIn(s_panelOverlay, mw, dw, +1, dw->palette().color(QPalette::Window));
+ }
+ 
+-void setupTopBar(KisMainWindow *mw, KisToolBar *bar)
++KoCanvasResourceProvider *resources(KisMainWindow *mw)
+ {
+-    auto *ac = mw->actionCollection();
++    KisViewManager *vm = mw->viewManager();
++    return vm && vm->canvasResourceProvider() ? vm->canvasResourceProvider()->resourceManager() : nullptr;
++}
+ 
+-    bar->setMovable(false);
+-    bar->setFloatable(false);
+-    bar->setStyleSheet(QLatin1String(TOP_STYLE));
++// tamanho do pincel: escala logarítmica, 1 a 1000 px num trilho de 0 a 1000
++int sizeToSlider(qreal px) { return qBound(0, qRound(std::log(qMax(1.0, px)) / std::log(1000.0) * 1000.0), 1000); }
++qreal sliderToSize(int v) { return qMax(1.0, std::round(std::pow(1000.0, v / 1000.0))); }
+ 
+-    // tira o que pesa e quase não se usa no tablet
+-    for (const char *name : {"gradients", "patterns", "select_layout", "workspaces"}) {
+-        if (QAction *a = ac->action(QLatin1String(name))) {
+-            bar->removeAction(a);
+-        }
+-    }
++// ---------------------------------------------------------------------------
++// Barra do topo (design "Desenho"): galeria, título, desfazer/refazer, painéis
++// ---------------------------------------------------------------------------
++const char *TOP_STYLE =
++    "QToolBar#nanquimTop { background: #17171a; border: none; border-bottom: 1px solid #26262c;"
++    "  spacing: 4px; padding: 4px 10px; }"
++    "QToolBar#nanquimTop QToolButton { border: none; border-radius: 10px; padding: 9px; color: #ececf1;"
++    "  min-width: 26px; min-height: 26px; }"
++    "QToolBar#nanquimTop QToolButton:pressed { background: #26262c; }"
++    "QToolBar#nanquimTop QToolButton:checked { background: rgba(61,139,255,0.14); }"
++    "QToolBar#nanquimTop QToolButton::menu-indicator { image: none; width: 0px; }"
++    "QToolBar#nanquimTop QLabel#nanquimTitle { color: #ececf1; font-size: 15px; font-weight: 600; }"
++    "QToolBar#nanquimTop QLabel#nanquimInfo { color: #a3a3ae; font-size: 12px; }"
++    "QToolBar#nanquimTop QToolButton#nanquimBack { color: #ececf1; font-size: 14px; font-weight: 600;"
++    "  padding: 8px 14px; border: 1px solid #2c2c33; background: #1f1f24; }";
++
++QIcon colorSwatchIcon(const QColor &c)
++{
++    const qreal dpr = qApp->devicePixelRatio();
++    QPixmap pm(QSize(26, 26) * dpr);
++    pm.setDevicePixelRatio(dpr);
++    pm.fill(Qt::transparent);
++    QPainter g(&pm);
++    g.setRenderHint(QPainter::Antialiasing);
++    g.setPen(QPen(C_TEXT, 2));
++    g.setBrush(c);
++    g.drawEllipse(QRectF(2, 2, 22, 22));
++    g.end();
++    return QIcon(pm);
++}
+ 
+-    // controles largos ficam mais estreitos, para caber em telas menores
+-    for (const char *name : {"brushslider1", "brushslider2"}) {
+-        if (QAction *a = ac->action(QLatin1String(name))) {
+-            if (QWidget *w = bar->widgetForAction(a)) {
+-                w->setMaximumWidth(260);
+-            }
++void buildTopBar(KisMainWindow *mw)
++{
++    QToolBar *top = new QToolBar(i18n("Barra do Nanquim"), mw);
++    top->setObjectName(TOP_ID);
++    top->setMovable(false);
++    top->setFloatable(false);
++    top->setContextMenuPolicy(Qt::PreventContextMenu);
++    top->setStyleSheet(QLatin1String(TOP_STYLE));
++    top->setIconSize(QSize(22, 22));
++    mw->addToolBar(Qt::TopToolBarArea, top);
++
++    // galeria (volta para a tela inicial, sem fechar o desenho)
++    QToolButton *gallery = iconButton(top, i18n("Galeria"), designIcon(Svg::GALLERY));
++    gallery->setProperty(NEEDS_CANVAS, true);
++    QObject::connect(gallery, &QToolButton::clicked, mw, [mw]() { mw->showWelcomeScreen(true); });
++    top->addWidget(gallery);
++
++    // "voltar ao desenho" (só na tela inicial, quando há um desenho aberto)
++    QToolButton *back = new QToolButton(top);
++    back->setObjectName(QStringLiteral("nanquimBack"));
++    back->setText(i18n("Voltar ao desenho"));
++    back->setIcon(designIcon(Svg::BACK, 18));
++    back->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
++    back->setFocusPolicy(Qt::NoFocus);
++    back->setProperty(WELCOME_ONLY, true);
++    QObject::connect(back, &QToolButton::clicked, mw, [mw]() { mw->showWelcomeScreen(false); });
++    top->addWidget(back);
++
++    // título e informações do desenho
++    QWidget *titleBox = new QWidget(top);
++    titleBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
++    QVBoxLayout *tl = new QVBoxLayout(titleBox);
++    tl->setContentsMargins(8, 0, 8, 0);
++    tl->setSpacing(0);
++    QLabel *title = new QLabel(QStringLiteral("Nanquim"), titleBox);
++    title->setObjectName(QStringLiteral("nanquimTitle"));
++    QLabel *info = new QLabel(titleBox);
++    info->setObjectName(QStringLiteral("nanquimInfo"));
++    tl->addWidget(title);
++    tl->addWidget(info);
++    top->addWidget(titleBox);
++
++    QTimer *titleTimer = new QTimer(top);
++    titleTimer->setInterval(800);
++    QObject::connect(titleTimer, &QTimer::timeout, top, [mw, title, info]() {
++        KisView *view = mw->activeView();
++        if (!view || !view->document() || !view->image() || mw->centralWidget() == nullptr) {
++            return;
+         }
+-    }
+-    if (QAction *a = ac->action(QStringLiteral("composite_actions"))) {
+-        if (QWidget *w = bar->widgetForAction(a)) {
+-            Q_FOREACH (QComboBox *combo, w->findChildren<QComboBox*>()) {
+-                combo->setMaximumWidth(150);
+-            }
++        QString name = view->document()->caption().trimmed();
++        if (name.endsWith(QLatin1String(".kra"), Qt::CaseInsensitive)) {
++            name.chop(4);
+         }
+-    }
+-
+-    // esquerda: Arquivo, desfazer, refazer
+-    QAction *first = bar->actions().isEmpty() ? nullptr : bar->actions().first();
+-
+-    QToolButton *fileButton = makeButton(bar, i18n("Arquivo"), "document-open", Qt::ToolButtonIconOnly);
+-    QMenu *fileMenu = new QMenu(fileButton);
+-    const QStringList fileActions = {
+-        QStringLiteral("file_new"), QStringLiteral("file_open"), QStringLiteral("file_open_recent"),
+-        QString(),
+-        QStringLiteral("file_save"), QStringLiteral("file_save_as"), QStringLiteral("file_export_file"),
+-        QString(),
+-        QStringLiteral("file_import_file"),
+-    };
+-    Q_FOREACH (const QString &name, fileActions) {
+-        if (name.isEmpty()) {
+-            fileMenu->addSeparator();
+-        } else if (QAction *a = ac->action(name)) {
+-            fileMenu->addAction(a);
++        const QString details = QStringLiteral("%1 × %2").arg(view->image()->width()).arg(view->image()->height());
++        if (title->text() != name) {
++            title->setText(name);
+         }
++        if (info->text() != details) {
++            info->setText(details);
++        }
++    });
++    titleTimer->start();
++
++    // desfazer / refazer
++    struct UndoEntry { const char *action; const char *svg; };
++    const UndoEntry undoEntries[] = {{"edit_undo", Svg::UNDO}, {"edit_redo", Svg::REDO}};
++    for (const UndoEntry &entry : undoEntries) {
++        QAction *a = act(mw, entry.action);
++        if (!a) {
++            continue;
++        }
++        QToolButton *b = iconButton(top, a->text().remove(QLatin1Char('&')), designIcon(entry.svg));
++        b->setProperty(NEEDS_CANVAS, true);
++        QObject::connect(b, &QToolButton::clicked, a, &QAction::trigger);
++        b->setEnabled(a->isEnabled());
++        QObject::connect(a, &QAction::changed, b, [a, b]() { b->setEnabled(a->isEnabled()); });
++        top->addWidget(b);
+     }
+-    fileButton->setMenu(fileMenu);
+-    fileButton->setPopupMode(QToolButton::InstantPopup);
+-    bar->insertWidget(first, fileButton);
++    top->addSeparator();
+ 
+-    for (const char *name : {"edit_undo", "edit_redo"}) {
+-        if (QAction *a = ac->action(QLatin1String(name))) {
+-            bar->insertAction(first, a);
++    // editor de pincel e lista rápida do Krita (os popups precisam do botão real)
++    Q_FOREACH (KisToolBar *tb, mw->toolBars()) {
++        if (tb->objectName() == OLD_TOP_ID) {
++            if (QAction *paintops = act(mw, "paintops")) {
++                tb->removeAction(paintops);
++                top->addAction(paintops);
++            }
+         }
+     }
+-    bar->insertSeparator(first);
+-}
+ 
+-QToolBar *createRail(KisMainWindow *mw)
+-{
+-    auto *ac = mw->actionCollection();
+-
+-    QToolBar *rail = new QToolBar(i18n("Painéis do Nanquim"), mw);
+-    rail->setObjectName(RAIL_ID);
+-    rail->setOrientation(Qt::Vertical);
+-    rail->setMovable(false);
+-    rail->setFloatable(false);
+-    rail->setIconSize(QSize(26, 26));
+-    rail->setStyleSheet(QLatin1String(RAIL_STYLE));
+-    rail->setContextMenuPolicy(Qt::PreventContextMenu);
+-    mw->addToolBar(Qt::RightToolBarArea, rail);
+-
+-    QList<QPointer<QDockWidget>> managed;
+-    QList<QPair<QToolButton*, QDockWidget*>> buttons;
+-    Q_FOREACH (const Panel &p, panels()) {
+-        QDockWidget *dw = findDock(mw, p.dockIds);
++    // painéis
++    struct Panel { const char *tip; const char *svg; QStringList ids; };
++    const QList<Panel> panels = {
++        {"Pincéis", Svg::PEN, {QStringLiteral("PresetDocker")}},
++        {"Cor", nullptr, {QStringLiteral("ColorSelectorNg"), QStringLiteral("WideGamutColorSelector")}},
++        {"Camadas", Svg::LAYERS, {QStringLiteral("KisLayerBox")}},
++        {"Opções da ferramenta", Svg::OPTIONS, {QStringLiteral("sharedtooldocker")}},
++    };
++    Q_FOREACH (const Panel &p, panels) {
++        QDockWidget *dw = findDock(mw, p.ids);
+         if (!dw) {
+             continue;
+         }
+-        managed << dw;
+-        QToolButton *b = makeButton(rail, i18n(p.label), p.icon, Qt::ToolButtonTextUnderIcon);
+-        b->setCheckable(true);
++        QToolButton *b = iconButton(top, i18n(p.tip), p.svg ? designIcon(p.svg) : QIcon(), true);
+         b->setProperty(NEEDS_CANVAS, true);
+-        rail->addWidget(b);
+-        buttons << qMakePair(b, dw);
+-    }
+-    for (const auto &pair : buttons) {
+-        QToolButton *b = pair.first;
+-        QDockWidget *dw = pair.second;
+-        QObject::connect(b, &QToolButton::clicked, mw, [mw, dw, managed, b]() {
+-            togglePanel(mw, dw, managed);
++        if (!p.svg) {
++            // Cor: o botão é a própria cor de frente
++            KisViewManager *vm = mw->viewManager();
++            auto refresh = [b, vm]() {
++                if (vm && vm->canvasResourceProvider()) {
++                    b->setIcon(colorSwatchIcon(vm->canvasResourceProvider()->fgColor().toQColor()));
++                }
++            };
++            refresh();
++            if (vm && vm->canvasResourceProvider()) {
++                QObject::connect(vm->canvasResourceProvider(), &KisCanvasResourceProvider::sigFGColorChanged, b,
++                                 [refresh](const KoColor &) { refresh(); });
++            }
++            b->setIconSize(QSize(26, 26));
++        }
++        QObject::connect(b, &QToolButton::clicked, mw, [mw, dw, b]() {
++            togglePanel(mw, dw);
+             b->setChecked(dw->isVisible());
+         });
+-        QObject::connect(dw->toggleViewAction(), &QAction::toggled, b, [b](bool on) {
+-            b->setChecked(on);
+-        });
++        QObject::connect(dw->toggleViewAction(), &QAction::toggled, b, [b](bool on) { b->setChecked(on); });
++        top->addWidget(b);
+     }
+ 
+-    // Réguas e requadros: assistentes, régua, grade
+-    QToolButton *rulers = makeButton(rail, i18n("Réguas"), "krita_tool_assistant", Qt::ToolButtonTextUnderIcon);
++    // Réguas e requadros
++    QToolButton *rulers = iconButton(top, i18n("Réguas e requadros"), designIcon(Svg::RULER));
+     rulers->setProperty(NEEDS_CANVAS, true);
+     QMenu *rulerMenu = new QMenu(rulers);
+     for (const char *name : {"KisAssistantTool", "KritaShape/KisToolMeasure", "toggle_assistant",
+                              "view_toggle_painting_assistants", "view_toggle_assistant_previews",
+                              "view_grid", "view_snap_to_grid"}) {
+-        if (QAction *a = ac->action(QLatin1String(name))) {
++        if (QAction *a = act(mw, name)) {
+             rulerMenu->addAction(a);
+         }
+     }
+     rulers->setMenu(rulerMenu);
+     rulers->setPopupMode(QToolButton::InstantPopup);
+-    rail->addWidget(rulers);
++    top->addWidget(rulers);
+ 
+-    // Referência: ferramenta de imagens de referência
+-    if (QAction *ref = ac->action(QStringLiteral("ToolReferenceImages"))) {
+-        QToolButton *refButton = makeButton(rail, i18n("Referência"), "krita_tool_reference_images", Qt::ToolButtonTextUnderIcon);
+-        refButton->setProperty(NEEDS_CANVAS, true);
+-        QObject::connect(refButton, &QToolButton::clicked, ref, &QAction::trigger);
+-        rail->addWidget(refButton);
++    // Referência
++    if (QAction *ref = act(mw, "ToolReferenceImages")) {
++        QToolButton *b = iconButton(top, i18n("Referência"), designIcon(Svg::REFERENCE));
++        b->setProperty(NEEDS_CANVAS, true);
++        QObject::connect(b, &QToolButton::clicked, ref, &QAction::trigger);
++        top->addWidget(b);
+     }
+ 
+-    // Mais: o menu completo do Krita, montado na hora de abrir
+-    QToolButton *more = makeButton(rail, i18n("Mais"), "hamburger_menu_dots", Qt::ToolButtonTextUnderIcon);
++    // Mais: o menu completo do Krita
++    QToolButton *more = iconButton(top, i18n("Mais opções"), designIcon(Svg::MORE));
+     QMenu *moreMenu = new QMenu(more);
+     QObject::connect(moreMenu, &QMenu::aboutToShow, mw, [mw, moreMenu]() {
+         moreMenu->clear();
+@@ -386,68 +516,345 @@ QToolBar *createRail(KisMainWindow *mw)
+     });
+     more->setMenu(moreMenu);
+     more->setPopupMode(QToolButton::InstantPopup);
+-    rail->addWidget(more);
++    top->addWidget(more);
++}
++
++// ---------------------------------------------------------------------------
++// Ferramentas à esquerda (design "Desenho"): 8 ferramentas, tamanho, opacidade
++// ---------------------------------------------------------------------------
++const char *NAV_STYLE =
++    "QToolBar#nanquimTools { background: #1c1c20; border: none; border-right: 1px solid #26262c;"
++    "  spacing: 4px; padding: 10px 12px; }"
++    "QToolBar#nanquimTools QToolButton { border: none; border-radius: 10px; padding: 10px 13px; }"
++    "QToolBar#nanquimTools QToolButton:pressed { background: #26262c; }"
++    "QToolBar#nanquimTools QToolButton:checked { background: rgba(61,139,255,0.14); }"
++    "QToolBar#nanquimTools QLabel { color: #a3a3ae; font-size: 11px; }"
++    "QToolBar#nanquimTools QSlider::groove:vertical { width: 8px; border-radius: 4px; background: #34343c; }"
++    "QToolBar#nanquimTools QSlider::add-page:vertical { width: 8px; border-radius: 4px; background: #d8d8e0; }"
++    "QToolBar#nanquimTools QSlider::sub-page:vertical { width: 8px; border-radius: 4px; background: #34343c; }"
++    "QToolBar#nanquimTools QSlider::handle:vertical { background: #ffffff; height: 22px; width: 22px;"
++    "  margin: 0 -7px; border-radius: 11px; }";
++
++struct ToolEntry {
++    const char *tip;
++    const char *svg;
++    const char *toolId;   // ação da ferramenta no Krita
++    bool eraser;          // pincel com a borracha ligada
++};
+ 
+-    return rail;
++QWidget *sliderBlock(QWidget *parent, QSlider *slider, QLabel *label, int height)
++{
++    QWidget *box = new QWidget(parent);
++    QVBoxLayout *l = new QVBoxLayout(box);
++    l->setContentsMargins(0, 6, 0, 6);
++    l->setSpacing(6);
++    label->setAlignment(Qt::AlignHCenter);
++    slider->setFixedHeight(height);
++    l->addWidget(label, 0, Qt::AlignHCenter);
++    l->addWidget(slider, 0, Qt::AlignHCenter);
++    return box;
+ }
+ 
+-} // namespace
++void positionExpandTab(KisMainWindow *mw, QToolButton *tab)
++{
++    QWidget *central = mw->centralWidget();
++    if (!central || !tab) {
++        return;
++    }
++    const QPoint origin = central->mapTo(mw, QPoint(0, 0));
++    tab->move(origin.x(), origin.y() + central->height() / 2 - tab->height() / 2);
++    tab->raise();
++}
+ 
+-void NanquimTabletUi::install(KisMainWindow *mw)
++class ResizeWatcher : public QObject
+ {
+-    KisToolBar *bar = nullptr;
+-    Q_FOREACH (KisToolBar *tb, mw->toolBars()) {
+-        if (tb->objectName() == TOP_BAR_ID) {
+-            bar = tb;
++public:
++    ResizeWatcher(KisMainWindow *mw, QToolButton *tab) : QObject(mw), m_mw(mw), m_tab(tab) {}
++protected:
++    bool eventFilter(QObject *o, QEvent *e) override
++    {
++        if (o == m_mw && (e->type() == QEvent::Resize || e->type() == QEvent::LayoutRequest)) {
++            positionExpandTab(m_mw, m_tab);
++        }
++        return false;
++    }
++private:
++    KisMainWindow *m_mw;
++    QPointer<QToolButton> m_tab;
++};
++
++void setNavCollapsed(KisMainWindow *mw, bool collapsed, bool animate);
++
++void buildToolNav(KisMainWindow *mw)
++{
++    QToolBar *nav = new QToolBar(i18n("Ferramentas do Nanquim"), mw);
++    nav->setObjectName(NAV_ID);
++    nav->setOrientation(Qt::Vertical);
++    nav->setMovable(false);
++    nav->setFloatable(false);
++    nav->setContextMenuPolicy(Qt::PreventContextMenu);
++    nav->setStyleSheet(QLatin1String(NAV_STYLE));
++    nav->setIconSize(QSize(22, 22));
++    mw->addToolBar(Qt::LeftToolBarArea, nav);
++
++    const QList<ToolEntry> tools = {
++        {"Pincel", Svg::PEN, "KritaShape/KisToolBrush", false},
++        {"Borracha", Svg::ERASER, "KritaShape/KisToolBrush", true},
++        {"Mover camada", Svg::MOVE, "KritaTransform/KisToolMove", false},
++        {"Balde", Svg::BUCKET, "KritaFill/KisToolFill", false},
++        {"Seleção", Svg::SELECT, "KisToolSelectRectangular", false},
++        {"Transformar", Svg::TRANSFORM, "KisToolTransform", false},
++        {"Texto e balões", Svg::TEXT, "SvgTextTool", false},
++        {"Conta-gotas", Svg::PICKER, "KritaSelected/KisToolColorSampler", false},
++    };
++
++    QAction *erase = act(mw, "erase_action");
++    QList<QPair<QToolButton*, ToolEntry>> buttons;
++
++    Q_FOREACH (const ToolEntry &t, tools) {
++        QAction *toolAction = act(mw, t.toolId);
++        if (!toolAction || (t.eraser && !erase)) {
++            continue;
+         }
++        QToolButton *b = iconButton(nav, i18n(t.tip), designIcon(t.svg), true);
++        b->setProperty(NEEDS_CANVAS, true);
++        QObject::connect(b, &QToolButton::clicked, mw, [toolAction, erase, t]() {
++            toolAction->trigger();
++            if (erase && QLatin1String(t.toolId) == QLatin1String("KritaShape/KisToolBrush")
++                    && erase->isChecked() != t.eraser) {
++                erase->trigger();
++            }
++        });
++        nav->addWidget(b);
++        buttons << qMakePair(b, t);
+     }
+-    if (!bar) {
+-        KisUsageLogger::log(QStringLiteral("[Nanquim] barra BrushesAndStuff não encontrada; interface padrão mantida"));
++
++    // marca a ferramenta ativa (inclusive quando ela muda por atalho ou pelo Krita)
++    auto sync = [buttons, erase]() {
++        const QString active = KoToolManager::instance()->activeToolId();
++        const bool erasing = erase && erase->isChecked();
++        for (const auto &pair : buttons) {
++            const bool isBrush = QLatin1String(pair.second.toolId) == QLatin1String("KritaShape/KisToolBrush");
++            const bool on = active == QLatin1String(pair.second.toolId) && (!isBrush || pair.second.eraser == erasing);
++            pair.first->setChecked(on);
++        }
++    };
++    QObject::connect(KoToolManager::instance(), &KoToolManager::changedTool, nav, [sync](KoCanvasController *) { sync(); });
++    if (erase) {
++        QObject::connect(erase, &QAction::toggled, nav, [sync](bool) { sync(); });
++    }
++    QTimer::singleShot(0, nav, sync);
++
++    // todas as ferramentas do Krita, num painel
++    if (QDockWidget *toolbox = mw->dockWidget(TOOLBOX_ID)) {
++        QToolButton *all = iconButton(nav, i18n("Todas as ferramentas"), designIcon(Svg::ALL_TOOLS), true);
++        all->setProperty(NEEDS_CANVAS, true);
++        QObject::connect(all, &QToolButton::clicked, mw, [mw, toolbox, all]() {
++            togglePanel(mw, toolbox);
++            all->setChecked(toolbox->isVisible());
++        });
++        QObject::connect(toolbox->toggleViewAction(), &QAction::toggled, all, [all](bool on) { all->setChecked(on); });
++        nav->addWidget(all);
++    }
++
++    QWidget *spacer = new QWidget(nav);
++    spacer->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
++    nav->addWidget(spacer);
++
++    // tamanho e opacidade do pincel, na vertical, como no design
++    QSlider *size = new QSlider(Qt::Vertical, nav);
++    size->setRange(0, 1000);
++    QLabel *sizeLabel = new QLabel(QStringLiteral("— px"), nav);
++    QSlider *opacity = new QSlider(Qt::Vertical, nav);
++    opacity->setRange(0, 100);
++    QLabel *opacityLabel = new QLabel(QStringLiteral("100%"), nav);
++    size->setProperty(NEEDS_CANVAS, true);
++    opacity->setProperty(NEEDS_CANVAS, true);
++    nav->addWidget(sliderBlock(nav, size, sizeLabel, 130));
++    nav->addWidget(sliderBlock(nav, opacity, opacityLabel, 100));
++
++    QObject::connect(size, &QSlider::valueChanged, mw, [mw, sizeLabel](int v) {
++        const qreal px = sliderToSize(v);
++        sizeLabel->setText(QStringLiteral("%1 px").arg(px));
++        if (KoCanvasResourceProvider *r = resources(mw)) {
++            r->setResource(KoCanvasResource::Size, px);
++        }
++    });
++    QObject::connect(opacity, &QSlider::valueChanged, mw, [mw, opacityLabel](int v) {
++        opacityLabel->setText(QStringLiteral("%1%").arg(v));
++        if (KoCanvasResourceProvider *r = resources(mw)) {
++            r->setResource(KoCanvasResource::Opacity, v / 100.0);
++        }
++    });
++
++    auto pull = [mw, size, sizeLabel, opacity, opacityLabel]() {
++        KoCanvasResourceProvider *r = resources(mw);
++        if (!r) {
++            return;
++        }
++        const QVariant s = r->resource(KoCanvasResource::Size);
++        if (s.isValid()) {
++            QSignalBlocker block(size);
++            size->setValue(sizeToSlider(s.toReal()));
++            sizeLabel->setText(QStringLiteral("%1 px").arg(qRound(s.toReal())));
++        }
++        const QVariant o = r->resource(KoCanvasResource::Opacity);
++        if (o.isValid()) {
++            QSignalBlocker block(opacity);
++            opacity->setValue(qRound(o.toReal() * 100));
++            opacityLabel->setText(QStringLiteral("%1%").arg(qRound(o.toReal() * 100)));
++        }
++    };
++    if (KoCanvasResourceProvider *r = resources(mw)) {
++        QObject::connect(r, &KoCanvasResourceProvider::canvasResourceChanged, nav, [pull](int key, const QVariant &) {
++            if (key == KoCanvasResource::Size || key == KoCanvasResource::Opacity
++                    || key == KoCanvasResource::CurrentPaintOpPreset) {
++                pull();
++            }
++        });
++    }
++    QObject::connect(KoToolManager::instance(), &KoToolManager::changedTool, nav, [pull](KoCanvasController *) { pull(); });
++    QTimer::singleShot(0, nav, pull);
++
++    // recolher
++    QToolButton *collapse = iconButton(nav, i18n("Recolher ferramentas"), designIcon(Svg::BACK, 20));
++    collapse->setProperty(NEEDS_CANVAS, true);
++    QObject::connect(collapse, &QToolButton::clicked, mw, [mw]() { setNavCollapsed(mw, true, true); });
++    nav->addWidget(collapse);
++
++    // aba para abrir de novo, na borda esquerda da tela de desenho
++    QToolButton *tab = new QToolButton(mw);
++    tab->setObjectName(QStringLiteral("nanquimExpandTab"));
++    tab->setIcon(designIcon(Svg::FORWARD, 20));
++    tab->setIconSize(QSize(20, 20));
++    tab->setToolTip(i18n("Mostrar ferramentas"));
++    tab->setFocusPolicy(Qt::NoFocus);
++    tab->setStyleSheet(QStringLiteral("QToolButton { background: rgba(28,28,32,0.92); border: 1px solid #33333b;"
++                                      " border-left: none; border-top-right-radius: 12px; border-bottom-right-radius: 12px;"
++                                      " padding: 14px 6px; }"));
++    tab->adjustSize();
++    tab->hide();
++    QObject::connect(tab, &QToolButton::clicked, mw, [mw]() { setNavCollapsed(mw, false, true); });
++    mw->installEventFilter(new ResizeWatcher(mw, tab));
++}
++
++void setNavCollapsed(KisMainWindow *mw, bool collapsed, bool animate)
++{
++    QToolBar *nav = mw->findChild<QToolBar*>(NAV_ID);
++    QToolButton *tab = mw->findChild<QToolButton*>(QStringLiteral("nanquimExpandTab"));
++    if (!nav) {
+         return;
+     }
+-    setupTopBar(mw, bar);
+-    createRail(mw);
++    s_navCollapsed = collapsed;
++    if (collapsed) {
++        if (nav->isVisible() && animate) {
++            const QRect geom(nav->mapTo(mw, QPoint(0, 0)), nav->size());
++            const QPixmap shot = nav->grab();
++            nav->hide();
++            animateOut(s_navOverlay, mw, geom, shot, -1);
++        } else {
++            nav->hide();
++        }
++        if (tab) {
++            flushLayouts();
++            positionExpandTab(mw, tab);
++            tab->show();
++            tab->raise();
++        }
++    } else {
++        if (tab) {
++            tab->hide();
++        }
++        if (!nav->isVisible()) {
++            nav->show();
++            if (animate) {
++                animateIn(s_navOverlay, mw, nav, -1, C_NAV);
++            }
++        }
++    }
++}
++
++} // namespace
++
++void NanquimTabletUi::install(KisMainWindow *mw)
++{
++    buildTopBar(mw);
++    buildToolNav(mw);
+     KisUsageLogger::log(QStringLiteral("[Nanquim] interface de tablet instalada"));
+ }
+ 
+ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+ {
+-    QToolBar *rail = mw->findChild<QToolBar*>(RAIL_ID);
+-    if (!rail) {
++    QToolBar *top = mw->findChild<QToolBar*>(TOP_ID);
++    QToolBar *nav = mw->findChild<QToolBar*>(NAV_ID);
++    if (!top || !nav) {
+         return;   // install() não rodou: deixa o Krita como está
+     }
+ 
+-    mw->menuBar()->setVisible(false);
+-
+-    // anima só quando a tela muda de verdade (a primeira vez é coberta pela abertura)
+     static int s_lastMode = -1;
+     const int mode = canvasMode ? 1 : 0;
+     const bool screenChanged = s_lastMode != -1 && s_lastMode != mode;
+     s_lastMode = mode;
+ 
+-    if (canvasMode) {
+-        // só a barra do topo do Nanquim; as barras padrão do Krita somem
+-        Q_FOREACH (KisToolBar *tb, mw->toolBars()) {
+-            tb->setVisible(tb->objectName() == TOP_BAR_ID);
++    // menus e barras padrão do Krita somem; o Nanquim tem as suas
++    mw->menuBar()->setVisible(false);
++    Q_FOREACH (KisToolBar *tb, mw->toolBars()) {
++        tb->setVisible(false);
++    }
++
++    top->setVisible(true);
++    const bool hasDrawing = mw->activeView() != nullptr;
++    Q_FOREACH (QWidget *w, top->findChildren<QWidget*>()) {
++        if (w->property(WELCOME_ONLY).toBool()) {
++            // o botão fica dentro de uma QWidgetAction da barra: mostra a ação
++            Q_FOREACH (QAction *a, top->actions()) {
++                if (top->widgetForAction(a) == w) {
++                    a->setVisible(!canvasMode && hasDrawing);
++                }
++            }
++        } else if (w->property(NEEDS_CANVAS).toBool()) {
++            Q_FOREACH (QAction *a, top->actions()) {
++                if (top->widgetForAction(a) == w) {
++                    a->setVisible(canvasMode);
++                }
++            }
+         }
+     }
+-    rail->setVisible(true);
+-    Q_FOREACH (QToolButton *b, rail->findChildren<QToolButton*>()) {
+-        if (b->property(NEEDS_CANVAS).toBool()) {
+-            b->setEnabled(canvasMode);
++    if (QAction *paintops = mw->actionCollection()->action(QStringLiteral("paintops"))) {
++        paintops->setVisible(canvasMode);
++    }
++    if (!canvasMode) {
++        if (QLabel *title = top->findChild<QLabel*>(QStringLiteral("nanquimTitle"))) {
++            title->setText(i18n("Galeria"));
++        }
++        if (QLabel *info = top->findChild<QLabel*>(QStringLiteral("nanquimInfo"))) {
++            info->setText(hasDrawing ? i18n("Seu desenho continua aberto") : QString());
++        }
++    }
++
++    QToolButton *tab = mw->findChild<QToolButton*>(QStringLiteral("nanquimExpandTab"));
++    if (canvasMode) {
++        nav->setVisible(!s_navCollapsed);
++        if (tab) {
++            tab->setVisible(s_navCollapsed);
++            if (s_navCollapsed) {
++                flushLayouts();
++                positionExpandTab(mw, tab);
++            }
++        }
++    } else {
++        nav->setVisible(false);
++        if (tab) {
++            tab->hide();
+         }
+     }
+ 
+-    // A primeira tela de desenho da sessão começa limpa. Painel fechado não se
+-    // redesenha, então isso também deixa o app mais leve. Depois disso, o que o
+-    // usuário abrir fica aberto (o Krita salva e restaura).
++    // A primeira tela de desenho da sessão começa limpa (a barra da esquerda
++    // substitui a caixa de ferramentas do Krita). Painel fechado não se redesenha.
+     if (canvasMode && !s_canvasCleaned) {
+         s_canvasCleaned = true;
+         Q_FOREACH (QDockWidget *dw, mw->dockWidgets()) {
+-            const QString id = dw->objectName();
+-            if (id != TOOLBOX_ID) {
+-                dw->hide();
+-            }
++            dw->hide();
+         }
+     }
+ 
+diff --git a/libs/ui/NanquimTabletUi.h b/libs/ui/NanquimTabletUi.h
+index ec4af65..8a5ad21 100644
+--- a/libs/ui/NanquimTabletUi.h
++++ b/libs/ui/NanquimTabletUi.h
+@@ -12,8 +12,10 @@ class KisMainWindow;
+ /**
+  * Nanquim: interface de tablet (primeira peça).
+  *
+- * - barra do topo: Arquivo, desfazer/refazer e os controles do pincel do Krita;
+- * - trilho vertical à direita: Pincéis, Cor, Camadas, Opções, Réguas, Referência e Mais;
++ * - barra do topo (design "Desenho"): galeria, título do desenho, desfazer/refazer,
++ *   editor de pincel, Pincéis, Cor, Camadas, Opções, Réguas, Referência e Mais;
++ * - barra de ferramentas à esquerda: 8 ferramentas, tamanho e opacidade na vertical,
++ *   botão de recolher;
+  * - os painéis abrem um de cada vez ao lado do trilho e fecham com outro toque;
+  * - a barra de menus vira o botão "Mais", e as barras padrão do Krita somem;
+  * - a primeira tela de desenho da sessão começa limpa (só a caixa de ferramentas).
+-- 
+2.43.0
+
