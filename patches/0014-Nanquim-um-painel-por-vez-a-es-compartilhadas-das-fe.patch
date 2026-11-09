@@ -1,0 +1,175 @@
+From 365416fb5df31310d0b0540658df1f472f7ba73b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 16:05:33 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20um=20painel=20por=20vez,=20a=C3=A7?=
+ =?UTF-8?q?=C3=B5es=20compartilhadas=20das=20ferramentas=20criadas=20uma?=
+ =?UTF-8?q?=20s=C3=B3=20vez=20e=20tempos=20dos=20controles=20do=20pincel?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ libs/flake/KoToolFactoryBase.cpp         |  6 ++++++
+ libs/ui/NanquimTabletUi.cpp              | 14 +++++++++++---
+ libs/ui/kis_control_frame.cpp            |  7 +++++++
+ libs/ui/tool/KisToolPaintFactoryBase.cpp | 22 ++++++++++++++++++++++
+ 4 files changed, 46 insertions(+), 3 deletions(-)
+
+diff --git a/libs/flake/KoToolFactoryBase.cpp b/libs/flake/KoToolFactoryBase.cpp
+index be2ad87..d54a403 100644
+--- a/libs/flake/KoToolFactoryBase.cpp
++++ b/libs/flake/KoToolFactoryBase.cpp
+@@ -4,6 +4,7 @@
+  * SPDX-License-Identifier: LGPL-2.0-or-later
+  */
+ 
++#include <NanquimStepTimer.h>
+ #include "KoToolFactoryBase.h"
+ 
+ #include "KoToolBase.h"
+@@ -48,13 +49,16 @@ QList<QAction *> KoToolFactoryBase::createActions(KisKActionCollection *actionCo
+ {
+     QList<QAction *> toolActions;
+ 
++    NanquimStepTimer nanquimTimer(QStringLiteral("ferramenta ") + id());
+     KisActionRegistry *actionRegistry = KisActionRegistry::instance();
+     QList<QAction*> actions = createActionsImpl(toolManager);
++    nanquimTimer.mark(QStringLiteral("criar acoes (createActionsImpl)"), 40);
+     QAction *action = actionRegistry->makeQAction(id(), this);
+     actionCollection->addAction(id(), action);
+     connect(action, &QAction::triggered, toolManager, [toolId = id(), toolManager] () {
+         toolManager->switchToolRequested(toolId);
+     });
++    nanquimTimer.mark(QStringLiteral("acao da ferramenta"), 40);
+ 
+     Q_FOREACH(QAction *action, actions) {
+         if (action->objectName().isEmpty()) {
+@@ -123,6 +127,8 @@ QList<QAction *> KoToolFactoryBase::createActions(KisKActionCollection *actionCo
+     }
+ #endif
+ 
++    nanquimTimer.mark(QStringLiteral("registrar acoes"), 40);
++
+ //    qDebug() << "Generated actions for tool factory" << id();
+ //    Q_FOREACH(QAction *action, toolActions) {
+ //        qDebug() << "\taction:" << action->objectName() << "shortcut" << action->shortcuts() << "tools" << action->property("tool_action").toStringList();
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index b5989ca..fdbc243 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -36,7 +36,7 @@ QList<Panel> panels()
+ {
+     return {
+         {"Pincéis", "krita_tool_freehand", {QStringLiteral("PresetDocker")}},
+-        {"Cor", "extended_color_selector", {QStringLiteral("WideGamutColorSelector"), QStringLiteral("ColorSelectorNg")}},
++        {"Cor", "extended_color_selector", {QStringLiteral("ColorSelectorNg"), QStringLiteral("WideGamutColorSelector")}},
+         {"Camadas", "all-layers", {QStringLiteral("KisLayerBox")}},
+         {"Opções", "configure", {QStringLiteral("sharedtooldocker")}},
+     };
+@@ -100,11 +100,19 @@ void togglePanel(KisMainWindow *mw, QDockWidget *dw, const QList<QPointer<QDockW
+         dw->hide();
+         return;
+     }
+-    Q_FOREACH (const QPointer<QDockWidget> &other, all) {
+-        if (other && other != dw) {
++    Q_UNUSED(all);
++    // um painel de cada vez: fecha qualquer outro aberto (menos a caixa de
++    // ferramentas), inclusive painéis abertos pelo menu "Mais"
++    Q_FOREACH (QDockWidget *other, mw->dockWidgets()) {
++        if (other != dw && other->objectName() != TOOLBOX_ID && other->isVisible()) {
+             other->hide();
+         }
+     }
++    // se o painel estava empilhado em abas com outros, solta ele sozinho
++    if (!mw->tabifiedDockWidgets(dw).isEmpty()) {
++        mw->removeDockWidget(dw);
++        mw->addDockWidget(Qt::RightDockWidgetArea, dw);
++    }
+     if (dw->isFloating() || mw->dockWidgetArea(dw) != Qt::RightDockWidgetArea) {
+         dw->setFloating(false);
+         mw->addDockWidget(Qt::RightDockWidgetArea, dw);
+diff --git a/libs/ui/kis_control_frame.cpp b/libs/ui/kis_control_frame.cpp
+index 7d0ea97..13fc755 100644
+--- a/libs/ui/kis_control_frame.cpp
++++ b/libs/ui/kis_control_frame.cpp
+@@ -9,6 +9,7 @@
+  *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
++#include <NanquimStepTimer.h>
+ #include "kis_control_frame.h"
+ 
+ #include <stdlib.h>
+@@ -74,8 +75,11 @@ KisControlFrame::KisControlFrame(KisViewManager *view, QWidget *parent, const ch
+ 
+ void KisControlFrame::setup(QWidget *parent)
+ {
++    NanquimStepTimer nanquimTimer(QStringLiteral("controles do pincel"));
+     createPatternsChooser(m_viewManager);
++    nanquimTimer.mark(QStringLiteral("texturas (patterns)"));
+     createGradientsChooser(m_viewManager);
++    nanquimTimer.mark(QStringLiteral("gradientes"));
+ 
+     QWidgetAction *action  = new QWidgetAction(this);
+     action->setText(i18n("&Patterns"));
+@@ -189,7 +193,9 @@ void KisControlFrame::setup(QWidget *parent)
+     });
+     
+ 
++    nanquimTimer.mark(QStringLiteral("botoes de cor"));
+     m_paintopBox = new KisPaintopBox(m_viewManager, parent, "paintopbox");
++    nanquimTimer.mark(QStringLiteral("caixa de pinceis (KisPaintopBox)"));
+ 
+     action = new QWidgetAction(this);
+     action->setText(i18n("&Painter's Tools"));
+@@ -203,6 +209,7 @@ void KisControlFrame::setup(QWidget *parent)
+     action->setText(i18n("&Docker Box"));
+     m_viewManager->actionCollection()->addAction("dockerBox", action);
+     action->setDefaultWidget(m_dockerPopupButton);
++    nanquimTimer.mark(QStringLiteral("caixa de paineis"));
+ }
+ 
+ void KisControlFrame::slotUpdateDisplayRenderer(KoDualColorButton* colourSelector)
+diff --git a/libs/ui/tool/KisToolPaintFactoryBase.cpp b/libs/ui/tool/KisToolPaintFactoryBase.cpp
+index 73f8474..4ff64db 100644
+--- a/libs/ui/tool/KisToolPaintFactoryBase.cpp
++++ b/libs/ui/tool/KisToolPaintFactoryBase.cpp
+@@ -5,6 +5,7 @@
+  */
+ #include "KisToolPaintFactoryBase.h"
+ 
++#include <QAction>
+ #include <kis_action_registry.h>
+ #include <kis_action.h>
+ 
+@@ -23,6 +24,27 @@ QList<QAction *> KisToolPaintFactoryBase::createActionsImpl(KoToolManager *toolM
+ {
+     Q_UNUSED(toolManager);
+ 
++#ifdef Q_OS_ANDROID
++    // Nanquim: cada ferramenta de pintura recriava (traduzia, configurava e
++    // depois descartava) as mesmas 6 ações compartilhadas. No Android só existe
++    // uma janela, então da segunda ferramenta em diante basta devolver ações
++    // "marcadoras" com o mesmo nome: KoToolFactoryBase::createActions encontra
++    // a ação de verdade na coleção, apaga a marcadora e só anota a ferramenta.
++    static bool s_sharedActionsCreated = false;
++    if (s_sharedActionsCreated) {
++        QList<QAction *> placeholders;
++        for (const char *name : {"increase_brush_size", "decrease_brush_size",
++                                 "rotate_brush_tip_clockwise", "rotate_brush_tip_clockwise_precise",
++                                 "rotate_brush_tip_counter_clockwise", "rotate_brush_tip_counter_clockwise_precise"}) {
++            QAction *placeholder = new QAction(this);
++            placeholder->setObjectName(QLatin1String(name));
++            placeholders << placeholder;
++        }
++        return placeholders;
++    }
++    s_sharedActionsCreated = true;
++#endif
++
+     KisActionRegistry *actionRegistry = KisActionRegistry::instance();
+     QList<QAction *> actions;
+ 
+-- 
+2.43.0
+
