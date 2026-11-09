@@ -1,0 +1,286 @@
+From ca81199f17d9d4d597052afa0cedf3087b396be3 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 16:34:23 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20anima=C3=A7=C3=B5es=20(sa=C3=ADda=20?=
+ =?UTF-8?q?da=20abertura=20em=20etapas,=20pain=C3=A9is=20deslizando=20e=20?=
+ =?UTF-8?q?troca=20de=20tela=20suave)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ libs/ui/NanquimTabletUi.cpp                   | 138 ++++++++++++++++++
+ .../src/org/krita/android/NanquimSplash.java  |  49 ++++++-
+ 2 files changed, 181 insertions(+), 6 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index fdbc243..b262f3f 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -7,6 +7,11 @@
+ #include "NanquimTabletUi.h"
+ 
+ #include <QAction>
++#include <QApplication>
++#include <QEasingCurve>
++#include <QPainter>
++#include <QVariantAnimation>
++#include <functional>
+ #include <QComboBox>
+ #include <QDockWidget>
+ #include <QMenu>
+@@ -68,6 +73,124 @@ const char *RAIL_STYLE =
+     "QToolBar#nanquimRail QToolButton:disabled { color: #4a5a70; }"
+     "QToolBar#nanquimRail QToolButton::menu-indicator { image: none; width: 0px; }";
+ 
++// --- animações ---------------------------------------------------------------
++// O Krita desliga as animações nativas de painéis no Android (eram lentas e
++// davam crash). Aqui a animação é feita por cima: uma camada leve, que não
++// recebe toques, desenha uma "foto" do painel deslizando e aparecendo. O painel
++// de verdade já está no lugar por baixo, então nada é redimensionado a cada
++// quadro e a tela de desenho não é recalculada durante a animação.
++
++class NanquimOverlay : public QWidget
++{
++public:
++    using Painter = std::function<void(QPainter &, const QRect &, qreal)>;
++
++    NanquimOverlay(QWidget *parent, const QRect &geometry, Painter painter)
++        : QWidget(parent)
++        , m_painter(std::move(painter))
++    {
++        setAttribute(Qt::WA_TransparentForMouseEvents);
++        setAttribute(Qt::WA_NoSystemBackground);
++        setFocusPolicy(Qt::NoFocus);
++        setGeometry(geometry);
++        raise();
++        show();
++    }
++
++    void setProgress(qreal p)
++    {
++        m_progress = p;
++        update();
++    }
++
++protected:
++    void paintEvent(QPaintEvent *) override
++    {
++        QPainter g(this);
++        g.setRenderHint(QPainter::SmoothPixmapTransform);
++        m_painter(g, rect(), m_progress);
++    }
++
++private:
++    Painter m_painter;
++    qreal m_progress = 0.0;
++};
++
++QPointer<NanquimOverlay> s_panelOverlay;
++QPointer<NanquimOverlay> s_screenOverlay;
++
++void runOverlay(QPointer<NanquimOverlay> &slot, NanquimOverlay *overlay, int durationMs, QEasingCurve::Type easing)
++{
++    if (slot) {
++        slot->deleteLater();
++    }
++    slot = overlay;
++    QVariantAnimation *anim = new QVariantAnimation(overlay);
++    anim->setStartValue(0.0);
++    anim->setEndValue(1.0);
++    anim->setDuration(durationMs);
++    anim->setEasingCurve(easing);
++    QObject::connect(anim, &QVariantAnimation::valueChanged, overlay, [overlay](const QVariant &v) {
++        overlay->setProgress(v.toReal());
++    });
++    QObject::connect(anim, &QVariantAnimation::finished, overlay, &QObject::deleteLater);
++    anim->start();
++}
++
++// aplica já o layout pendente, para saber a posição final do painel antes de desenhar
++void flushLayouts()
++{
++    QApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
++}
++
++const int SLIDE_DP = 56;
++
++void animatePanelIn(KisMainWindow *mw, QDockWidget *dw)
++{
++    flushLayouts();
++    const QRect geom = dw->geometry();
++    if (geom.isEmpty()) {
++        return;
++    }
++    const QPixmap shot = dw->grab();
++    const QColor bg = dw->palette().color(QPalette::Window);
++    NanquimOverlay *o = new NanquimOverlay(mw, geom, [shot, bg](QPainter &g, const QRect &r, qreal p) {
++        // fundo do painel firme; o conteúdo entra da direita e aparece
++        g.fillRect(r, bg);
++        g.setOpacity(p);
++        g.drawPixmap(QPointF((1.0 - p) * SLIDE_DP, 0), shot);
++    });
++    runOverlay(s_panelOverlay, o, 240, QEasingCurve::OutCubic);
++}
++
++void animatePanelOut(KisMainWindow *mw, const QRect &geom, const QPixmap &shot)
++{
++    if (geom.isEmpty() || shot.isNull()) {
++        return;
++    }
++    flushLayouts();
++    NanquimOverlay *o = new NanquimOverlay(mw, geom, [shot](QPainter &g, const QRect &, qreal p) {
++        // o painel sai para a direita e se dissolve sobre o desenho
++        g.setOpacity(1.0 - p);
++        g.drawPixmap(QPointF(p * SLIDE_DP, 0), shot);
++    });
++    runOverlay(s_panelOverlay, o, 190, QEasingCurve::InCubic);
++}
++
++// troca de tela (inicial <-> desenho): a nova tela surge de um fundo escuro
++void animateScreenIn(KisMainWindow *mw)
++{
++    QWidget *central = mw->centralWidget();
++    if (!central) {
++        return;
++    }
++    const QRect geom(central->mapTo(mw, QPoint(0, 0)), central->size());
++    NanquimOverlay *o = new NanquimOverlay(mw, geom, [](QPainter &g, const QRect &r, qreal p) {
++        g.fillRect(r, QColor(11, 16, 25, int(255 * (1.0 - p))));
++    });
++    runOverlay(s_screenOverlay, o, 320, QEasingCurve::OutCubic);
++}
++
+ QToolButton *makeButton(QWidget *parent, const QString &text, const char *icon, Qt::ToolButtonStyle style)
+ {
+     QToolButton *b = new QToolButton(parent);
+@@ -97,7 +220,10 @@ void togglePanel(KisMainWindow *mw, QDockWidget *dw, const QList<QPointer<QDockW
+         return;
+     }
+     if (dw->isVisible()) {
++        const QRect geom = dw->geometry();
++        const QPixmap shot = dw->grab();
+         dw->hide();
++        animatePanelOut(mw, geom, shot);
+         return;
+     }
+     Q_UNUSED(all);
+@@ -121,6 +247,7 @@ void togglePanel(KisMainWindow *mw, QDockWidget *dw, const QList<QPointer<QDockW
+     dw->raise();
+     // largura confortável para o dedo, sem engolir a tela
+     mw->resizeDocks({dw}, {qBound(300, mw->width() / 4, 420)}, Qt::Horizontal);
++    animatePanelIn(mw, dw);
+ }
+ 
+ void setupTopBar(KisMainWindow *mw, KisToolBar *bar)
+@@ -292,6 +419,12 @@ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+ 
+     mw->menuBar()->setVisible(false);
+ 
++    // anima só quando a tela muda de verdade (a primeira vez é coberta pela abertura)
++    static int s_lastMode = -1;
++    const int mode = canvasMode ? 1 : 0;
++    const bool screenChanged = s_lastMode != -1 && s_lastMode != mode;
++    s_lastMode = mode;
++
+     if (canvasMode) {
+         // só a barra do topo do Nanquim; as barras padrão do Krita somem
+         Q_FOREACH (KisToolBar *tb, mw->toolBars()) {
+@@ -317,4 +450,9 @@ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+             }
+         }
+     }
++
++    if (screenChanged) {
++        flushLayouts();
++        animateScreenIn(mw);
++    }
+ }
+diff --git a/packaging/android/apk/src/org/krita/android/NanquimSplash.java b/packaging/android/apk/src/org/krita/android/NanquimSplash.java
+index 2578353..355e009 100644
+--- a/packaging/android/apk/src/org/krita/android/NanquimSplash.java
++++ b/packaging/android/apk/src/org/krita/android/NanquimSplash.java
+@@ -36,6 +36,10 @@ public final class NanquimSplash {
+     private static FrameLayout sRoot;
+     private static TextView sStatus;
+     private static View sBar;
++    private static View sArt;
++    private static View sBrand;
++    private static View sRight;
++    private static View sShine;
+     private static boolean sHiding;
+     private static ObjectAnimator sSweep;
+ 
+@@ -199,6 +203,10 @@ public final class NanquimSplash {
+         ViewGroup decor = (ViewGroup) a.getWindow().getDecorView();
+         decor.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+         sRoot = root;
++        sArt = art;
++        sBrand = brand;
++        sRight = right;
++        sShine = shine;
+ 
+         // --- animações que não dependem do tamanho -----------------------
+         art.animate().scaleX(1.06f).scaleY(1.06f).translationX(-12 * d)
+@@ -247,23 +255,52 @@ public final class NanquimSplash {
+             return;
+         }
+         sHiding = true;
++        final float d = root.getResources().getDisplayMetrics().density;
++        final DecelerateInterpolator out = new DecelerateInterpolator(1.8f);
++
++        // 1) a barra completa
+         if (sBar != null) {
+             sBar.animate().cancel();
+-            sBar.animate().scaleX(1f).setDuration(250).start();
++            sBar.animate().scaleX(1f).setDuration(220).setInterpolator(out).start();
++        }
++        // 2) o brilho para e a coluna de status some
++        if (sSweep != null) {
++            sSweep.cancel();
++        }
++        if (sShine != null) {
++            sShine.animate().alpha(0f).setDuration(200).start();
++        }
++        if (sRight != null) {
++            sRight.animate().alpha(0f).translationY(10 * d).setStartDelay(180).setDuration(260)
++                    .setInterpolator(out).start();
+         }
+-        root.animate().alpha(0f).setStartDelay(250).setDuration(450).withEndAction(() -> {
++        // 3) a logo sobe e se dissolve
++        if (sBrand != null) {
++            sBrand.animate().alpha(0f).translationY(-16 * d).setStartDelay(240).setDuration(340)
++                    .setInterpolator(out).start();
++        }
++        // 4) a arte avança um pouco, como se a câmera entrasse no app
++        if (sArt != null) {
++            sArt.animate().cancel();
++            sArt.animate().scaleX(1.14f).scaleY(1.14f).setStartDelay(200).setDuration(720)
++                    .setInterpolator(new DecelerateInterpolator(1.4f)).start();
++        }
++        // 5) tudo se funde na tela inicial que já está desenhada por baixo
++        root.animate().alpha(0f).setStartDelay(360).setDuration(560).setInterpolator(out).withEndAction(() -> {
+             ViewGroup parent = (ViewGroup) root.getParent();
+             if (parent != null) {
+                 parent.removeView(root);
+             }
+-            if (sSweep != null) {
+-                sSweep.cancel();
+-                sSweep = null;
+-            }
++            sSweep = null;
+             sRoot = null;
+             sStatus = null;
+             sBar = null;
++            sArt = null;
++            sBrand = null;
++            sRight = null;
++            sShine = null;
+             sHiding = false;
+         }).start();
+     }
++
+ }
+-- 
+2.43.0
+

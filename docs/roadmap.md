@@ -12,7 +12,9 @@
 | Padrões leves no Android (filtro trilinear, prévia instantânea, 100 desfazer, teto de memória 35%) | Em teste | 0010, 0012 |
 | Medir os ~10 s restantes da janela: KisViewManager ~4 s e ações das ferramentas ~6 s; agora detalhados | Em teste | 0011, 0012 |
 | Interface nova, peça 1: barra do topo, trilho de painéis à direita, menu em "Mais" | Feito (testado no Tab S10 Lite) | 0011, 0013, 0014 |
-| Abertura: ações repetidas das ferramentas (~6 s) e controles do pincel (~2,8 s) | Em andamento | 0014 |
+| Abertura: ações repetidas das ferramentas (6,1 s → 1,9 s; abertura total ~10 s) | Feito | 0014 |
+| Abertura: caixa de pincéis (KisPaintopBox, ~2,3 s) criada sob demanda | Próximo | — |
+| Animações: saída da abertura, painéis deslizando, troca de tela | Em teste | 0015 |
 | Interface nova, próximas peças: galeria inicial, ferramentas recolhíveis, boas-vindas | Próximo | — |
 | Importador `.sut` (Clip Studio) | Planejado | — |
 | Liquidificar mais rápido (prévia leve + aplicação em resolução total) | Planejado | — |
