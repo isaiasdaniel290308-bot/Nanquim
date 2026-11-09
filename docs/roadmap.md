@@ -8,9 +8,11 @@
 | Nome "Nanquim" no Android | Feito | 0003 |
 | Abertura em ~15 s (sem o painel QML de texto) | Feito | 0004 |
 | Abrir `.kpp` e `.bundle` pelo "Abrir com" | Feito (testado no Tab S10 Lite) | 0005, 0007 |
-| Abertura animada nativa, ícone da gota, nome Nanquim | Em teste | 0006, 0008 |
-| Medir os ~11 s restantes da janela principal | Próximo | — |
-| Interface nova (galeria, barra híbrida, painéis sob demanda) | Projetada | — |
+| Abertura animada nativa, ícone da gota, nome Nanquim | Feito | 0006, 0008, 0009 |
+| Padrões leves no Android (filtro trilinear, prévia instantânea, 100 desfazer) | Em teste | 0010 |
+| Medir os ~10 s restantes da janela principal (tempos por etapa no log) | Em teste | 0011 |
+| Interface nova, peça 1: barra única, painéis em um toque, menu em "Mais" | Em teste | 0011 |
+| Interface nova, próximas peças: galeria inicial, ferramentas recolhíveis, boas-vindas | Próximo | — |
 | Importador `.sut` (Clip Studio) | Planejado | — |
 | Liquidificar mais rápido (prévia leve + aplicação em resolução total) | Planejado | — |
 | Modo de interface "Clássico" (desktop), alternável nas configurações | Projetado | — |

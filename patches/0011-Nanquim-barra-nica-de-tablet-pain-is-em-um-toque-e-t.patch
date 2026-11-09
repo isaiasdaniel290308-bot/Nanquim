@@ -1,0 +1,461 @@
+From 53daa4869db77fb2da0e9473512556a3e6f723c8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 14:48:47 -0300
+Subject: [PATCH 11/11] =?UTF-8?q?Nanquim:=20barra=20=C3=BAnica=20de=20tabl?=
+ =?UTF-8?q?et,=20pain=C3=A9is=20em=20um=20toque=20e=20tempos=20da=20montag?=
+ =?UTF-8?q?em=20da=20janela?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ libs/ui/CMakeLists.txt      |   1 +
+ libs/ui/KisMainWindow.cpp   |  30 ++++
+ libs/ui/NanquimTabletUi.cpp | 265 ++++++++++++++++++++++++++++++++++++
+ libs/ui/NanquimTabletUi.h   |  28 ++++
+ 4 files changed, 324 insertions(+)
+ create mode 100644 libs/ui/NanquimTabletUi.cpp
+ create mode 100644 libs/ui/NanquimTabletUi.h
+
+diff --git a/libs/ui/CMakeLists.txt b/libs/ui/CMakeLists.txt
+index b132cb8..53004c1 100644
+--- a/libs/ui/CMakeLists.txt
++++ b/libs/ui/CMakeLists.txt
+@@ -446,6 +446,7 @@ set(kritaui_LIB_SRCS
+     KisImportUserFeedbackInterface.cpp
+     kis_async_action_feedback.cpp
+     KisMainWindow.cpp
++    NanquimTabletUi.cpp
+     KisOpenPane.cpp
+     KisPart.cpp
+     KisTemplate.cpp
+diff --git a/libs/ui/KisMainWindow.cpp b/libs/ui/KisMainWindow.cpp
+index e8beaf2..de48af5 100644
+--- a/libs/ui/KisMainWindow.cpp
++++ b/libs/ui/KisMainWindow.cpp
+@@ -158,6 +158,18 @@
+ #include "KisRecentFilesManager.h"
+ #include "KisWidgetConnectionUtils.h"
+ #include "KisToolBarStateModel.h"
++
++#ifdef Q_OS_ANDROID
++#include <QElapsedTimer>
++#include <KisUsageLogger.h>
++#include "NanquimTabletUi.h"
++// Nanquim: marca quanto tempo cada etapa da montagem da janela leva (log do Krita)
++#define NANQUIM_MARK_START QElapsedTimer nanquimTimer; nanquimTimer.start();
++#define NANQUIM_MARK(what) KisUsageLogger::log(QStringLiteral("[Nanquim tempo] janela: %1 - %2 ms").arg(QStringLiteral(what)).arg(nanquimTimer.restart()));
++#else
++#define NANQUIM_MARK_START
++#define NANQUIM_MARK(what)
++#endif
+ #include <config-qmdiarea-always-show-subwindow-title.h>
+ #include <config-qt-patches-present.h>
+ #include <KisPlatformPluginInterfaceFactory.h>
+@@ -366,6 +378,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+     , d(new Private(this, uuid))
+ {
+     KisScopedPerformanceLogger perfLog(QStringLiteral("KisMainWindow::KisMainWindow"));
++    NANQUIM_MARK_START
+ 
+     KAcceleratorManager::setNoAccel(this);
+ 
+@@ -375,6 +388,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+     connect(d->workspacemodel, SIGNAL(rowsRemoved(QModelIndex,int,int)), this, SLOT(updateWindowMenu()));
+ 
+     d->viewManager = new KisViewManager(this, actionCollection());
++    NANQUIM_MARK("KisViewManager")
+     KConfigGroup group( KSharedConfig::openConfig(), "theme");
+ #ifndef Q_OS_HAIKU
+     d->themeManager = new Digikam::ThemeManager(group.readEntry("Theme", "Krita dark"), this);
+@@ -402,9 +416,11 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+ 
+     actionCollection()->addAssociatedWidget(this);
+     KoPluginLoader::instance()->load("Krita/ViewPlugin", KoPluginLoader::PluginsConfig(), d->viewManager, false);
++    NANQUIM_MARK("plugins de visualizacao")
+ 
+     // Load the per-application plugins (Right now, only Python) We do this only once, when the first mainwindow is being created.
+     KoPluginLoader::instance()->load("Krita/ApplicationPlugin", KoPluginLoader::PluginsConfig(), qApp, true);
++    NANQUIM_MARK("plugins do aplicativo")
+ 
+     KoToolBoxFactory toolBoxFactory;
+     QDockWidget *toolbox = createDockWidget(&toolBoxFactory);
+@@ -434,6 +450,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+     if (d->toolOptionsDocker) {
+         dockwidgetActions[d->toolOptionsDocker->toggleViewAction()->text()] = d->toolOptionsDocker->toggleViewAction();
+     }
++    NANQUIM_MARK("paineis (dockers)")
+     connect(d->viewManager->toolManager(), SIGNAL(toolOptionWidgetsChanged(KoCanvasController*,QList<QPointer<QWidget> >)), this, SLOT(newOptionWidgets(KoCanvasController*,QList<QPointer<QWidget> >)));
+ 
+     Q_FOREACH (QString title, dockwidgetActions.keys()) {
+@@ -474,6 +491,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+     Q_FOREACH(KoToolFactoryBase *toolFactory, KoToolRegistry::instance()->values()) {
+         toolFactory->createActions(actionCollection(), d->viewManager->toolManager());
+     }
++    NANQUIM_MARK("acoes das ferramentas")
+ 
+ 
+     Q_FOREACH (QDockWidget *wdg, dockWidgets()) {
+@@ -497,6 +515,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+     d->mdiArea->setAcceptDrops(true);
+ 
+     themeChanged(); // updates icon styles
++    NANQUIM_MARK("observadores e tema")
+ 
+     setCentralWidget(d->widgetStack);
+     d->widgetStack->setCurrentIndex(0);
+@@ -509,6 +528,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+     actionCollection()->addAssociatedWidget(d->canvasWindow);
+ 
+     createActions();
++    NANQUIM_MARK("createActions")
+ 
+     // the welcome screen needs to grab actions...so make sure this line goes after the createAction() so they exist
+     d->welcomePage->setMainWindow(this);
+@@ -578,6 +598,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+ 
+     // Make sure the python plugins create their actions in time
+     KisPart::instance()->notifyMainWindowIsBeingCreated(this);
++    NANQUIM_MARK("ajuda e configuracoes")
+ 
+     // If we have customized the toolbars, load that first
+     setLocalXMLFile(KoResourcePaths::locateLocal("data", "krita5.xmlgui"));
+@@ -585,6 +606,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+ 
+     guiFactory()->addClient(this);
+     applyActionIconOverridesFromLocalXML();
++    NANQUIM_MARK("menus e barras (xmlgui)")
+     connect(guiFactory(), SIGNAL(makingChanges(bool)), SLOT(slotXmlGuiMakingChanges(bool)));
+ 
+     // Create and plug toolbar list for Settings menu
+@@ -610,6 +632,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+ 
+     d->viewManager->updateGUI();
+     d->viewManager->updateIcons();
++    NANQUIM_MARK("lista de barras, updateGUI e icones")
+ 
+     QTimer::singleShot(1000, Qt::CoarseTimer, this, SLOT(checkSanity()));
+ 
+@@ -676,7 +699,14 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+         tabBar->setChangeCurrentOnDrag(true);
+     }
+ 
++    NANQUIM_MARK("janela nativa e abas")
+     applyMainWindowSettings(d->windowStateConfig);
++    NANQUIM_MARK("restaurar estado da janela")
++
++#ifdef Q_OS_ANDROID
++    NanquimTabletUi::install(this);
++    NANQUIM_MARK("interface de tablet do Nanquim")
++#endif
+ }
+ 
+ KisMainWindow::~KisMainWindow()
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+new file mode 100644
+index 0000000..a609ec8
+--- /dev/null
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -0,0 +1,265 @@
++/*
++ *  SPDX-FileCopyrightText: 2026 Nanquim
++ *
++ *  SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++#include "NanquimTabletUi.h"
++
++#include <QAction>
++#include <QDockWidget>
++#include <QMenu>
++#include <QMenuBar>
++#include <QPointer>
++#include <QTimer>
++#include <QToolBar>
++#include <QToolButton>
++#include <QWidgetAction>
++
++#include <kactioncollection.h>
++#include <ktoolbar.h>
++#include <klocalizedstring.h>
++
++#include "KisMainWindow.h"
++#include "kis_icon_utils.h"
++#include "KisUsageLogger.h"
++
++namespace
++{
++
++// Os painéis que a barra controla, nessa ordem.
++struct Panel {
++    const char *label;
++    const char *icon;
++    QStringList dockIds;   // o primeiro que existir no app
++};
++
++const QString TOOLBOX_ID = QStringLiteral("ToolBox");
++const QString TOOL_OPTIONS_ID = QStringLiteral("sharedtooldocker");
++const char *PANEL_PROPERTY = "nanquimPanel";
++
++QList<Panel> panels()
++{
++    return {
++        {"Pincéis", "krita_tool_freehand", {QStringLiteral("PresetDocker")}},
++        {"Cor", "extended_color_selector", {QStringLiteral("WideGamutColorSelector"), QStringLiteral("ColorSelectorNg")}},
++        {"Camadas", "all-layers", {QStringLiteral("KisLayerBox")}},
++    };
++}
++
++QDockWidget *findDock(KisMainWindow *mw, const QStringList &ids)
++{
++    Q_FOREACH (const QString &id, ids) {
++        if (QDockWidget *dw = mw->dockWidget(id)) {
++            return dw;
++        }
++    }
++    return nullptr;
++}
++
++const char *STYLE =
++    "QToolBar#BrushesAndStuff { background: #0d1320; border: none; border-bottom: 1px solid #1c2535;"
++    "  spacing: 4px; padding: 2px 6px; }"
++    "QToolBar#BrushesAndStuff QToolButton { border: 1px solid transparent; border-radius: 9px;"
++    "  padding: 3px 7px; color: #cfe0f2; }"
++    "QToolBar#BrushesAndStuff QToolButton:pressed { background: #1c2535; }"
++    "QToolBar#BrushesAndStuff QToolButton[nanquimPanel=\"true\"]:checked {"
++    "  background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3d8bff, stop:1 #22d3ee);"
++    "  color: #0b1019; }"
++    "QToolBar#BrushesAndStuff QToolButton::menu-indicator { image: none; width: 0px; }";
++
++QToolButton *makeButton(QToolBar *bar, const QString &text, const char *icon, bool underIcon)
++{
++    QToolButton *b = new QToolButton(bar);
++    b->setText(text);
++    b->setToolTip(text);
++    b->setIcon(KisIconUtils::loadIcon(QLatin1String(icon)));
++    b->setToolButtonStyle(underIcon ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonIconOnly);
++    b->setAutoRaise(true);
++    b->setFocusPolicy(Qt::NoFocus);
++    return b;
++}
++
++void hideStockToolbars(KisMainWindow *mw)
++{
++    Q_FOREACH (KisToolBar *tb, mw->toolBars()) {
++        if (tb->objectName() != QLatin1String("BrushesAndStuff")) {
++            tb->setVisible(false);
++        }
++    }
++    mw->menuBar()->setVisible(false);
++}
++
++// Toca num painel: abre ele na lateral direita e fecha os outros da barra.
++void togglePanel(KisMainWindow *mw, QDockWidget *dw, const QList<QPointer<QDockWidget>> &all)
++{
++    if (!dw) {
++        return;
++    }
++    if (dw->isVisible()) {
++        dw->hide();
++        return;
++    }
++    Q_FOREACH (const QPointer<QDockWidget> &other, all) {
++        if (other && other != dw) {
++            other->hide();
++        }
++    }
++    if (dw->isFloating() || mw->dockWidgetArea(dw) != Qt::RightDockWidgetArea) {
++        dw->setFloating(false);
++        mw->addDockWidget(Qt::RightDockWidgetArea, dw);
++    }
++    dw->show();
++    dw->raise();
++    // largura confortável para o dedo, sem engolir a tela
++    mw->resizeDocks({dw}, {qBound(300, mw->width() / 4, 420)}, Qt::Horizontal);
++}
++
++} // namespace
++
++void NanquimTabletUi::install(KisMainWindow *mw)
++{
++    auto *ac = mw->actionCollection();
++    KisToolBar *bar = mw->toolBar(QStringLiteral("BrushesAndStuff"));
++    if (!bar) {
++        KisUsageLogger::log(QStringLiteral("[Nanquim] barra BrushesAndStuff não encontrada; interface padrão mantida"));
++        return;
++    }
++
++    // --- a barra única ---------------------------------------------------
++    bar->setMovable(false);
++    bar->setFloatable(false);
++    bar->setStyleSheet(QLatin1String(STYLE));
++    bar->setIconSize(QSize(22, 22));
++
++    // tira o que pesa e quase não se usa no tablet
++    const QStringList hiddenActions = {
++        QStringLiteral("gradients"), QStringLiteral("patterns"),
++        QStringLiteral("select_layout"), QStringLiteral("workspaces"),
++    };
++    Q_FOREACH (const QString &name, hiddenActions) {
++        if (QAction *a = ac->action(name)) {
++            bar->removeAction(a);
++        }
++    }
++
++    // --- esquerda: Arquivo, desfazer, refazer ----------------------------
++    QAction *first = bar->actions().isEmpty() ? nullptr : bar->actions().first();
++
++    QToolButton *fileButton = makeButton(bar, i18n("Arquivo"), "document-open", false);
++    QMenu *fileMenu = new QMenu(fileButton);
++    const QStringList fileActions = {
++        QStringLiteral("file_new"), QStringLiteral("file_open"), QStringLiteral("file_open_recent"),
++        QString(),
++        QStringLiteral("file_save"), QStringLiteral("file_save_as"), QStringLiteral("file_export_file"),
++        QString(),
++        QStringLiteral("file_import_file"),
++    };
++    Q_FOREACH (const QString &name, fileActions) {
++        if (name.isEmpty()) {
++            fileMenu->addSeparator();
++        } else if (QAction *a = ac->action(name)) {
++            fileMenu->addAction(a);
++        }
++    }
++    fileButton->setMenu(fileMenu);
++    fileButton->setPopupMode(QToolButton::InstantPopup);
++    bar->insertWidget(first, fileButton);
++
++    for (const char *name : {"edit_undo", "edit_redo"}) {
++        if (QAction *a = ac->action(QLatin1String(name))) {
++            bar->insertAction(first, a);
++        }
++    }
++    bar->insertSeparator(first);
++
++    // --- direita: os painéis --------------------------------------------
++    // (o espaçador do Krita já empurra o que vem depois para a direita)
++    QList<QPointer<QDockWidget>> managed;
++    QList<QPair<QToolButton*, QDockWidget*>> buttons;
++    Q_FOREACH (const Panel &p, panels()) {
++        QDockWidget *dw = findDock(mw, p.dockIds);
++        if (!dw) {
++            continue;
++        }
++        managed << dw;
++        QToolButton *b = makeButton(bar, i18n(p.label), p.icon, true);
++        b->setCheckable(true);
++        b->setProperty(PANEL_PROPERTY, true);
++        bar->addWidget(b);
++        buttons << qMakePair(b, dw);
++    }
++    for (const auto &pair : buttons) {
++        QToolButton *b = pair.first;
++        QDockWidget *dw = pair.second;
++        QObject::connect(b, &QToolButton::clicked, mw, [mw, dw, managed, b]() {
++            togglePanel(mw, dw, managed);
++            b->setChecked(dw->isVisible());
++        });
++        QObject::connect(dw->toggleViewAction(), &QAction::toggled, b, [b](bool on) {
++            b->setChecked(on);
++        });
++    }
++
++    // Réguas e requadros: a ferramenta de assistentes e os atalhos de régua
++    QToolButton *rulers = makeButton(bar, i18n("Réguas"), "krita_tool_assistant", true);
++    QMenu *rulerMenu = new QMenu(rulers);
++    for (const char *name : {"KisAssistantTool", "KritaShape/KisToolMeasure", "toggle_assistant",
++                             "view_toggle_painting_assistants", "view_toggle_assistant_previews",
++                             "view_grid", "view_snap_to_grid"}) {
++        if (QAction *a = ac->action(QLatin1String(name))) {
++            rulerMenu->addAction(a);
++        }
++    }
++    rulers->setMenu(rulerMenu);
++    rulers->setPopupMode(QToolButton::InstantPopup);
++    bar->addWidget(rulers);
++
++    // Referência: ferramenta de imagens de referência
++    if (QAction *ref = ac->action(QStringLiteral("ToolReferenceImages"))) {
++        QToolButton *refButton = makeButton(bar, i18n("Referência"), "krita_tool_reference_images", true);
++        QObject::connect(refButton, &QToolButton::clicked, ref, &QAction::trigger);
++        bar->addWidget(refButton);
++    }
++
++    // Mais: o menu completo do Krita, montado na hora de abrir
++    QToolButton *more = makeButton(bar, i18n("Mais"), "hamburger_menu_dots", true);
++    QMenu *moreMenu = new QMenu(more);
++    QObject::connect(moreMenu, &QMenu::aboutToShow, mw, [mw, moreMenu]() {
++        moreMenu->clear();
++        Q_FOREACH (QAction *a, mw->menuBar()->actions()) {
++            moreMenu->addAction(a);
++        }
++    });
++    more->setMenu(moreMenu);
++    more->setPopupMode(QToolButton::InstantPopup);
++    bar->addWidget(more);
++
++    // --- tela limpa ------------------------------------------------------
++    // Painéis fechados não se redesenham, então isso também deixa o app mais leve.
++    Q_FOREACH (QDockWidget *dw, mw->dockWidgets()) {
++        const QString id = dw->objectName();
++        if (id != TOOLBOX_ID && id != TOOL_OPTIONS_ID) {
++            dw->hide();
++        }
++    }
++
++    hideStockToolbars(mw);
++    bar->setVisible(true);
++
++    // O Krita restaura o estado das barras ao terminar de montar a janela;
++    // repete depois disso para a barra de menus e as barras padrão ficarem escondidas.
++    QPointer<KisMainWindow> guard(mw);
++    QTimer::singleShot(0, mw, [guard]() {
++        if (guard) {
++            hideStockToolbars(guard);
++        }
++    });
++    QObject::connect(mw, &KisMainWindow::guiLoadingFinished, mw, [guard]() {
++        if (guard) {
++            hideStockToolbars(guard);
++        }
++    });
++
++    KisUsageLogger::log(QStringLiteral("[Nanquim] interface de tablet instalada"));
++}
+diff --git a/libs/ui/NanquimTabletUi.h b/libs/ui/NanquimTabletUi.h
+new file mode 100644
+index 0000000..2b7a09f
+--- /dev/null
++++ b/libs/ui/NanquimTabletUi.h
+@@ -0,0 +1,28 @@
++/*
++ *  SPDX-FileCopyrightText: 2026 Nanquim
++ *
++ *  SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++#ifndef NANQUIM_TABLET_UI_H
++#define NANQUIM_TABLET_UI_H
++
++class KisMainWindow;
++
++/**
++ * Nanquim: interface de tablet (primeira peça).
++ *
++ * - uma barra só no topo: Arquivo, desfazer/refazer, os controles do pincel do
++ *   Krita, e à direita os painéis Pincéis, Cor, Camadas, Réguas, Referência e Mais;
++ * - os painéis abrem um de cada vez na lateral direita e fecham com outro toque;
++ * - a barra de menus vira o botão "Mais", e as barras padrão do Krita somem;
++ * - toda abertura começa com a tela limpa (só a caixa de ferramentas à esquerda).
++ *
++ * Nada aqui muda os dados ou as ações do Krita: só reorganiza o que já existe.
++ */
++namespace NanquimTabletUi
++{
++void install(KisMainWindow *mainWindow);
++}
++
++#endif
+-- 
+2.43.0
+

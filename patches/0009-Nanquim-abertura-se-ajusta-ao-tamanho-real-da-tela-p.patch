@@ -1,0 +1,204 @@
+From 868b7bcb83ef1475299fff0d57b125e257f20c42 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 14:44:34 -0300
+Subject: [PATCH 09/11] Nanquim: abertura se ajusta ao tamanho real da tela
+ (paisagem e retrato)
+
+---
+ .../src/org/krita/android/NanquimSplash.java  | 116 +++++++++++++-----
+ 1 file changed, 83 insertions(+), 33 deletions(-)
+
+diff --git a/packaging/android/apk/src/org/krita/android/NanquimSplash.java b/packaging/android/apk/src/org/krita/android/NanquimSplash.java
+index 50e823b..2578353 100644
+--- a/packaging/android/apk/src/org/krita/android/NanquimSplash.java
++++ b/packaging/android/apk/src/org/krita/android/NanquimSplash.java
+@@ -37,6 +37,7 @@ public final class NanquimSplash {
+     private static TextView sStatus;
+     private static View sBar;
+     private static boolean sHiding;
++    private static ObjectAnimator sSweep;
+ 
+     private NanquimSplash() {}
+ 
+@@ -54,18 +55,15 @@ public final class NanquimSplash {
+ 
+     private static void build(Activity a) {
+         DisplayMetrics dm = a.getResources().getDisplayMetrics();
+-        final int w = dm.widthPixels;
+-        final int h = dm.heightPixels;
+         final float d = dm.density;
+ 
+-        FrameLayout root = new FrameLayout(a);
++        final FrameLayout root = new FrameLayout(a);
+         root.setBackgroundColor(BG);
+         root.setClickable(true);   // não deixa toques passarem durante o carregamento
+         root.setFocusable(true);
+ 
+         // --- arte ---------------------------------------------------------
+-        final int artH = Math.min(w / 2, (int) (h * 0.78f));
+-        FrameLayout artBox = new FrameLayout(a);
++        final FrameLayout artBox = new FrameLayout(a);
+         artBox.setClipChildren(true);
+         final ImageView art = new ImageView(a);
+         art.setImageResource(R.drawable.nanquim_splash);
+@@ -76,20 +74,18 @@ public final class NanquimSplash {
+         shine.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                 new int[] {0x00FFFFFF, 0x24FFFFFF, 0x00FFFFFF}));
+         shine.setRotation(18f);
+-        artBox.addView(shine, new FrameLayout.LayoutParams((int) (w * 0.16f), (int) (artH * 1.7f),
+-                Gravity.START | Gravity.CENTER_VERTICAL));
++        artBox.addView(shine, new FrameLayout.LayoutParams(1, 1, Gravity.START | Gravity.CENTER_VERTICAL));
+ 
+-        View fade = new View(a);
++        final View fade = new View(a);
+         fade.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[] {0x000B1019, BG}));
+-        artBox.addView(fade, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (int) (artH * 0.14f), Gravity.BOTTOM));
+-        root.addView(artBox, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, artH, Gravity.TOP));
++        artBox.addView(fade, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1, Gravity.BOTTOM));
++        root.addView(artBox, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1, Gravity.TOP));
+ 
+         // --- faixa de baixo -----------------------------------------------
+-        FrameLayout band = new FrameLayout(a);
+-        root.addView(band, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Math.max(h - artH, (int) (120 * d)), Gravity.BOTTOM));
+-        final int side = (int) (Math.max(32 * d, w * 0.05f));
++        final FrameLayout band = new FrameLayout(a);
++        root.addView(band, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1, Gravity.BOTTOM));
+ 
+-        LinearLayout brand = new LinearLayout(a);
++        final LinearLayout brand = new LinearLayout(a);
+         brand.setOrientation(LinearLayout.HORIZONTAL);
+         brand.setGravity(Gravity.CENTER_VERTICAL);
+         final ImageView logo = new ImageView(a);
+@@ -112,12 +108,10 @@ public final class NanquimSplash {
+         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+         tp.leftMargin = (int) (16 * d);
+         brand.addView(texts, tp);
+-        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+-                Gravity.START | Gravity.CENTER_VERTICAL);
+-        bp.leftMargin = side;
+-        band.addView(brand, bp);
++        band.addView(brand, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
++                Gravity.START | Gravity.CENTER_VERTICAL));
+ 
+-        LinearLayout right = new LinearLayout(a);
++        final LinearLayout right = new LinearLayout(a);
+         right.setOrientation(LinearLayout.VERTICAL);
+         sStatus = new TextView(a);
+         sStatus.setText("Carregando…");
+@@ -142,29 +136,74 @@ public final class NanquimSplash {
+         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+         cp.topMargin = (int) (14 * d);
+         right.addView(credit, cp);
+-        FrameLayout.LayoutParams rp = new FrameLayout.LayoutParams((int) (w * 0.32f), ViewGroup.LayoutParams.WRAP_CONTENT,
+-                Gravity.END | Gravity.CENTER_VERTICAL);
+-        rp.rightMargin = side;
+-        band.addView(right, rp);
++        band.addView(right, new FrameLayout.LayoutParams(1, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END | Gravity.CENTER_VERTICAL));
++
++        // Os tamanhos dependem da tela de verdade. No onCreate o Android ainda pode
++        // estar em retrato (a janela só gira para paisagem depois), então tudo que
++        // depende de largura/altura é calculado aqui, a cada mudança de tamanho.
++        root.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, orr, ob) -> {
++            final int w = r - l;
++            final int h = b - t;
++            if (w <= 0 || h <= 0 || (w == orr - ol && h == ob - ot)) {
++                return;
++            }
++            v.post(() -> {
++                final boolean portrait = h > w;
++                final int artH = portrait ? (int) (h * 0.58f) : Math.min(w / 2, (int) (h * 0.74f));
++                final int side = (int) Math.max(32 * d, w * 0.05f);
++
++                setSize(artBox, ViewGroup.LayoutParams.MATCH_PARENT, artH);
++                setSize(fade, ViewGroup.LayoutParams.MATCH_PARENT, (int) (artH * 0.16f));
++                setSize(shine, (int) (Math.max(w, h) * 0.16f), (int) (artH * 1.7f));
++                setSize(band, ViewGroup.LayoutParams.MATCH_PARENT, Math.max(h - artH, (int) (120 * d)));
++
++                FrameLayout.LayoutParams bp = (FrameLayout.LayoutParams) brand.getLayoutParams();
++                FrameLayout.LayoutParams rp = (FrameLayout.LayoutParams) right.getLayoutParams();
++                bp.leftMargin = side;
++                rp.leftMargin = side;
++                rp.rightMargin = side;
++                if (portrait) {
++                    // em pé: logo em cima, carregamento embaixo, os dois à esquerda
++                    bp.gravity = Gravity.START | Gravity.TOP;
++                    bp.topMargin = (int) (28 * d);
++                    rp.width = w - 2 * side;
++                    rp.gravity = Gravity.START | Gravity.BOTTOM;
++                    rp.bottomMargin = (int) (40 * d);
++                } else {
++                    bp.gravity = Gravity.START | Gravity.CENTER_VERTICAL;
++                    bp.topMargin = 0;
++                    rp.width = (int) (w * 0.32f);
++                    rp.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
++                    rp.bottomMargin = 0;
++                }
++                brand.setLayoutParams(bp);
++                right.setLayoutParams(rp);
++
++                // zoom lento com o centro na Kiki e no lótus
++                art.setPivotX(w * 0.30f);
++                art.setPivotY(artH * 0.42f);
++
++                if (sSweep != null) {
++                    sSweep.cancel();
++                }
++                sSweep = ObjectAnimator.ofFloat(shine, "translationX", -0.4f * w, -0.4f * w, 1.3f * w);
++                sSweep.setDuration(5200);
++                sSweep.setInterpolator(new LinearInterpolator());
++                sSweep.setRepeatCount(ValueAnimator.INFINITE);
++                sSweep.setStartDelay(900);
++                sSweep.start();
++            });
++        });
+ 
+         // por cima de tudo: a decorView não é trocada quando o Qt chama setContentView
+         ViewGroup decor = (ViewGroup) a.getWindow().getDecorView();
+         decor.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+         sRoot = root;
+ 
+-        // --- animações ----------------------------------------------------
+-        art.setPivotX(w * 0.30f);
+-        art.setPivotY(artH * 0.42f);
++        // --- animações que não dependem do tamanho -----------------------
+         art.animate().scaleX(1.06f).scaleY(1.06f).translationX(-12 * d)
+                 .setDuration(14000).setInterpolator(new DecelerateInterpolator()).start();
+ 
+-        ObjectAnimator sweep = ObjectAnimator.ofFloat(shine, "translationX", -0.4f * w, -0.4f * w, 1.3f * w);
+-        sweep.setDuration(5200);
+-        sweep.setInterpolator(new LinearInterpolator());
+-        sweep.setRepeatCount(ValueAnimator.INFINITE);
+-        sweep.setStartDelay(900);
+-        sweep.start();
+-
+         logo.setAlpha(0f);
+         logo.setTranslationY(14 * d);
+         logo.animate().alpha(1f).translationY(0).setStartDelay(250).setDuration(700).setInterpolator(new DecelerateInterpolator()).start();
+@@ -178,6 +217,13 @@ public final class NanquimSplash {
+         new Handler(Looper.getMainLooper()).postDelayed(NanquimSplash::hideNow, 90000);
+     }
+ 
++    private static void setSize(View v, int width, int height) {
++        ViewGroup.LayoutParams lp = v.getLayoutParams();
++        lp.width = width;
++        lp.height = height;
++        v.setLayoutParams(lp);
++    }
++
+     public static void setStatus(final Activity a, final String text) {
+         if (a == null || text == null || text.isEmpty()) {
+             return;
+@@ -210,6 +256,10 @@ public final class NanquimSplash {
+             if (parent != null) {
+                 parent.removeView(root);
+             }
++            if (sSweep != null) {
++                sSweep.cancel();
++                sSweep = null;
++            }
+             sRoot = null;
+             sStatus = null;
+             sBar = null;
+-- 
+2.43.0
+

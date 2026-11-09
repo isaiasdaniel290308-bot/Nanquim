@@ -1,0 +1,68 @@
+From 8b93bbe63b3a06795c82e96d01d194702d77bfbf Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 14:48:46 -0300
+Subject: [PATCH 10/11] =?UTF-8?q?Nanquim:=20padr=C3=B5es=20mais=20leves=20?=
+ =?UTF-8?q?no=20Android=20(filtro=20trilinear,=20pr=C3=A9via=20instant?=
+ =?UTF-8?q?=C3=A2nea,=20100=20passos=20de=20desfazer)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ libs/ui/kis_config.cc | 26 +++++++++++++++++++++++---
+ 1 file changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/libs/ui/kis_config.cc b/libs/ui/kis_config.cc
+index b9bec89..db19491 100644
+--- a/libs/ui/kis_config.cc
++++ b/libs/ui/kis_config.cc
+@@ -191,7 +191,13 @@ void KisConfig::setUndoEnabled(bool undo) const
+ 
+ int KisConfig::undoStackLimit(bool defaultValue) const
+ {
+-    return (defaultValue ? 200 : m_cfg.readEntry("undoStackLimit", 200));
++#ifdef Q_OS_ANDROID
++    // Nanquim: 100 passos de desfazer guardam bastante e poupam memória no tablet
++    const int fallback = 100;
++#else
++    const int fallback = 200;
++#endif
++    return (defaultValue ? fallback : m_cfg.readEntry("undoStackLimit", fallback));
+ }
+ 
+ void KisConfig::setUndoStackLimit(int limit) const
+@@ -1083,7 +1089,14 @@ void KisConfig::disableOpenGL() const
+ 
+ int KisConfig::openGLFilteringMode(bool defaultValue) const
+ {
+-    return (defaultValue ? 3 : m_cfg.readEntry("OpenGLFilterMode", 3));
++#ifdef Q_OS_ANDROID
++    // Nanquim: filtro trilinear (mipmaps) em vez do bicúbico de alta qualidade.
++    // Na GPU do celular/tablet o bicúbico pesa em todo quadro de zoom e rotação.
++    const int fallback = 2;
++#else
++    const int fallback = 3;
++#endif
++    return (defaultValue ? fallback : m_cfg.readEntry("OpenGLFilterMode", fallback));
+ }
+ 
+ void KisConfig::setOpenGLFilteringMode(int filteringMode)
+@@ -2014,7 +2027,14 @@ void KisConfig::setFavoritePresets(const int value)
+ 
+ bool KisConfig::levelOfDetailEnabled(bool defaultValue) const
+ {
+-    return (defaultValue ? false : m_cfg.readEntry("levelOfDetailEnabled", false));
++#ifdef Q_OS_ANDROID
++    // Nanquim: "Prévia instantânea" ligada. Pincéis grandes e filtros desenham
++    // primeiro numa versão reduzida da imagem e completam depois.
++    const bool fallback = true;
++#else
++    const bool fallback = false;
++#endif
++    return (defaultValue ? fallback : m_cfg.readEntry("levelOfDetailEnabled", fallback));
+ }
+ 
+ void KisConfig::setLevelOfDetailEnabled(bool value)
+-- 
+2.43.0
+
