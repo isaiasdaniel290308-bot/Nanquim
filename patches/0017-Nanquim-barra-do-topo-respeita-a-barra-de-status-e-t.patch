@@ -1,0 +1,91 @@
+From a57e17b59c0f71d2dda32002734202e3ef739b68 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 18:00:25 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20barra=20do=20topo=20respeita=20a=20b?=
+ =?UTF-8?q?arra=20de=20status=20e=20teto=20de=20mem=C3=B3ria=2025%=20no=20?=
+ =?UTF-8?q?Android?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ libs/image/kis_image_config.cpp |  3 ++-
+ libs/ui/NanquimTabletUi.cpp     | 27 ++++++++++++++++++++++++++-
+ 2 files changed, 28 insertions(+), 2 deletions(-)
+
+diff --git a/libs/image/kis_image_config.cpp b/libs/image/kis_image_config.cpp
+index 2a46689..fc6ddaa 100644
+--- a/libs/image/kis_image_config.cpp
++++ b/libs/image/kis_image_config.cpp
+@@ -198,7 +198,8 @@ qreal KisImageConfig::memoryHardLimitPercent(bool requestDefault) const
+     // Nanquim: o Android mata o app bem antes de ele usar metade da RAM.
+     // Com um teto menor, o Krita passa a guardar blocos da imagem no disco
+     // (swap próprio) antes de o sistema fechar o app por falta de memória.
+-    const qreal fallback = 35.;
++    // (25%: desenhos muito grandes, de 1-2 GiB, eram fechados pelo sistema com 35%)
++    const qreal fallback = 25.;
+ #else
+     const qreal fallback = 50.;
+ #endif
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index a3dbcf1..326f409 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -19,6 +19,7 @@
+ #include <QMenuBar>
+ #include <QPainter>
+ #include <QPointer>
++#include <QScreen>
+ #include <QSlider>
+ #include <QTimer>
+ #include <QToolBar>
+@@ -340,6 +341,26 @@ const char *TOP_STYLE =
+     "QToolBar#nanquimTop QToolButton#nanquimBack { color: #ececf1; font-size: 14px; font-weight: 600;"
+     "  padding: 8px 14px; border: 1px solid #2c2c33; background: #1f1f24; }";
+ 
++// Se a janela começa por baixo da barra de status do Android, a barra do topo
++// ganha um respiro do tamanho dela (senão o relógio fica por cima do título).
++void updateSafeTop(KisMainWindow *mw)
++{
++    QToolBar *top = mw->findChild<QToolBar*>(TOP_ID);
++    QScreen *screen = mw->screen();
++    if (!top || !screen) {
++        return;
++    }
++    const int availTop = screen->availableGeometry().top();
++    const int winTop = mw->mapToGlobal(QPoint(0, 0)).y();
++    const int inset = qMax(0, availTop - winTop);
++    if (top->property("nanquimInset").toInt() == inset && !top->styleSheet().isEmpty()) {
++        return;
++    }
++    top->setProperty("nanquimInset", inset);
++    top->setStyleSheet(QLatin1String(TOP_STYLE)
++                       + QStringLiteral("QToolBar#nanquimTop { padding-top: %1px; }").arg(4 + inset));
++}
++
+ QIcon colorSwatchIcon(const QColor &c)
+ {
+     const qreal dpr = qApp->devicePixelRatio();
+@@ -574,7 +595,10 @@ public:
+ protected:
+     bool eventFilter(QObject *o, QEvent *e) override
+     {
+-        if (o == m_mw && (e->type() == QEvent::Resize || e->type() == QEvent::LayoutRequest)) {
++        if (o == m_mw && (e->type() == QEvent::Resize || e->type() == QEvent::Move)) {
++            positionExpandTab(m_mw, m_tab);
++            updateSafeTop(m_mw);
++        } else if (o == m_mw && e->type() == QEvent::LayoutRequest) {
+             positionExpandTab(m_mw, m_tab);
+         }
+         return false;
+@@ -805,6 +829,7 @@ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+     }
+ 
+     top->setVisible(true);
++    updateSafeTop(mw);
+     const bool hasDrawing = mw->activeView() != nullptr;
+     Q_FOREACH (QWidget *w, top->findChildren<QWidget*>()) {
+         if (w->property(WELCOME_ONLY).toBool()) {
+-- 
+2.43.0
+
