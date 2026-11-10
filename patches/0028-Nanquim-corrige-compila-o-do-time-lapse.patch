@@ -1,0 +1,41 @@
+From b86fded3693e8117e8975104e439bf135434a30e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 09:26:45 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20corrige=20compila=C3=A7=C3=A3o=20do?=
+ =?UTF-8?q?=20time-lapse?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index e94f7cd..194a583 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -506,7 +506,8 @@ private:
+     void tick()
+     {
+         KisView *view = m_mw->activeView();
+-        KisImageSP image = view ? view->image() : KisImageSP();
++        KisImageSP image;
++        if (view) image = view->image();
+         if (image.data() != m_tracked.data()) {
+             if (m_tracked) {
+                 QObject::disconnect(m_connection);
+@@ -549,7 +550,7 @@ private:
+         std::shared_ptr<std::atomic_bool> busy = m_busy;
+         busy->store(true);
+         // a redução e a gravação do JPEG rodam fora da thread da interface
+-        QtConcurrent::run([projection, bounds, w, h, dir, file, busy]() {
++        QtConcurrent::run([projection, bounds, w, h, dir, file, busy]() mutable {
+             QImage thumb = projection->createThumbnailUncached(w, h, bounds, 2);
+             if (!thumb.isNull()) {
+                 QImage frame(w, h, QImage::Format_RGB32);
+-- 
+2.43.0
+
