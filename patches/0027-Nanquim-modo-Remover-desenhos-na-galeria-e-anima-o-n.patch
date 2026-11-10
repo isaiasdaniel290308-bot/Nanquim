@@ -1,0 +1,179 @@
+From 9acaeda32fbc67a5e66774a933b42a0b983f618f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 09:16:07 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20modo=20'Remover=20desenhos'=20na=20g?=
+ =?UTF-8?q?aleria=20e=20anima=C3=A7=C3=A3o=20na=20janela=20de=20pinc=C3=A9?=
+ =?UTF-8?q?is?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp | 118 +++++++++++++++++-------------------
+ 1 file changed, 54 insertions(+), 64 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index e36e126..e94f7cd 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -1103,7 +1103,31 @@ protected:
+         if (!w || !w->isWindow() || w->windowType() != Qt::Popup) return false;
+         // só menus: as janelas de pincéis do Krita se posicionam depois de aparecer,
+         // e animar a posição delas as jogava para o canto da tela
+-        if (!w->inherits("QMenu") || w->property("nanquimAnimating").toBool()) return false;
++        if (w->property("nanquimAnimating").toBool()) return false;
++        if (w->objectName() == QLatin1String("KisPopupButtonFrame")) {
++            // janelas de pincéis/editor: o Krita acerta a posição ao mostrar, então a
++            // animação parte da posição final, lida logo depois (antes do primeiro desenho)
++            QPointer<QWidget> guard(w);
++            QTimer::singleShot(0, w, [guard]() {
++                if (!guard || !guard->isVisible()) return;
++                const QPoint end = guard->pos();
++                QPropertyAnimation *anim = new QPropertyAnimation(guard, "pos", guard);
++                anim->setDuration(180);
++                anim->setStartValue(end + QPoint(0, -14));
++                anim->setEndValue(end);
++                anim->setEasingCurve(QEasingCurve::OutCubic);
++                guard->setProperty("nanquimAnimating", true);
++                QObject::connect(anim, &QPropertyAnimation::finished, guard, [guard, end]() {
++                    if (guard) {
++                        guard->move(end);
++                        guard->setProperty("nanquimAnimating", false);
++                    }
++                });
++                anim->start(QAbstractAnimation::DeleteWhenStopped);
++            });
++            return false;
++        }
++        if (!w->inherits("QMenu")) return false;
+         const QPoint end = w->pos();
+         QPropertyAnimation *anim = new QPropertyAnimation(w, "pos", w);
+         anim->setDuration(160);
+@@ -1459,6 +1483,16 @@ public:
+             g->drawRoundedRect(paper, 10, 10);
+         }
+ 
++        if (option.widget && option.widget->property("nanquimRemoveMode").toBool()) {
++            const QRectF badge(paper.right() - 34, paper.top() + 8, 26, 26);
++            g->setPen(Qt::NoPen);
++            g->setBrush(QColor(0xef, 0x62, 0x62));
++            g->drawEllipse(badge);
++            g->setPen(QPen(Qt::white, 2.4, Qt::SolidLine, Qt::RoundCap));
++            g->drawLine(badge.center() + QPointF(-5, -5), badge.center() + QPointF(5, 5));
++            g->drawLine(badge.center() + QPointF(5, -5), badge.center() + QPointF(-5, 5));
++        }
++
+         QString name = index.data(Qt::DisplayRole).toString();
+         if (name.endsWith(QLatin1String(".kra"), Qt::CaseInsensitive)) {
+             name.chop(4);
+@@ -1475,65 +1509,6 @@ public:
+     }
+ };
+ 
+-// toque longo num desenho recente: menu com Abrir / Remover da galeria
+-class RecentLongPress : public QObject
+-{
+-public:
+-    RecentLongPress(KisMainWindow *mw, QListView *view)
+-        : QObject(view), m_mw(mw), m_view(view)
+-    {
+-        m_timer.setSingleShot(true);
+-        m_timer.setInterval(550);
+-        QObject::connect(&m_timer, &QTimer::timeout, this, [this]() { fire(); });
+-        view->viewport()->installEventFilter(this);
+-    }
+-    bool swallowClick()
+-    {
+-        const bool v = m_fired;
+-        m_fired = false;
+-        return v;
+-    }
+-protected:
+-    bool eventFilter(QObject *, QEvent *e) override
+-    {
+-        if (e->type() == QEvent::MouseButtonPress) {
+-            m_pos = static_cast<QMouseEvent*>(e)->pos();
+-            m_fired = false;
+-            m_timer.start();
+-        } else if (e->type() == QEvent::MouseMove) {
+-            if ((static_cast<QMouseEvent*>(e)->pos() - m_pos).manhattanLength() > 14) m_timer.stop();
+-        } else if (e->type() == QEvent::MouseButtonRelease || e->type() == QEvent::Leave) {
+-            m_timer.stop();
+-        }
+-        return false;
+-    }
+-private:
+-    void fire()
+-    {
+-        const QModelIndex index = m_view->indexAt(m_pos);
+-        if (!index.isValid()) return;
+-        m_fired = true;
+-        const QString path = index.data(Qt::ToolTipRole).toString();
+-        QString name = index.data(Qt::DisplayRole).toString();
+-        QMenu menu(m_view);
+-        QAction *open = menu.addAction(i18n("Abrir"));
+-        QAction *remove = menu.addAction(i18n("Remover da galeria"));
+-        QAction *chosen = menu.exec(m_view->viewport()->mapToGlobal(m_pos));
+-        if (chosen == open) {
+-            m_fired = false;
+-            m_mw->openDocument(path, KisMainWindow::None);
+-        } else if (chosen == remove) {
+-            // só tira da lista; o arquivo continua no armazenamento
+-            m_mw->removeRecentFile(path);
+-        }
+-    }
+-    KisMainWindow *m_mw;
+-    QListView *m_view;
+-    QTimer m_timer;
+-    QPoint m_pos;
+-    bool m_fired = false;
+-};
+-
+ struct PagePreset {
+     const char *name;
+     const char *detail;
+@@ -1684,9 +1659,15 @@ QWidget *buildGallery(KisMainWindow *mw)
+     QHBoxLayout *recentsHead = new QHBoxLayout();
+     recentsHead->addWidget(sectionLabel(i18n("Recentes"), body));
+     recentsHead->addStretch(1);
+-    QLabel *hint = new QLabel(i18n("Toque e segure um desenho para remover da galeria"), body);
++    QLabel *hint = new QLabel(i18n("Toque nos desenhos que quer tirar da galeria (os arquivos não são apagados)"), body);
+     hint->setObjectName(QStringLiteral("nanquimFooter"));
++    hint->hide();
+     recentsHead->addWidget(hint);
++    QPushButton *removeMode = new QPushButton(i18n("Remover desenhos"), body);
++    removeMode->setProperty("class", QStringLiteral("nanquimGhost"));
++    removeMode->setCheckable(true);
++    removeMode->setFocusPolicy(Qt::NoFocus);
++    recentsHead->addWidget(removeMode);
+     bl->addLayout(recentsHead);
+ 
+     QSortFilterProxyModel *proxy = new QSortFilterProxyModel(gallery);
+@@ -1710,10 +1691,19 @@ QWidget *buildGallery(KisMainWindow *mw)
+     recents->setFocusPolicy(Qt::NoFocus);
+     recents->setMouseTracking(false);
+     KisKineticScroller::createPreconfiguredScroller(recents);
+-    RecentLongPress *longPress = new RecentLongPress(mw, recents);
+-    QObject::connect(recents, &QListView::clicked, mw, [mw, longPress](const QModelIndex &index) {
+-        if (longPress->swallowClick()) return;
++    QObject::connect(removeMode, &QPushButton::toggled, recents, [recents, removeMode, hint](bool on) {
++        removeMode->setText(on ? i18n("Concluir") : i18n("Remover desenhos"));
++        hint->setVisible(on);
++        recents->setProperty("nanquimRemoveMode", on);
++        recents->viewport()->update();
++    });
++    QObject::connect(recents, &QListView::clicked, mw, [mw, recents, removeMode](const QModelIndex &index) {
+         const QString path = index.data(Qt::ToolTipRole).toString();
++        if (removeMode->isChecked()) {
++            // só tira da lista; o arquivo continua no armazenamento
++            if (!path.isEmpty()) mw->removeRecentFile(path);
++            return;
++        }
+         if (!path.isEmpty()) {
+             mw->openDocument(path, KisMainWindow::None);
+         }
+-- 
+2.43.0
+
