@@ -17,6 +17,8 @@
 | Animações: saída da abertura, painéis deslizando, troca de tela | Feito | 0015 |
 | Interface nova, peça 2 (design "Desenho"): barra do topo com título, ferramentas à esquerda, tamanho/opacidade verticais, recolher | Em teste | 0016 |
 | Interface nova, peça 3 (design "Main"): galeria com novas páginas e recentes | Feito (testado no Tab S10 Lite) | 0018 |
+| Time-lapse automático (quadro por traço, sem pausas) e exportação em MP4 | Em teste | 0026 |
+| Inserir imagem como camada; remover desenhos da galeria | Em teste | 0025 |
 | Pincéis do Nanquim (motor nativo, leves) no lugar dos MyPaint no conjunto inicial | Próximo | — |
 | Interface nova, próximas peças: galeria inicial, ferramentas recolhíveis, boas-vindas | Próximo | — |
 | Importador `.sut` (Clip Studio) | Planejado | — |

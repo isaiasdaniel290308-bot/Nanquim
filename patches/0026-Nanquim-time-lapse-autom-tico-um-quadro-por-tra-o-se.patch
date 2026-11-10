@@ -1,0 +1,565 @@
+From 99e9ade0e2cd5a07777a30664911ca4336ab1934 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 09:09:05 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20time-lapse=20autom=C3=A1tico=20(um?=
+ =?UTF-8?q?=20quadro=20por=20tra=C3=A7o,=20sem=20as=20pausas)=20e=20export?=
+ =?UTF-8?q?a=C3=A7=C3=A3o=20em=20MP4?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp                   | 233 +++++++++++++++
+ .../org/krita/android/NanquimTimelapse.java   | 273 ++++++++++++++++++
+ 2 files changed, 506 insertions(+)
+ create mode 100644 packaging/android/apk/src/org/krita/android/NanquimTimelapse.java
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index df89874..e36e126 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -25,6 +25,21 @@
+ #include <QMenu>
+ #include <QMenuBar>
+ #include <QPainter>
++#include <QCryptographicHash>
++#include <QDir>
++#include <QElapsedTimer>
++#include <QStandardPaths>
++#include <QUuid>
++#include <QtConcurrent>
++#include <atomic>
++#include <memory>
++#ifdef Q_OS_ANDROID
++#include <QAndroidJniObject>
++#include <QtAndroid>
++#endif
++#include <ksharedconfig.h>
++#include <kconfiggroup.h>
++#include <kis_paint_device.h>
+ #include <QMouseEvent>
+ #include <QTabletEvent>
+ #include <QTouchEvent>
+@@ -137,6 +152,7 @@ const char *LAYERS = "<path d='M12 3.5l8.5 4.5-8.5 4.5L3.5 8z'/><path d='M3.5 12
+ const char *RULER = "<path d='M3 17L17 3l4 4L7 21z'/><path d='M7 13l2 2M10 10l2 2M13 7l2 2'/>";
+ const char *REFERENCE = "<rect x='3.5' y='4.5' width='17' height='15' rx='2'/><circle cx='9' cy='10' r='1.8'/><path d='M20.5 16l-5-5-8 8.5'/>";
+ const char *INSERT_IMAGE = "<rect x='3.5' y='5.5' width='13' height='13' rx='2'/><path d='M3.5 15l4-4 5 5'/><path d='M19 3v6M16 6h6'/>";
++const char *TIMELAPSE = "<rect x='3.5' y='5.5' width='17' height='13' rx='2'/><path d='M10 9.5v5l4.5-2.5z'/>";
+ const char *MORE = "<circle cx='5' cy='12' r='1.8' fill='currentColor' stroke='none'/><circle cx='12' cy='12' r='1.8' fill='currentColor' stroke='none'/><circle cx='19' cy='12' r='1.8' fill='currentColor' stroke='none'/>";
+ const char *OPTIONS = "<path d='M4 7h9M17 7h3M4 17h3M11 17h9'/><circle cx='15' cy='7' r='2'/><circle cx='9' cy='17' r='2'/>";
+ const char *ERASER = "<path d='M9 20h11'/><path d='M4.6 14.6l8.8-8.8a2 2 0 0 1 2.8 0l2.6 2.6a2 2 0 0 1 0 2.8L11 19H8.9z'/>";
+@@ -402,6 +418,221 @@ QIcon colorSwatchIcon(const QColor &c)
+     return QIcon(pm);
+ }
+ 
++
++// ---------------------------------------------------------------------------
++// Time-lapse (como no ibis Paint): grava sozinho um quadro da página inteira
++// depois de cada traço. Parado não grava nada, então o vídeo já sai sem as
++// pausas. Os quadros ficam numa pasta do app, por desenho, e o vídeo é montado
++// pelo codificador do aparelho (NanquimTimelapse.java).
++// ---------------------------------------------------------------------------
++class NanquimTimelapseRecorder : public QObject
++{
++public:
++    explicit NanquimTimelapseRecorder(KisMainWindow *mw)
++        : QObject(mw), m_mw(mw)
++    {
++        m_sinceCapture.start();
++        m_sinceChange.start();
++        QTimer *timer = new QTimer(this);
++        timer->setInterval(500);
++        QObject::connect(timer, &QTimer::timeout, this, [this]() { tick(); });
++        timer->start();
++    }
++
++    static bool enabled()
++    {
++        return KSharedConfig::openConfig()->group("Nanquim").readEntry("timelapseAuto", true);
++    }
++    static void setEnabled(bool on)
++    {
++        KSharedConfig::openConfig()->group("Nanquim").writeEntry("timelapseAuto", on);
++    }
++
++    // pasta dos quadros do desenho ativo (vazia se não há desenho)
++    QString currentDir() const
++    {
++        KisView *view = m_mw->activeView();
++        return view && view->document() ? dirFor(view->document()) : QString();
++    }
++    int frameCount() const
++    {
++        const QString dir = currentDir();
++        return dir.isEmpty() ? 0 : QDir(dir).entryList({QStringLiteral("frame_*.jpg")}, QDir::Files).count();
++    }
++    void clearCurrent()
++    {
++        const QString dir = currentDir();
++        if (!dir.isEmpty()) {
++            QDir(dir).removeRecursively();
++        }
++        if (KisView *view = m_mw->activeView()) {
++            if (view->document()) view->document()->setProperty("nanquimTimelapseNext", QVariant());
++        }
++        m_dirty = true;   // recomeça do estado atual do desenho
++    }
++
++private:
++    static QString baseDir()
++    {
++        return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/timelapse/");
++    }
++
++    // Desenho salvo: pasta pelo caminho do arquivo (continua entre sessões).
++    // Desenho ainda sem nome: pasta provisória, renomeada quando ele for salvo.
++    static QString dirFor(KisDocument *doc)
++    {
++        const QString path = doc->path();
++        QString current = doc->property("nanquimTimelapseDir").toString();
++        if (path.isEmpty()) {
++            if (current.isEmpty()) {
++                current = baseDir() + QStringLiteral("novo-") + QUuid::createUuid().toString(QUuid::Id128);
++                doc->setProperty("nanquimTimelapseDir", current);
++            }
++            return current;
++        }
++        const QString wanted = baseDir() + QString::fromLatin1(
++                    QCryptographicHash::hash(path.toUtf8(), QCryptographicHash::Sha1).toHex().left(20));
++        if (current != wanted) {
++            if (!current.isEmpty() && QDir(current).exists() && !QDir(wanted).exists()) {
++                QDir().mkpath(baseDir());
++                QDir().rename(current, wanted);
++            }
++            doc->setProperty("nanquimTimelapseDir", wanted);
++            doc->setProperty("nanquimTimelapseNext", QVariant());
++        }
++        return wanted;
++    }
++
++    void tick()
++    {
++        KisView *view = m_mw->activeView();
++        KisImageSP image = view ? view->image() : KisImageSP();
++        if (image.data() != m_tracked.data()) {
++            if (m_tracked) {
++                QObject::disconnect(m_connection);
++            }
++            m_tracked = image.data();
++            m_dirty = !image.isNull();   // primeiro quadro: o estado em que o desenho foi aberto
++            m_sinceChange.restart();
++            if (image) {
++                m_connection = QObject::connect(image.data(), &KisImage::sigImageUpdated, this, [this](const QRect &) {
++                    m_dirty = true;
++                    m_sinceChange.restart();
++                });
++            }
++        }
++        if (!image || !view->document() || !m_dirty || !enabled()) return;
++        // espera o traço terminar (0,7 s sem mudanças) e no mínimo 2 s entre quadros
++        if (m_sinceChange.elapsed() < 700 || m_sinceCapture.elapsed() < 2000) return;
++        if (m_busy->load()) return;
++
++        KisDocument *doc = view->document();
++        const QString dir = dirFor(doc);
++        int next = doc->property("nanquimTimelapseNext").toInt();
++        if (next <= 0) {
++            const QStringList existing = QDir(dir).entryList({QStringLiteral("frame_*.jpg")}, QDir::Files, QDir::Name);
++            next = existing.isEmpty() ? 1 : existing.last().mid(6, 6).toInt() + 1;
++        }
++        doc->setProperty("nanquimTimelapseNext", next + 1);
++
++        const QRect bounds = image->bounds();
++        if (bounds.isEmpty()) return;
++        // lado maior com 1600 px: nítido no celular e leve para gravar
++        const qreal scale = qMin(1.0, 1600.0 / qMax(bounds.width(), bounds.height()));
++        const int w = qMax(16, qRound(bounds.width() * scale) & ~1);
++        const int h = qMax(16, qRound(bounds.height() * scale) & ~1);
++        KisPaintDeviceSP projection = image->projection();
++        const QString file = dir + QStringLiteral("/frame_%1.jpg").arg(next, 6, 10, QLatin1Char('0'));
++
++        m_dirty = false;
++        m_sinceCapture.restart();
++        std::shared_ptr<std::atomic_bool> busy = m_busy;
++        busy->store(true);
++        // a redução e a gravação do JPEG rodam fora da thread da interface
++        QtConcurrent::run([projection, bounds, w, h, dir, file, busy]() {
++            QImage thumb = projection->createThumbnailUncached(w, h, bounds, 2);
++            if (!thumb.isNull()) {
++                QImage frame(w, h, QImage::Format_RGB32);
++                frame.fill(Qt::white);
++                QPainter g(&frame);
++                g.setRenderHint(QPainter::SmoothPixmapTransform);
++                g.drawImage(QRect(0, 0, w, h), thumb);
++                g.end();
++                QDir().mkpath(dir);
++                frame.save(file, "JPG", 82);
++            }
++            busy->store(false);
++        });
++    }
++
++    KisMainWindow *m_mw;
++    QPointer<KisImage> m_tracked;
++    QMetaObject::Connection m_connection;
++    bool m_dirty = false;
++    QElapsedTimer m_sinceChange;
++    QElapsedTimer m_sinceCapture;
++    std::shared_ptr<std::atomic_bool> m_busy = std::make_shared<std::atomic_bool>(false);
++};
++
++void exportTimelapse(KisMainWindow *mw, NanquimTimelapseRecorder *recorder, int seconds)
++{
++    KisView *view = mw->activeView();
++    const QString dir = recorder->currentDir();
++    if (!view || !view->document() || dir.isEmpty()) return;
++    QString title = view->document()->caption().trimmed();
++    if (title.endsWith(QLatin1String(".kra"), Qt::CaseInsensitive)) title.chop(4);
++    if (title.startsWith(QLatin1Char('['))) title = i18n("desenho");
++#ifdef Q_OS_ANDROID
++    QAndroidJniObject::callStaticMethod<void>(
++        "org/krita/android/NanquimTimelapse", "export",
++        "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;I)V",
++        QtAndroid::androidActivity().object(),
++        QAndroidJniObject::fromString(dir).object<jstring>(),
++        QAndroidJniObject::fromString(title).object<jstring>(),
++        jint(seconds));
++#else
++    Q_UNUSED(seconds);
++#endif
++}
++
++void addTimelapseButton(KisMainWindow *mw, QToolBar *top)
++{
++    NanquimTimelapseRecorder *recorder = new NanquimTimelapseRecorder(mw);
++    QToolButton *b = iconButton(top, i18n("Time-lapse"), designIcon(Svg::TIMELAPSE));
++    b->setProperty(NEEDS_CANVAS, true);
++    QMenu *menu = new QMenu(b);
++    QObject::connect(menu, &QMenu::aboutToShow, mw, [mw, menu, recorder]() {
++        menu->clear();
++        const int frames = recorder->frameCount();
++        QAction *info = menu->addAction(frames > 0 ? i18n("%1 quadros gravados neste desenho", frames)
++                                                   : i18n("Nenhum quadro gravado ainda"));
++        info->setEnabled(false);
++        menu->addSeparator();
++        struct Option { const char *label; int seconds; };
++        for (const Option &o : {Option{"Exportar vídeo de 30 segundos", 30},
++                                Option{"Exportar vídeo de 1 minuto", 60},
++                                Option{"Exportar vídeo completo", 0}}) {
++            QAction *a = menu->addAction(i18n(o.label));
++            a->setEnabled(frames > 0);
++            const int seconds = o.seconds;
++            QObject::connect(a, &QAction::triggered, mw, [mw, recorder, seconds]() {
++                exportTimelapse(mw, recorder, seconds);
++            });
++        }
++        menu->addSeparator();
++        QAction *autoRecord = menu->addAction(i18n("Gravar sozinho enquanto desenho"));
++        autoRecord->setCheckable(true);
++        autoRecord->setChecked(NanquimTimelapseRecorder::enabled());
++        QObject::connect(autoRecord, &QAction::toggled, mw, [](bool on) { NanquimTimelapseRecorder::setEnabled(on); });
++        QAction *clear = menu->addAction(i18n("Apagar a gravação deste desenho"));
++        clear->setEnabled(frames > 0);
++        QObject::connect(clear, &QAction::triggered, mw, [recorder]() { recorder->clearCurrent(); });
++    });
++    b->setMenu(menu);
++    b->setPopupMode(QToolButton::InstantPopup);
++    top->addWidget(b);
++}
++
+ void buildTopBar(KisMainWindow *mw)
+ {
+     QToolBar *top = new QToolBar(i18n("Barra do Nanquim"), mw);
+@@ -574,6 +805,8 @@ void buildTopBar(KisMainWindow *mw)
+         top->addWidget(b);
+     }
+ 
++    addTimelapseButton(mw, top);
++
+     // Mais: o menu completo do Krita
+     QToolButton *more = iconButton(top, i18n("Mais opções"), designIcon(Svg::MORE));
+     QMenu *moreMenu = new QMenu(more);
+diff --git a/packaging/android/apk/src/org/krita/android/NanquimTimelapse.java b/packaging/android/apk/src/org/krita/android/NanquimTimelapse.java
+new file mode 100644
+index 0000000..afc74fd
+--- /dev/null
++++ b/packaging/android/apk/src/org/krita/android/NanquimTimelapse.java
+@@ -0,0 +1,273 @@
++package org.krita.android;
++
++import android.app.Activity;
++import android.content.ContentValues;
++import android.graphics.Bitmap;
++import android.graphics.BitmapFactory;
++import android.graphics.Canvas;
++import android.graphics.Color;
++import android.graphics.Paint;
++import android.graphics.RectF;
++import android.media.MediaCodec;
++import android.media.MediaCodecInfo;
++import android.media.MediaFormat;
++import android.media.MediaMuxer;
++import android.net.Uri;
++import android.os.Build;
++import android.os.Environment;
++import android.provider.MediaStore;
++import android.util.Log;
++import android.view.Surface;
++import android.widget.Toast;
++
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.FileOutputStream;
++import java.io.InputStream;
++import java.io.OutputStream;
++import java.nio.ByteBuffer;
++import java.text.SimpleDateFormat;
++import java.util.Arrays;
++import java.util.Date;
++import java.util.Locale;
++
++/**
++ * Nanquim: monta o vídeo de time-lapse (MP4/H.264) a partir dos quadros que o
++ * app grava enquanto o artista desenha. Usa o codificador de vídeo do próprio
++ * aparelho (MediaCodec), já que o FFmpeg do Krita não existe no Android.
++ */
++public final class NanquimTimelapse {
++    private static final String TAG = "nanquim.Timelapse";
++    private static final int FPS = 30;
++    private static boolean sBusy;
++
++    private NanquimTimelapse() {}
++
++    /** targetSeconds <= 0: usa todos os quadros. */
++    public static void export(final Activity a, final String dir, final String title, final int targetSeconds) {
++        if (a == null) {
++            return;
++        }
++        synchronized (NanquimTimelapse.class) {
++            if (sBusy) {
++                toast(a, "Já existe um time-lapse sendo gerado");
++                return;
++            }
++            sBusy = true;
++        }
++        toast(a, "Gerando o time-lapse… pode continuar desenhando");
++        new Thread(() -> {
++            try {
++                String where = run(a, dir, title, targetSeconds);
++                toast(a, where == null ? "Ainda não há quadros gravados neste desenho"
++                                       : "Time-lapse salvo em " + where);
++            } catch (Throwable t) {
++                Log.e(TAG, "falha ao gerar o time-lapse", t);
++                toast(a, "Não consegui gerar o time-lapse: " + t.getMessage());
++            } finally {
++                synchronized (NanquimTimelapse.class) {
++                    sBusy = false;
++                }
++            }
++        }, "nanquim-timelapse").start();
++    }
++
++    private static void toast(final Activity a, final String text) {
++        a.runOnUiThread(() -> Toast.makeText(a, text, Toast.LENGTH_LONG).show());
++    }
++
++    private static String run(Activity a, String dir, String title, int targetSeconds) throws Exception {
++        File[] frames = new File(dir).listFiles((d, name) -> name.startsWith("frame_") && name.endsWith(".jpg"));
++        if (frames == null || frames.length == 0) {
++            return null;
++        }
++        Arrays.sort(frames);
++        final int n = frames.length;
++
++        // tamanho do vídeo: o do último quadro, com lados pares
++        BitmapFactory.Options bounds = new BitmapFactory.Options();
++        bounds.inJustDecodeBounds = true;
++        BitmapFactory.decodeFile(frames[n - 1].getPath(), bounds);
++        final int w = Math.max(16, bounds.outWidth & ~1);
++        final int h = Math.max(16, bounds.outHeight & ~1);
++
++        // quais quadros entram, e quantas vezes cada um aparece
++        final int wanted = targetSeconds > 0 ? FPS * targetSeconds : n;
++        final int count;      // quadros de origem usados
++        final int repeat;     // quadros de vídeo por quadro de origem
++        if (n >= wanted) {
++            count = wanted;
++            repeat = 1;
++        } else {
++            count = n;
++            repeat = Math.max(1, Math.min(8, (int) Math.ceil(wanted / (double) n)));
++        }
++        final int tail = FPS * 2;   // segura o desenho final por 2 s
++
++        File tmp = new File(a.getCacheDir(), "nanquim-timelapse.mp4");
++        if (tmp.exists()) {
++            tmp.delete();
++        }
++
++        MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h);
++        format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
++        format.setInteger(MediaFormat.KEY_BIT_RATE, Math.max(4_000_000, Math.min(16_000_000, w * h * 5)));
++        format.setInteger(MediaFormat.KEY_FRAME_RATE, FPS);
++        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
++
++        MediaCodec encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
++        MediaMuxer muxer = null;
++        Surface surface = null;
++        try {
++            encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
++            surface = encoder.createInputSurface();
++            encoder.start();
++            muxer = new MediaMuxer(tmp.getPath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
++            State st = new State(encoder, muxer);
++
++            Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
++            Bitmap bitmap = null;
++            for (int i = 0; i < count; i++) {
++                int src = (int) ((long) i * n / count);
++                if (i == count - 1) {
++                    src = n - 1;   // o vídeo sempre termina no desenho pronto
++                }
++                if (bitmap != null) {
++                    bitmap.recycle();
++                }
++                bitmap = BitmapFactory.decodeFile(frames[src].getPath());
++                if (bitmap == null) {
++                    continue;
++                }
++                int times = repeat + (i == count - 1 ? tail : 0);
++                for (int k = 0; k < times; k++) {
++                    drawFrame(surface, bitmap, w, h, paint);
++                    drain(st, false);
++                }
++            }
++            if (bitmap != null) {
++                bitmap.recycle();
++            }
++            encoder.signalEndOfInputStream();
++            drain(st, true);
++        } finally {
++            try { encoder.stop(); } catch (Exception ignored) { }
++            encoder.release();
++            if (surface != null) {
++                surface.release();
++            }
++            if (muxer != null) {
++                try { muxer.stop(); } catch (Exception ignored) { }
++                muxer.release();
++            }
++        }
++
++        String safe = (title == null || title.trim().isEmpty() ? "desenho" : title.trim())
++                .replaceAll("[^\\p{L}\\p{N} _-]", "_");
++        String name = "Nanquim " + safe + " "
++                + new SimpleDateFormat("yyyy-MM-dd HH.mm", Locale.ROOT).format(new Date()) + ".mp4";
++        String where = publish(a, tmp, name);
++        tmp.delete();
++        return where;
++    }
++
++    private static void drawFrame(Surface surface, Bitmap bitmap, int w, int h, Paint paint) {
++        Canvas c = Build.VERSION.SDK_INT >= 23 ? surface.lockHardwareCanvas() : surface.lockCanvas(null);
++        try {
++            c.drawColor(Color.WHITE);
++            float scale = Math.min(w / (float) bitmap.getWidth(), h / (float) bitmap.getHeight());
++            float bw = bitmap.getWidth() * scale;
++            float bh = bitmap.getHeight() * scale;
++            float left = (w - bw) / 2f;
++            float top = (h - bh) / 2f;
++            c.drawBitmap(bitmap, null, new RectF(left, top, left + bw, top + bh), paint);
++        } finally {
++            surface.unlockCanvasAndPost(c);
++        }
++    }
++
++    private static final class State {
++        final MediaCodec encoder;
++        final MediaMuxer muxer;
++        final MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
++        int track = -1;
++        boolean started;
++        long outFrames;
++        State(MediaCodec e, MediaMuxer m) { encoder = e; muxer = m; }
++    }
++
++    /**
++     * Passa os quadros codificados para o arquivo. O tempo de cada quadro é
++     * reescrito aqui (quadro N = N/30 s): desenhando por Canvas, o codificador
++     * carimbaria a hora do relógio, e o vídeo sairia com a velocidade errada.
++     */
++    private static void drain(State st, boolean end) {
++        int idle = 0;
++        while (true) {
++            int index = st.encoder.dequeueOutputBuffer(st.info, end ? 10000 : 0);
++            if (index == MediaCodec.INFO_TRY_AGAIN_LATER) {
++                if (!end || ++idle > 500) {
++                    return;
++                }
++            } else if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
++                if (!st.started) {
++                    st.track = st.muxer.addTrack(st.encoder.getOutputFormat());
++                    st.muxer.start();
++                    st.started = true;
++                }
++            } else if (index >= 0) {
++                idle = 0;
++                ByteBuffer data = st.encoder.getOutputBuffer(index);
++                boolean config = (st.info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
++                if (data != null && !config && st.info.size > 0 && st.started) {
++                    st.info.presentationTimeUs = st.outFrames * 1_000_000L / FPS;
++                    st.outFrames++;
++                    data.position(st.info.offset);
++                    data.limit(st.info.offset + st.info.size);
++                    st.muxer.writeSampleData(st.track, data, st.info);
++                }
++                st.encoder.releaseOutputBuffer(index, false);
++                if ((st.info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
++                    return;
++                }
++            }
++        }
++    }
++
++    private static String publish(Activity a, File video, String name) throws Exception {
++        if (Build.VERSION.SDK_INT >= 29) {
++            ContentValues values = new ContentValues();
++            values.put(MediaStore.Video.Media.DISPLAY_NAME, name);
++            values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
++            values.put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/Nanquim");
++            values.put(MediaStore.Video.Media.IS_PENDING, 1);
++            Uri uri = a.getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
++            if (uri == null) {
++                throw new IllegalStateException("sem acesso à pasta de vídeos");
++            }
++            try (InputStream in = new FileInputStream(video);
++                 OutputStream out = a.getContentResolver().openOutputStream(uri)) {
++                copy(in, out);
++            }
++            values.clear();
++            values.put(MediaStore.Video.Media.IS_PENDING, 0);
++            a.getContentResolver().update(uri, values, null, null);
++            return "Vídeos › Nanquim (aparece na Galeria)";
++        }
++        File dir = a.getExternalFilesDir(Environment.DIRECTORY_MOVIES);
++        File out = new File(dir, name);
++        try (InputStream in = new FileInputStream(video); OutputStream os = new FileOutputStream(out)) {
++            copy(in, os);
++        }
++        return out.getPath();
++    }
++
++    private static void copy(InputStream in, OutputStream out) throws Exception {
++        byte[] buffer = new byte[1 << 16];
++        int read;
++        while ((read = in.read(buffer)) > 0) {
++            out.write(buffer, 0, read);
++        }
++        out.flush();
++    }
++}
+-- 
+2.43.0
+
