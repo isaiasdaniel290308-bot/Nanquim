@@ -1,0 +1,512 @@
+From 188059b905d6d35086e2593562f0dbf695c56539 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 14:51:59 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20importador=20de=20pinc=C3=A9is=20.su?=
+ =?UTF-8?q?t=20do=20Clip=20Studio=20(ponta=20por=20imagem,=20espessura,=20?=
+ =?UTF-8?q?rota=C3=A7=C3=A3o,=20fita)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/CMakeLists.txt                        |   1 +
+ libs/ui/KisApplication.cpp                    |  10 +-
+ libs/ui/NanquimSutImport.cpp                  | 375 ++++++++++++++++++
+ libs/ui/NanquimSutImport.h                    |  26 ++
+ .../src/org/krita/android/NanquimImport.java  |   2 +-
+ .../krita/android/NanquimImportActivity.java  |   2 +-
+ 6 files changed, 413 insertions(+), 3 deletions(-)
+ create mode 100644 libs/ui/NanquimSutImport.cpp
+ create mode 100644 libs/ui/NanquimSutImport.h
+
+diff --git a/libs/ui/CMakeLists.txt b/libs/ui/CMakeLists.txt
+index 53004c1..1b9acd9 100644
+--- a/libs/ui/CMakeLists.txt
++++ b/libs/ui/CMakeLists.txt
+@@ -447,6 +447,7 @@ set(kritaui_LIB_SRCS
+     kis_async_action_feedback.cpp
+     KisMainWindow.cpp
+     NanquimTabletUi.cpp
++    NanquimSutImport.cpp
+     KisOpenPane.cpp
+     KisPart.cpp
+     KisTemplate.cpp
+diff --git a/libs/ui/KisApplication.cpp b/libs/ui/KisApplication.cpp
+index 3534cab..176e439 100644
+--- a/libs/ui/KisApplication.cpp
++++ b/libs/ui/KisApplication.cpp
+@@ -5,6 +5,7 @@
+  * SPDX-License-Identifier: LGPL-2.0-or-later
+  */
+ 
++#include "NanquimSutImport.h"
+ #include <KisTagModel.h>
+ #include <KisTagResourceModel.h>
+ #include "KisApplication.h"
+@@ -1163,7 +1164,7 @@ bool nanquimImportResourceFile(QWidget *parent, const QString &url)
+     }
+     const QFileInfo info(path);
+     const QString suffix = info.suffix().toLower();
+-    if (suffix != QStringLiteral("kpp") && suffix != QStringLiteral("bundle")) {
++    if (suffix != QStringLiteral("kpp") && suffix != QStringLiteral("bundle") && suffix != QStringLiteral("sut")) {
+         return false;
+     }
+     if (!info.exists()) {
+@@ -1179,6 +1180,13 @@ bool nanquimImportResourceFile(QWidget *parent, const QString &url)
+             app->hideSplashScreen();
+         }
+ 
++    if (suffix == QStringLiteral("sut")) {
++        QString text;
++        NanquimSutImport::importFile(parent, path, &text);
++        QMessageBox::information(parent, QStringLiteral("Nanquim"), text);
++        return;
++    }
++
+     if (suffix == QStringLiteral("kpp")) {
+         KoResourceSP resource = KisResourceUserOperations::importResourceFileWithUserInput(
+             parent, QString(), ResourceType::PaintOpPresets, path);
+diff --git a/libs/ui/NanquimSutImport.cpp b/libs/ui/NanquimSutImport.cpp
+new file mode 100644
+index 0000000..48e2cd7
+--- /dev/null
++++ b/libs/ui/NanquimSutImport.cpp
+@@ -0,0 +1,375 @@
++/*
++ *  SPDX-FileCopyrightText: 2026 Nanquim
++ *
++ *  SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++#include "NanquimSutImport.h"
++
++#include <QCryptographicHash>
++#include <QDir>
++#include <QFileInfo>
++#include <QImage>
++#include <QPainter>
++#include <QSqlDatabase>
++#include <QSqlError>
++#include <QSqlQuery>
++#include <QSqlRecord>
++#include <QStandardPaths>
++#include <QTransform>
++#include <QUuid>
++#include <QVariant>
++#include <QtMath>
++
++#include <KoResource.h>
++#include <KisResourceTypes.h>
++#include <KisResourceUserOperations.h>
++#include <KisTagModel.h>
++#include <KisTagResourceModel.h>
++#include <kis_paintop_preset.h>
++#include <kis_paintop_settings.h>
++
++#include "KisResourceServerProvider.h"
++#include "KisUsageLogger.h"
++
++namespace
++{
++
++struct SutBrush {
++    QString name;
++    double size = 20.0;        // px
++    double opacity = 100.0;    // %
++    double flow = 100.0;       // %
++    double hardness = 100.0;   // %
++    double interval = 10.0;    // % do tamanho (só quando o espaçamento é fixo)
++    int intervalType = 1;      // 0 = fixo; outros = automático
++    double thickness = 100.0;  // % (achata a ponta na direção do traço)
++    double rotation = 0.0;     // graus
++    bool usePattern = false;   // ponta por imagem
++    bool ribbon = false;       // "fita": a imagem acompanha o traço
++    bool antiAlias = true;
++    QByteArray tipPng;
++};
++
++// Extrai um arquivo de dentro de um tar guardado em memória.
++QByteArray tarEntry(const QByteArray &tar, const QString &wanted)
++{
++    int pos = 0;
++    while (pos + 512 <= tar.size()) {
++        const char *header = tar.constData() + pos;
++        if (header[0] == '\0') break;
++        const QString name = QString::fromUtf8(header, int(qstrnlen(header, 100)));
++        qint64 size = 0;
++        for (int i = 124; i < 136; i++) {
++            const char c = header[i];
++            if (c < '0' || c > '7') {
++                if (c == ' ' && size == 0) continue;
++                break;
++            }
++            size = size * 8 + (c - '0');
++        }
++        if (size < 0 || pos + 512 + size > tar.size()) break;
++        if (name == wanted) {
++            return tar.mid(pos + 512, int(size));
++        }
++        pos += 512 + int((size + 511) / 512) * 512;
++    }
++    return QByteArray();
++}
++
++bool readSut(const QString &path, SutBrush *brush, QString *error)
++{
++    const QString connection = QStringLiteral("nanquim-sut-") + QUuid::createUuid().toString(QUuid::Id128);
++    bool ok = false;
++    {
++        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connection);
++        db.setDatabaseName(path);
++        db.setConnectOptions(QStringLiteral("QSQLITE_OPEN_READONLY"));
++        if (!db.open()) {
++            *error = QStringLiteral("não consegui abrir o arquivo (%1)").arg(db.lastError().text());
++        } else {
++            do {
++                int variantId = 0;
++                {
++                    QSqlQuery node(db);
++                    if (!node.exec(QStringLiteral("SELECT NodeName, NodeVariantID FROM Node WHERE NodeVariantID > 0 LIMIT 1"))
++                            || !node.next()) {
++                        *error = QStringLiteral("o arquivo não tem nenhuma subferramenta");
++                        break;
++                    }
++                    brush->name = node.value(0).toString().trimmed();
++                    variantId = node.value(1).toInt();
++                }
++                QByteArray patternRef;
++                {
++                    QSqlQuery variant(db);
++                    variant.prepare(QStringLiteral("SELECT * FROM Variant WHERE VariantID = ?"));
++                    variant.addBindValue(variantId);
++                    if (!variant.exec() || !variant.next()) {
++                        *error = QStringLiteral("não encontrei os ajustes do pincel");
++                        break;
++                    }
++                    const QSqlRecord rec = variant.record();
++                    auto number = [&rec](const char *key, double fallback) {
++                        const int i = rec.indexOf(QLatin1String(key));
++                        return (i >= 0 && !rec.isNull(i)) ? rec.value(i).toDouble() : fallback;
++                    };
++                    brush->size = qBound(1.0, number("BrushSize", 20.0), 1000.0);
++                    brush->opacity = qBound(1.0, number("Opacity", 100.0), 100.0);
++                    brush->flow = qBound(1.0, number("BrushFlow", 100.0), 100.0);
++                    brush->hardness = qBound(1.0, number("BrushHardness", 100.0), 100.0);
++                    brush->interval = number("BrushInterval", 10.0);
++                    brush->intervalType = int(number("BrushAutoIntervalType", 1));
++                    brush->thickness = qBound(1.0, number("BrushThickness", 100.0), 100.0);
++                    brush->rotation = number("BrushRotation", 0.0);
++                    brush->usePattern = number("BrushUsePatternImage", 0) != 0;
++                    brush->ribbon = number("BrushRibbon", 0) != 0;
++                    brush->antiAlias = number("AntiAlias", 1) != 0;
++                    const int refIndex = rec.indexOf(QLatin1String("BrushPatternImageArray"));
++                    if (refIndex >= 0) {
++                        patternRef = rec.value(refIndex).toByteArray();
++                    }
++                }
++                if (brush->usePattern && patternRef.size() > 16) {
++                    // a referência guarda, em UTF-16, o caminho do material da ponta
++                    const QString ref = QString::fromUtf16(
++                                reinterpret_cast<const ushort*>(patternRef.constData() + 16),
++                                (patternRef.size() - 16) / 2);
++                    QSqlQuery material(db);
++                    if (material.exec(QStringLiteral("SELECT CatalogPath, FileData FROM MaterialFile"))) {
++                        while (material.next()) {
++                            const QString uuid = material.value(0).toString().section(QLatin1Char(':'), -1);
++                            if (uuid.isEmpty() || !ref.contains(uuid)) continue;
++                            brush->tipPng = tarEntry(material.value(1).toByteArray(),
++                                                     QStringLiteral("thumbnail/thumbnail.png"));
++                            if (!brush->tipPng.isEmpty()) break;
++                        }
++                    }
++                }
++                ok = true;
++            } while (false);
++            db.close();
++        }
++    }
++    QSqlDatabase::removeDatabase(connection);
++    if (ok && brush->name.isEmpty()) {
++        brush->name = QFileInfo(path).completeBaseName();
++    }
++    return ok;
++}
++
++// Ponta em tons de cinza para o Krita: preto = tinta, branco = vazio.
++// A espessura e a rotação do Clip Studio já vão "assadas" na imagem.
++QImage makeTip(const SutBrush &brush, int *baseSize)
++{
++    QImage source = QImage::fromData(brush.tipPng, "PNG").convertToFormat(QImage::Format_ARGB32);
++    if (source.isNull()) return QImage();
++
++    QImage gray(source.size(), QImage::Format_Grayscale8);
++    for (int y = 0; y < source.height(); y++) {
++        const QRgb *src = reinterpret_cast<const QRgb*>(source.constScanLine(y));
++        uchar *dst = gray.scanLine(y);
++        for (int x = 0; x < source.width(); x++) {
++            const int alpha = qAlpha(src[x]);
++            dst[x] = uchar(255 - alpha * (255 - qGray(src[x])) / 255);
++        }
++    }
++    // na fita, quem manda é a altura da imagem (a largura do traço)
++    *baseSize = brush.ribbon ? gray.height() : qMax(gray.width(), gray.height());
++
++    if (!brush.ribbon) {
++        if (brush.thickness < 99.0) {
++            const int w = qMax(2, qRound(gray.width() * brush.thickness / 100.0));
++            gray = gray.scaled(w, gray.height(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
++        }
++        if (!qFuzzyIsNull(std::fmod(brush.rotation, 360.0))) {
++            QTransform t;
++            t.rotate(-brush.rotation);
++            const QRect bounds = t.mapRect(gray.rect());
++            QImage rotated(bounds.size(), QImage::Format_Grayscale8);
++            rotated.fill(Qt::white);
++            QPainter g(&rotated);
++            g.setRenderHint(QPainter::SmoothPixmapTransform);
++            g.translate(-bounds.topLeft());
++            g.setTransform(t, true);
++            g.drawImage(0, 0, gray);
++            g.end();
++            gray = rotated;
++        }
++    }
++    return gray;
++}
++
++QString asciiSlug(const QString &name)
++{
++    QString slug;
++    for (const QChar c : name) {
++        if (c.unicode() < 128 && (c.isLetterOrNumber() || c == QLatin1Char('-') || c == QLatin1Char('_'))) {
++            slug.append(c);
++        } else if (c.isSpace()) {
++            slug.append(QLatin1Char('_'));
++        }
++    }
++    const QString hash = QString::fromLatin1(
++                QCryptographicHash::hash(name.toUtf8(), QCryptographicHash::Md5).toHex().left(8));
++    return (slug.isEmpty() ? QStringLiteral("pincel") : slug.left(40)) + QLatin1Char('_') + hash;
++}
++
++QString cdata(double v)
++{
++    return QString::number(v, 'g', 6);
++}
++
++} // namespace
++
++bool NanquimSutImport::importFile(QWidget *parent, const QString &path, QString *message)
++{
++    SutBrush brush;
++    QString error;
++    if (!readSut(path, &brush, &error)) {
++        *message = QStringLiteral("Não consegui importar %1: %2.").arg(QFileInfo(path).fileName(), error);
++        KisUsageLogger::log(QStringLiteral("[Nanquim] .sut falhou: %1").arg(error));
++        return false;
++    }
++
++    KisPaintOpPresetResourceServer *server = KisResourceServerProvider::instance()->paintOpPresetServer();
++    KisPaintOpPresetSP base = server->resource(QString(), QStringLiteral("d)_Ink-2_Fineliner.kpp"), QString());
++    if (!base) {
++        base = server->resource(QString(), QStringLiteral("b)_Basic-5_Size_default.kpp"), QString());
++    }
++    if (!base) {
++        *message = QStringLiteral("Não encontrei um pincel base do Krita para converter o .sut.");
++        return false;
++    }
++
++    const QString slug = asciiSlug(brush.name);
++    QString definition;
++    QString detail;
++    QImage thumbnailSource;
++
++    // espaçamento: fixo quando o Clip Studio diz; senão, denso o bastante para o traço ficar contínuo
++    double spacing = brush.intervalType == 0 ? qBound(0.03, brush.interval / 100.0, 3.0)
++                                             : qBound(0.03, brush.thickness / 100.0 * 0.5, 0.15);
++    if (brush.ribbon) {
++        spacing = 1.0;   // as imagens da fita se encostam, uma depois da outra
++    }
++
++    bool tipDone = false;
++    if (brush.usePattern && !brush.tipPng.isEmpty()) {
++        int baseSize = 1;
++        const QImage tip = makeTip(brush, &baseSize);
++        if (!tip.isNull()) {
++            const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
++                    + QStringLiteral("/nanquim-sut");
++            QDir().mkpath(dir);
++            const QString tipFile = dir + QStringLiteral("/sut_") + slug + QStringLiteral(".png");
++            if (tip.save(tipFile, "PNG")) {
++                KoResourceSP tipResource = KisResourceUserOperations::importResourceFileWithUserInput(
++                            parent, QString(), ResourceType::Brushes, tipFile);
++                if (tipResource) {
++                    const double scale = brush.size / qMax(1, baseSize);
++                    definition = QStringLiteral(
++                                "<Brush type=\"png_brush\" BrushVersion=\"2\" filename=\"%1\" md5sum=\"%2\" "
++                                "spacing=\"%3\" useAutoSpacing=\"0\" autoSpacingCoeff=\"1\" angle=\"0\" "
++                                "scale=\"%4\" brushApplication=\"0\"/>")
++                            .arg(tipResource->filename().toHtmlEscaped(), tipResource->md5Sum(),
++                                 cdata(spacing), cdata(scale));
++                    thumbnailSource = tip;
++                    detail = brush.ribbon ? QStringLiteral("ponta por imagem, seguindo a direção do traço")
++                                          : QStringLiteral("ponta por imagem");
++                    tipDone = true;
++                }
++            }
++        }
++    }
++    if (!tipDone) {
++        // ponta redonda (ou imagem que não deu para ler): elipse com a espessura e o ângulo do .sut
++        const double fade = qBound(0.05, brush.hardness / 100.0, 1.0);
++        definition = QStringLiteral(
++                    "<Brush type=\"auto_brush\" BrushVersion=\"2\" spacing=\"%1\" useAutoSpacing=\"0\" "
++                    "autoSpacingCoeff=\"1\" angle=\"%2\" randomness=\"0\" density=\"1\">"
++                    "<MaskGenerator type=\"circle\" id=\"default\" diameter=\"%3\" ratio=\"%4\" "
++                    "hfade=\"%5\" vfade=\"%5\" spikes=\"2\" antialiasEdges=\"%6\"/></Brush>")
++                .arg(cdata(qMax(spacing, 0.05)), cdata(qDegreesToRadians(brush.rotation)), cdata(brush.size),
++                     cdata(qBound(0.05, brush.thickness / 100.0, 1.0)), cdata(fade))
++                .arg(brush.antiAlias ? 1 : 0);
++        detail = brush.usePattern ? QStringLiteral("ponta redonda (a imagem da ponta não pôde ser lida)")
++                                  : QStringLiteral("ponta redonda");
++    }
++
++    KisPaintOpPresetSP preset = base->clone().dynamicCast<KisPaintOpPreset>();
++    if (!preset || !preset->settings()) {
++        *message = QStringLiteral("Não consegui criar o pincel a partir do pincel base.");
++        return false;
++    }
++    preset->setResourceId(-1);
++    preset->setName(brush.name);
++    preset->setFilename(QStringLiteral("sut_") + slug + QStringLiteral(".kpp"));
++    preset->setStorageLocation(QString());
++    preset->setValid(true);
++
++    KisPaintOpSettingsSP settings = preset->settings();
++    settings->setProperty("brush_definition", definition);
++    settings->setProperty("OpacityValue", cdata(brush.opacity / 100.0));
++    settings->setProperty("FlowValue", cdata(brush.flow / 100.0));
++    settings->setProperty("Spacing/Isotropic", "true");
++    settings->setProperty("PressureSpacing", "false");
++    // pressão no tamanho, com um mínimo para o traço não sumir (as curvas do .sut ainda não são lidas)
++    settings->setProperty("PressureSize", "true");
++    settings->setProperty("SizeUseCurve", "true");
++    settings->setProperty("SizeSensor",
++                          "<!DOCTYPE params> <params id=\"sensorslist\"> <ChildSensor id=\"pressure\"> "
++                          "<curve>0,0.2;1,1;</curve> </ChildSensor> </params> ");
++    if (brush.ribbon && tipDone) {
++        settings->setProperty("PressureRotation", "true");
++        settings->setProperty("RotationValue", "1");
++        settings->setProperty("RotationUseCurve", "false");
++        settings->setProperty("RotationSensor",
++                              "<!DOCTYPE params> <params id=\"sensorslist\"> <ChildSensor id=\"drawingangle\"/> </params> ");
++    } else {
++        settings->setProperty("PressureRotation", "false");
++    }
++
++    // miniatura do pincel na lista
++    QImage thumbnail(200, 200, QImage::Format_ARGB32);
++    thumbnail.fill(Qt::white);
++    {
++        QPainter g(&thumbnail);
++        g.setRenderHint(QPainter::SmoothPixmapTransform);
++        g.setRenderHint(QPainter::Antialiasing);
++        if (!thumbnailSource.isNull()) {
++            const QImage fit = thumbnailSource.scaled(150, 150, Qt::KeepAspectRatio, Qt::SmoothTransformation);
++            g.drawImage((200 - fit.width()) / 2, (200 - fit.height()) / 2, fit);
++        } else {
++            g.setPen(Qt::NoPen);
++            g.setBrush(Qt::black);
++            g.translate(100, 100);
++            g.rotate(-brush.rotation);
++            const double ratio = qBound(0.05, brush.thickness / 100.0, 1.0);
++            g.drawEllipse(QPointF(0, 0), 60.0, 60.0 * ratio);
++        }
++    }
++    preset->setImage(thumbnail);
++
++    if (!KisResourceUserOperations::addResourceWithUserInput(parent, preset)) {
++        *message = QStringLiteral("O pincel \"%1\" não foi salvo.").arg(brush.name);
++        return false;
++    }
++
++    bool tagged = false;
++    KisTagModel tagModel(ResourceType::PaintOpPresets);
++    KisTagSP tag = tagModel.tagForUrl(QStringLiteral("Nanquim"));
++    if (tag && preset->resourceId() >= 0) {
++        KisTagResourceModel tagResourceModel(ResourceType::PaintOpPresets);
++        tagged = tagResourceModel.tagResources(tag, QVector<int>() << preset->resourceId());
++    }
++
++    *message = QStringLiteral("Pincel do Clip Studio importado: %1\n%2, %3 px.\n%4\n\n"
++                              "O traço fica parecido, não idêntico. Ajuste a pressão no editor de pincel, se precisar.")
++            .arg(brush.name, detail, QString::number(qRound(brush.size)),
++                 tagged ? QStringLiteral("Ele está na etiqueta \"Nanquim\" da janela de pincéis.")
++                        : QStringLiteral("Ele está em \"Tudo\", na janela de pincéis."));
++    KisUsageLogger::log(QStringLiteral("[Nanquim] .sut importado: %1 (%2, %3 px, fita=%4, espessura=%5, rotação=%6)")
++                        .arg(brush.name, detail).arg(brush.size).arg(brush.ribbon).arg(brush.thickness).arg(brush.rotation));
++    return true;
++}
+diff --git a/libs/ui/NanquimSutImport.h b/libs/ui/NanquimSutImport.h
+new file mode 100644
+index 0000000..d4e9fe6
+--- /dev/null
++++ b/libs/ui/NanquimSutImport.h
+@@ -0,0 +1,26 @@
++/*
++ *  SPDX-FileCopyrightText: 2026 Nanquim
++ *
++ *  SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++#ifndef NANQUIM_SUT_IMPORT_H
++#define NANQUIM_SUT_IMPORT_H
++
++#include <QString>
++
++class QWidget;
++
++/**
++ * Nanquim: importa uma subferramenta do Clip Studio Paint (.sut) como pincel
++ * do Krita. O .sut é um banco SQLite; a ponta vem da miniatura PNG guardada
++ * no material (até 300 px). O traço fica parecido, não idêntico: curvas de
++ * pressão e textura de papel ainda não são convertidas.
++ */
++namespace NanquimSutImport
++{
++// devolve true se o pincel foi criado; "message" recebe o texto para o usuário
++bool importFile(QWidget *parent, const QString &path, QString *message);
++}
++
++#endif
+diff --git a/packaging/android/apk/src/org/krita/android/NanquimImport.java b/packaging/android/apk/src/org/krita/android/NanquimImport.java
+index 63fca2b..e5b10d2 100644
+--- a/packaging/android/apk/src/org/krita/android/NanquimImport.java
++++ b/packaging/android/apk/src/org/krita/android/NanquimImport.java
+@@ -38,7 +38,7 @@ public final class NanquimImport {
+             return null;
+         }
+         String lower = name.toLowerCase();
+-        if (!lower.endsWith(".kpp") && !lower.endsWith(".bundle")) {
++        if (!lower.endsWith(".kpp") && !lower.endsWith(".bundle") && !lower.endsWith(".sut")) {
+             return null;
+         }
+         name = new File(name).getName();
+diff --git a/packaging/android/apk/src/org/krita/android/NanquimImportActivity.java b/packaging/android/apk/src/org/krita/android/NanquimImportActivity.java
+index f8b4e7c..8ab63ec 100644
+--- a/packaging/android/apk/src/org/krita/android/NanquimImportActivity.java
++++ b/packaging/android/apk/src/org/krita/android/NanquimImportActivity.java
+@@ -25,7 +25,7 @@ public class NanquimImportActivity extends Activity {
+                 out.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                 startActivity(out);
+             } else {
+-                Toast.makeText(this, "O Nanquim só importa pincéis .kpp e pacotes .bundle por aqui.", Toast.LENGTH_LONG).show();
++                Toast.makeText(this, "O Nanquim importa pincéis .kpp, pacotes .bundle e pincéis .sut do Clip Studio por aqui.", Toast.LENGTH_LONG).show();
+             }
+         }
+         finish();
+-- 
+2.43.0
+

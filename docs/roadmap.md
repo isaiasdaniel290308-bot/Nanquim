@@ -22,7 +22,7 @@
 | Pincéis do Nanquim: etiqueta com pincéis leves do motor nativo, aberta por padrão | Em teste | 0030 |
 | Boas-vindas na primeira abertura e guia rápido | Em teste | 0030 |
 | Interface nova, próximas peças: galeria inicial, ferramentas recolhíveis, boas-vindas | Próximo | — |
-| Importador `.sut` (Clip Studio) | Planejado | — |
+| Importador `.sut` (Clip Studio), v1: ponta pela miniatura, ajustes básicos | Em teste | 0032 |
 | Liquidificar mais rápido: aplicação em várias threads | Em teste | 0019 |
 | Liquidificar mais rápido: prévia leve enquanto arrasta | Planejado | — |
 | Modo de interface "Clássico" (desktop), alternável nas configurações | Projetado | — |
