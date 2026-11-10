@@ -1,0 +1,200 @@
+From f7f56d5042d7f657cde454605a2a52f71b34cbd7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 21:03:14 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20liquidificar=20aplica=20o=20resultad?=
+ =?UTF-8?q?o=20em=20v=C3=A1rias=20threads=20(faixas=20recortadas,=20result?=
+ =?UTF-8?q?ado=20id=C3=AAntico)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ libs/image/kis_grid_interpolation_tools.h   |  18 ++++
+ libs/image/kis_liquify_transform_worker.cpp | 100 +++++++++++++++++++-
+ 2 files changed, 115 insertions(+), 3 deletions(-)
+
+diff --git a/libs/image/kis_grid_interpolation_tools.h b/libs/image/kis_grid_interpolation_tools.h
+index 3f066fc..ddf0e7c 100644
+--- a/libs/image/kis_grid_interpolation_tools.h
++++ b/libs/image/kis_grid_interpolation_tools.h
+@@ -186,6 +186,11 @@ struct PaintDevicePolygonOp
+     }
+ 
+     void fastCopyArea(QRect areaToCopy, bool lazy) {
++        // Nanquim: com recorte, cada thread só escreve na sua faixa
++        if (!m_clipRect.isNull()) {
++            areaToCopy &= m_clipRect;
++            if (areaToCopy.isEmpty()) return;
++        }
+ #ifdef DEBUG_PAINTING_POLYGONS
+ 
+         QRect boundRect = areaToCopy;
+@@ -221,6 +226,9 @@ struct PaintDevicePolygonOp
+         //m_rectId++;
+ #endif
+         QRect boundRect = clipDstPolygon.boundingRect().toAlignedRect();
++        if (!m_clipRect.isNull()) {
++            boundRect &= m_clipRect;
++        }
+         if (boundRect.isEmpty()) return;
+ 
+         bool samePolygon = (m_dstDev->colorSpace() == m_srcDev->colorSpace())
+@@ -334,6 +342,16 @@ struct PaintDevicePolygonOp
+         m_canMergeRects = newCanMergeRects;
+     }
+ 
++    /**
++     * Nanquim: limita a escrita a um retângulo do destino. Com isso várias
++     * threads podem processar a mesma grade, cada uma na sua faixa, sem
++     * escrever nos mesmos pixels e na mesma ordem do processamento serial.
++     */
++    inline void setClipRect(const QRect &rect) {
++        m_clipRect = rect;
++    }
++
++    QRect m_clipRect;
+     KisPaintDeviceSP m_srcDev;
+     KisPaintDeviceSP m_dstDev;
+     const qreal m_epsilon {0.001};
+diff --git a/libs/image/kis_liquify_transform_worker.cpp b/libs/image/kis_liquify_transform_worker.cpp
+index 0bbbf8a..1251a35 100644
+--- a/libs/image/kis_liquify_transform_worker.cpp
++++ b/libs/image/kis_liquify_transform_worker.cpp
+@@ -13,6 +13,12 @@
+ #include "kis_dom_utils.h"
+ #include "krita_utils.h"
+ #include "KisSpatialContainer.h"
++#include <NanquimStepTimer.h>
++#include <QThread>
++#include <atomic>
++#include <limits>
++#include <thread>
++#include <vector>
+ 
+ 
+ struct Q_DECL_HIDDEN KisLiquifyTransformWorker::Private
+@@ -602,15 +608,103 @@ void KisLiquifyTransformWorker::run(KisPaintDeviceSP srcDevice, KisPaintDeviceSP
+ {
+     KIS_SAFE_ASSERT_RECOVER_RETURN(*srcDevice->colorSpace() == *dstDevice->colorSpace());
+ 
++    NanquimStepTimer nanquimTimer(QStringLiteral("liquidificar"));
++
+     dstDevice->clear();
+ 
+     using namespace GridIterationTools;
+     QRect correctSubGrid = calculateCorrectSubGrid(m_d->srcBounds, m_d->pixelPrecision, m_d->accumulatedBrushStrokes, m_d->gridSize);
+ 
++    RegularGridIndexesOp probeIndexes(m_d->gridSize);
++    const bool canMergeRects = GridIterationTools::canProcessRectsInRandomOrder(probeIndexes, m_d->transformedPoints, correctSubGrid);
++    const QList<QRectF> areasToCopy = cutOutSubgridFromBounds(correctSubGrid, m_d->srcBounds, m_d->gridSize, m_d->originalPoints);
++
++    // ------------------------------------------------------------------
++    // Nanquim: aplicação em várias threads.
++    //
++    // O destino é dividido em faixas horizontais alinhadas aos blocos (64 px).
++    // Cada faixa percorre, na ordem original, só as linhas da grade que podem
++    // cair nela, e escreve apenas dentro dela (setClipRect). Assim cada pixel
++    // é escrito por uma única thread e na mesma ordem do código serial: o
++    // resultado é idêntico, só que dividido entre os núcleos do aparelho.
++    // ------------------------------------------------------------------
++    const int threadCount = qBound(1, QThread::idealThreadCount(), 8);
++    const QRect extent = m_d->srcBounds | m_d->transformedPointsContainer.exactBounds().toAlignedRect();
++    const int bandHeight = 256;
++
++    if (threadCount > 1 && extent.height() > 2 * bandHeight) {
++        // alcance vertical (no destino) de cada linha de quadrados da grade
++        const int firstRow = correctSubGrid.top();
++        const int endRow = correctSubGrid.bottom();      // linhas válidas: [firstRow, endRow)
++        const int firstCol = correctSubGrid.left();
++        const int lastCol = correctSubGrid.right();
++        const int rows = qMax(0, endRow - firstRow);
++        QVector<qreal> rowMin(rows, std::numeric_limits<qreal>::max());
++        QVector<qreal> rowMax(rows, std::numeric_limits<qreal>::lowest());
++        for (int r = 0; r < rows; r++) {
++            for (int rr = firstRow + r; rr <= firstRow + r + 1; rr++) {
++                for (int c = firstCol; c <= lastCol; c++) {
++                    const qreal y = m_d->transformedPoints[pointToIndex(QPoint(c, rr), m_d->gridSize)].y();
++                    rowMin[r] = qMin(rowMin[r], y);
++                    rowMax[r] = qMax(rowMax[r], y);
++                }
++            }
++        }
++
++        const int top = (extent.top() >= 0 ? extent.top() / 64 : (extent.top() - 63) / 64) * 64;
++        const int bandCount = (extent.bottom() - top) / bandHeight + 1;
++        std::atomic<int> nextBand {0};
++
++        auto worker = [&]() {
++            int b;
++            while ((b = nextBand.fetch_add(1)) < bandCount) {
++                const QRect band = QRect(extent.left(), top + b * bandHeight, extent.width(), bandHeight) & extent;
++                if (band.isEmpty()) continue;
++
++                PaintDevicePolygonOp polygonOp(srcDevice, dstDevice);
++                polygonOp.setCanMergeRects(canMergeRects);
++                polygonOp.setClipRect(band);
++
++                int rFirst = -1;
++                int rLast = -1;
++                for (int r = 0; r < rows; r++) {
++                    if (rowMax[r] >= band.top() - 2 && rowMin[r] <= band.bottom() + 2) {
++                        if (rFirst < 0) rFirst = r;
++                        rLast = r;
++                    }
++                }
++
++                if (rFirst >= 0) {
++                    const QRect bandSubGrid(QPoint(firstCol, firstRow + rFirst), QPoint(lastCol, firstRow + rLast + 1));
++                    RegularGridIndexesOp indexesOp(m_d->gridSize);
++                    iterateThroughGrid<AlwaysCompletePolygonPolicy>(polygonOp, indexesOp,
++                                                                    m_d->gridSize,
++                                                                    m_d->originalPoints,
++                                                                    m_d->transformedPoints,
++                                                                    bandSubGrid);
++                }
++                for (int i = 0; i < areasToCopy.length(); i++) {
++                    polygonOp.fastCopyArea(areasToCopy[i].toRect(), false);
++                }
++                polygonOp.finalize();
++            }
++        };
++
++        std::vector<std::thread> pool;
++        for (int i = 1; i < threadCount; i++) {
++            pool.emplace_back(worker);
++        }
++        worker();
++        for (std::thread &t : pool) {
++            t.join();
++        }
++        nanquimTimer.mark(QStringLiteral("aplicar em %1 threads (%2 x %3 px)")
++                          .arg(threadCount).arg(extent.width()).arg(extent.height()));
++        return;
++    }
++
+     PaintDevicePolygonOp polygonOp(srcDevice, dstDevice);
+     RegularGridIndexesOp indexesOp(m_d->gridSize);
+-
+-    bool canMergeRects = GridIterationTools::canProcessRectsInRandomOrder(indexesOp, m_d->transformedPoints, correctSubGrid);
+     polygonOp.setCanMergeRects(canMergeRects);
+ 
+ #ifdef DEBUG_PAINTING_POLYGONS
+@@ -622,7 +716,6 @@ void KisLiquifyTransformWorker::run(KisPaintDeviceSP srcDevice, KisPaintDeviceSP
+                                                     m_d->originalPoints,
+                                                     m_d->transformedPoints,
+                                                     correctSubGrid);
+-    QList<QRectF> areasToCopy = cutOutSubgridFromBounds(correctSubGrid, m_d->srcBounds, m_d->gridSize, m_d->originalPoints);
+ #ifdef DEBUG_PAINTING_POLYGONS
+     QList<QColor> colors = {Qt::blue, Qt::green, Qt::yellow, Qt::black};
+ #endif
+@@ -632,6 +725,7 @@ void KisLiquifyTransformWorker::run(KisPaintDeviceSP srcDevice, KisPaintDeviceSP
+ #endif
+         polygonOp.fastCopyArea(areasToCopy[i].toRect(), false);
+     }
++    nanquimTimer.mark(QStringLiteral("aplicar em 1 thread"));
+ }
+ 
+ QRect KisLiquifyTransformWorker::approxChangeRect(const QRect &rc)
+-- 
+2.43.0
+
