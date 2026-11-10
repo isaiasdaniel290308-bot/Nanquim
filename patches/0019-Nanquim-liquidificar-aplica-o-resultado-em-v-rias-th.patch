@@ -1,4 +1,4 @@
-From f7f56d5042d7f657cde454605a2a52f71b34cbd7 Mon Sep 17 00:00:00 2001
+From 786da274499ff52cef56cd6f36819e5f59da8e4e Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 9 Nov 2026 21:03:14 -0300
 Subject: [PATCH] =?UTF-8?q?Nanquim:=20liquidificar=20aplica=20o=20resultad?=
@@ -57,7 +57,7 @@ index 3f066fc..ddf0e7c 100644
      KisPaintDeviceSP m_dstDev;
      const qreal m_epsilon {0.001};
 diff --git a/libs/image/kis_liquify_transform_worker.cpp b/libs/image/kis_liquify_transform_worker.cpp
-index 0bbbf8a..1251a35 100644
+index 0bbbf8a..6b3f1c7 100644
 --- a/libs/image/kis_liquify_transform_worker.cpp
 +++ b/libs/image/kis_liquify_transform_worker.cpp
 @@ -13,6 +13,12 @@
@@ -113,7 +113,7 @@ index 0bbbf8a..1251a35 100644
 +        for (int r = 0; r < rows; r++) {
 +            for (int rr = firstRow + r; rr <= firstRow + r + 1; rr++) {
 +                for (int c = firstCol; c <= lastCol; c++) {
-+                    const qreal y = m_d->transformedPoints[pointToIndex(QPoint(c, rr), m_d->gridSize)].y();
++                    const qreal y = m_d->transformedPoints[GridIterationTools::pointToIndex(QPoint(c, rr), m_d->gridSize)].y();
 +                    rowMin[r] = qMin(rowMin[r], y);
 +                    rowMax[r] = qMax(rowMax[r], y);
 +                }
