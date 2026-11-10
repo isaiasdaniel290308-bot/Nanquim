@@ -1,0 +1,194 @@
+From b15dee1c904618327a50728187a90165b87dd72a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 21:54:48 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20tema=20escuro=20azul=20(Nanquim.colo?=
+ =?UTF-8?q?rs)=20como=20padr=C3=A3o=20no=20Android=20e=20fundo=20do=20dese?=
+ =?UTF-8?q?nho=20do=20design?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ krita/data/themes/CMakeLists.txt |   1 +
+ krita/data/themes/Nanquim.colors | 119 +++++++++++++++++++++++++++++++
+ libs/ui/KisApplication.cpp       |   9 +++
+ libs/ui/kis_config.cc            |   4 ++
+ 4 files changed, 133 insertions(+)
+ create mode 100644 krita/data/themes/Nanquim.colors
+
+diff --git a/krita/data/themes/CMakeLists.txt b/krita/data/themes/CMakeLists.txt
+index b0c8184..07248d1 100644
+--- a/krita/data/themes/CMakeLists.txt
++++ b/krita/data/themes/CMakeLists.txt
+@@ -16,6 +16,7 @@ KritaBright.colors
+ KritaDark.colors
+ KritaDarkOrange.colors
+ KritaDarker.colors
++Nanquim.colors
+  ${schemefiles} DESTINATION ${KDE_INSTALL_DATADIR}/color-schemes
+ )
+ 
+diff --git a/krita/data/themes/Nanquim.colors b/krita/data/themes/Nanquim.colors
+new file mode 100644
+index 0000000..d693931
+--- /dev/null
++++ b/krita/data/themes/Nanquim.colors
+@@ -0,0 +1,119 @@
++[ColorEffects:Disabled]
++Color=20,20,23
++ColorAmount=-0.5
++ColorEffect=0
++ContrastAmount=0.45
++ContrastEffect=1
++IntensityAmount=0.2
++IntensityEffect=2
++
++[ColorEffects:Inactive]
++ChangeSelectionColor=false
++Color=0,0,0
++ColorAmount=0.025
++ColorEffect=2
++ContrastAmount=0.4
++ContrastEffect=2
++Enable=false
++IntensityAmount=0
++IntensityEffect=0
++
++[Colors:Button]
++BackgroundAlternate=44,44,51
++BackgroundNormal=38,38,44
++DecorationFocus=61,139,255
++DecorationHover=34,211,238
++ForegroundActive=255,255,255
++ForegroundInactive=163,163,174
++ForegroundLink=124,183,255
++ForegroundNegative=239,98,98
++ForegroundNeutral=230,180,90
++ForegroundNormal=236,236,241
++ForegroundPositive=94,201,140
++ForegroundVisited=169,208,255
++
++[Colors:Complementary]
++BackgroundAlternate=23,23,26
++BackgroundNormal=28,28,32
++DecorationFocus=61,139,255
++DecorationHover=34,211,238
++ForegroundActive=255,255,255
++ForegroundInactive=163,163,174
++ForegroundLink=124,183,255
++ForegroundNegative=239,98,98
++ForegroundNeutral=230,180,90
++ForegroundNormal=236,236,241
++ForegroundPositive=94,201,140
++ForegroundVisited=169,208,255
++
++[Colors:Selection]
++BackgroundAlternate=36,92,176
++BackgroundNormal=61,139,255
++DecorationFocus=61,139,255
++DecorationHover=34,211,238
++ForegroundActive=255,255,255
++ForegroundInactive=220,232,255
++ForegroundLink=255,255,255
++ForegroundNegative=255,180,170
++ForegroundNeutral=255,220,150
++ForegroundNormal=255,255,255
++ForegroundPositive=190,255,215
++ForegroundVisited=230,240,255
++
++[Colors:Tooltip]
++BackgroundAlternate=31,31,36
++BackgroundNormal=38,38,44
++DecorationFocus=61,139,255
++DecorationHover=34,211,238
++ForegroundActive=255,255,255
++ForegroundInactive=163,163,174
++ForegroundLink=124,183,255
++ForegroundNegative=239,98,98
++ForegroundNeutral=230,180,90
++ForegroundNormal=236,236,241
++ForegroundPositive=94,201,140
++ForegroundVisited=169,208,255
++
++[Colors:View]
++BackgroundAlternate=31,31,36
++BackgroundNormal=20,20,23
++DecorationFocus=61,139,255
++DecorationHover=34,211,238
++ForegroundActive=255,255,255
++ForegroundInactive=163,163,174
++ForegroundLink=124,183,255
++ForegroundNegative=239,98,98
++ForegroundNeutral=230,180,90
++ForegroundNormal=236,236,241
++ForegroundPositive=94,201,140
++ForegroundVisited=169,208,255
++
++[Colors:Window]
++BackgroundAlternate=23,23,26
++BackgroundNormal=28,28,32
++DecorationFocus=61,139,255
++DecorationHover=34,211,238
++ForegroundActive=255,255,255
++ForegroundInactive=163,163,174
++ForegroundLink=124,183,255
++ForegroundNegative=239,98,98
++ForegroundNeutral=230,180,90
++ForegroundNormal=236,236,241
++ForegroundPositive=94,201,140
++ForegroundVisited=169,208,255
++
++[General]
++ColorScheme=Nanquim
++Name=Nanquim
++shadeSortColumn=true
++
++[KDE]
++contrast=4
++
++[WM]
++activeBackground=23,23,26
++activeBlend=236,236,241
++activeForeground=236,236,241
++inactiveBackground=28,28,32
++inactiveBlend=163,163,174
++inactiveForeground=163,163,174
+diff --git a/libs/ui/KisApplication.cpp b/libs/ui/KisApplication.cpp
+index d863380..1018dd7 100644
+--- a/libs/ui/KisApplication.cpp
++++ b/libs/ui/KisApplication.cpp
+@@ -561,6 +561,15 @@ bool KisApplication::start(const KisApplicationArguments &args)
+ #endif
+ 
+     KConfigGroup group(KSharedConfig::openConfig(), "theme");
++#ifdef Q_OS_ANDROID
++    // Nanquim: tema escuro azul do design, aplicado uma vez (depois vale a escolha do usuário
++    // em Configurações → Tema)
++    if (!group.readEntry("nanquimThemeV1", false)) {
++        group.writeEntry("Theme", "Nanquim");
++        group.writeEntry("nanquimThemeV1", true);
++        group.sync();
++    }
++#endif
+ #ifndef Q_OS_HAIKU
+     Digikam::ThemeManager themeManager;
+     themeManager.setCurrentTheme(group.readEntry("Theme", "Krita dark"));
+diff --git a/libs/ui/kis_config.cc b/libs/ui/kis_config.cc
+index db19491..468ea1e 100644
+--- a/libs/ui/kis_config.cc
++++ b/libs/ui/kis_config.cc
+@@ -1346,7 +1346,11 @@ void KisConfig::setScrollingCheckers(bool sc) const
+ 
+ QColor KisConfig::canvasBorderColor(bool defaultValue) const
+ {
++#ifdef Q_OS_ANDROID
++    QColor color(QColor(43, 43, 49));   // Nanquim: fundo da área de desenho do design
++#else
+     QColor color(QColor(128,128,128));
++#endif
+     return (defaultValue ? color : m_cfg.readEntry("canvasBorderColor", color));
+ }
+ 
+-- 
+2.43.0
+
