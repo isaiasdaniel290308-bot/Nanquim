@@ -49,3 +49,11 @@ Duas interfaces sobre o mesmo motor, trocadas em Configurações → Interface (
 Como fazer no código: o Krita já salva e troca arranjos de janela ("workspaces", arquivos `.kws`). O modo Clássico pode começar como um workspace do Nanquim mais um tema escuro com o azul-ciano. O modo Tablet é a interface nova. A troca salva a escolha e reabre a janela no modo escolhido.
 
 Para Windows, o mesmo repositório pode ganhar um segundo workflow que compila o instalador `.exe`, com os mesmos patches.
+
+## Formato `.sut`, estudado em 4 arquivos reais (2026-11-10)
+
+- O arquivo é SQLite, com as tabelas `Node` (nome do pincel), `Variant` (cerca de 190 parâmetros) e `MaterialFile`.
+- Parâmetros lidos sem problema: `BrushSize`, `Opacity`, `BrushFlow`, `BrushHardness`, `BrushInterval`, `BrushThickness`, `BrushRotation`, `AntiAlias`, `BrushUsePatternImage`, `TextureDensity`, entrada/saída do traço (`BrushUseIn/Out`), fita (`BrushRibbon`).
+- As curvas de pressão ficam em blobs (`BrushSizeEffector`, `BrushFlowEffector`), ainda não decifrados.
+- `MaterialFile.FileData` é um arquivo **tar**. Dentro: `thumbnail/thumbnail.png` (PNG comum, até 300 px, com a ponta ou a textura de papel) e `data/material_0.layer` (contêiner C2F paginado com a imagem em tamanho real; ainda não decifrado).
+- Plano da v1: ponta a partir do `thumbnail.png`, parâmetros simples, pressão no tamanho por padrão. Limites conhecidos: ponta com no máximo 300 px, curvas de pressão e "fita" (ponta que acompanha o traço) não convertidas.

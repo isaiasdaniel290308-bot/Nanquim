@@ -1,0 +1,60 @@
+From ee595da87a0ddddbfe526927fe66feb53b0706a7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 13:45:41 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20pincel=20importado=20entra=20na=20et?=
+ =?UTF-8?q?iqueta=20Nanquim=20(aparecia=20s=C3=B3=20em=20Tudo)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/KisApplication.cpp | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/libs/ui/KisApplication.cpp b/libs/ui/KisApplication.cpp
+index 1018dd7..3534cab 100644
+--- a/libs/ui/KisApplication.cpp
++++ b/libs/ui/KisApplication.cpp
+@@ -5,6 +5,8 @@
+  * SPDX-License-Identifier: LGPL-2.0-or-later
+  */
+ 
++#include <KisTagModel.h>
++#include <KisTagResourceModel.h>
+ #include "KisApplication.h"
+ 
+ #include <stdlib.h>
+@@ -1181,8 +1183,18 @@ bool nanquimImportResourceFile(QWidget *parent, const QString &url)
+         KoResourceSP resource = KisResourceUserOperations::importResourceFileWithUserInput(
+             parent, QString(), ResourceType::PaintOpPresets, path);
+         if (resource) {
++            // a janela de pincéis abre na etiqueta "Nanquim": o pincel importado entra nela,
++            // senão ele só apareceria em "Tudo" e pareceria que a importação falhou
++            bool tagged = false;
++            KisTagModel tagModel(ResourceType::PaintOpPresets);
++            KisTagSP tag = tagModel.tagForUrl(QStringLiteral("Nanquim"));
++            if (tag && resource->resourceId() >= 0) {
++                KisTagResourceModel tagResourceModel(ResourceType::PaintOpPresets);
++                tagged = tagResourceModel.tagResources(tag, QVector<int>() << resource->resourceId());
++            }
+             QMessageBox::information(parent, QStringLiteral("Nanquim"),
+-                                     QStringLiteral("Pincel importado: %1").arg(resource->name()));
++                                     tagged ? QStringLiteral("Pincel importado: %1\nEle já está na etiqueta \"Nanquim\" da janela de pincéis.").arg(resource->name())
++                                            : QStringLiteral("Pincel importado: %1\nEle está em \"Tudo\", na janela de pincéis.").arg(resource->name()));
+         }
+         KisUsageLogger::log(QStringLiteral("[Nanquim] Import .kpp %1: %2").arg(info.fileName()).arg(resource ? "ok" : "falhou"));
+         return;
+@@ -1190,7 +1202,7 @@ bool nanquimImportResourceFile(QWidget *parent, const QString &url)
+ 
+     const bool ok = KisStorageModel::instance()->importStorage(path, KisStorageModel::None);
+     QMessageBox::information(parent, QStringLiteral("Nanquim"),
+-                             ok ? QStringLiteral("Pacote importado: %1\nOs pincéis já estão na biblioteca.").arg(info.fileName())
++                             ok ? QStringLiteral("Pacote importado: %1\nOs pincéis estão em \"Tudo\", na janela de pincéis.").arg(info.fileName())
+                                 : QStringLiteral("Não foi possível importar %1.\nTalvez ele já esteja instalado, ou o arquivo não é um pacote do Krita válido.").arg(info.fileName()));
+     KisUsageLogger::log(QStringLiteral("[Nanquim] Import .bundle %1: %2").arg(info.fileName()).arg(ok ? "ok" : "falhou"));
+     });
+-- 
+2.43.0
+
