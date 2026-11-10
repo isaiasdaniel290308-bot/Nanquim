@@ -1,0 +1,180 @@
+From 3580497adfda47d5244bb6077dda4425c7646b78 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 21:42:04 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20pr=C3=A9via=20do=20liquidificar=20em?=
+ =?UTF-8?q?=20v=C3=A1rias=20threads=20e=20pr=C3=A9via=20por=20sobreposi?=
+ =?UTF-8?q?=C3=A7=C3=A3o=20no=20Android?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ libs/image/kis_grid_interpolation_tools.h     | 14 ++++
+ libs/image/kis_liquify_transform_worker.cpp   | 75 +++++++++++++++++--
+ .../tool_transform2/kis_tool_transform.cc     |  7 ++
+ .../kis_tool_transform_config_widget.cpp      |  4 +
+ 4 files changed, 95 insertions(+), 5 deletions(-)
+
+diff --git a/libs/image/kis_grid_interpolation_tools.h b/libs/image/kis_grid_interpolation_tools.h
+index ddf0e7c..e63eeb8 100644
+--- a/libs/image/kis_grid_interpolation_tools.h
++++ b/libs/image/kis_grid_interpolation_tools.h
+@@ -398,6 +398,10 @@ struct QImagePolygonOp
+     }
+ 
+     void fastCopyArea(QRect areaToCopy, bool lazy) {
++        if (!m_clipRect.isNull()) {
++            areaToCopy &= m_clipRect;
++            if (areaToCopy.isEmpty()) return;
++        }
+         if (lazy) {
+             m_rectsToCopy.append(areaToCopy.adjusted(0, 0, -1, -1));
+             return;
+@@ -441,6 +445,10 @@ struct QImagePolygonOp
+ 
+     void operator() (const QPolygonF &srcPolygon, const QPolygonF &dstPolygon, const QPolygonF &clipDstPolygon) {
+         QRect boundRect = clipDstPolygon.boundingRect().toAlignedRect();
++        if (!m_clipRect.isNull()) {
++            boundRect &= m_clipRect;
++            if (boundRect.isEmpty()) return;
++        }
+ 
+         bool samePolygon = (m_dstImage.format() == m_srcImage.format())
+                 && KisAlgebra2D::fuzzyPointCompare(srcPolygon, dstPolygon, m_epsilon)
+@@ -526,6 +534,12 @@ struct QImagePolygonOp
+         m_canMergeRects = canMergeRects;
+     }
+ 
++    // Nanquim: limita a escrita a um retângulo (coordenadas do destino), ver PaintDevicePolygonOp
++    inline void setClipRect(const QRect &rect) {
++        m_clipRect = rect;
++    }
++    QRect m_clipRect;
++
+     const QImage &m_srcImage;
+     QImage &m_dstImage;
+     QPointF m_srcImageOffset;
+diff --git a/libs/image/kis_liquify_transform_worker.cpp b/libs/image/kis_liquify_transform_worker.cpp
+index 6b3f1c7..1abfa42 100644
+--- a/libs/image/kis_liquify_transform_worker.cpp
++++ b/libs/image/kis_liquify_transform_worker.cpp
+@@ -835,11 +835,76 @@ QImage KisLiquifyTransformWorker::runOnQImage(const QImage &srcImage,
+     polygonOp.setCanMergeRects(canMergeRects);
+ 
+ 
+-    GridIterationTools::iterateThroughGrid<GridIterationTools::AlwaysCompletePolygonPolicy>(polygonOp, indexesOp,
+-                                                    m_d->gridSize,
+-                                                    originalPointsLocal,
+-                                                    transformedPointsLocal,
+-                                                    correctSubGrid);
++    NanquimStepTimer nanquimTimer(QStringLiteral("liquidificar (previa)"));
++    const int threadCount = qBound(1, QThread::idealThreadCount(), 8);
++    const int bandHeight = 64;
++
++    if (threadCount > 1 && dstBoundsI.height() > 2 * bandHeight && !correctSubGrid.isEmpty()) {
++        // Nanquim: mesma divisão em faixas do run(); cada faixa escreve só nas suas linhas da imagem
++        using namespace GridIterationTools;
++        const int firstRow = correctSubGrid.top();
++        const int endRow = correctSubGrid.bottom();
++        const int firstCol = correctSubGrid.left();
++        const int lastCol = correctSubGrid.right();
++        const int rows = qMax(0, endRow - firstRow);
++        QVector<qreal> rowMin(rows, std::numeric_limits<qreal>::max());
++        QVector<qreal> rowMax(rows, std::numeric_limits<qreal>::lowest());
++        for (int r = 0; r < rows; r++) {
++            for (int rr = firstRow + r; rr <= firstRow + r + 1; rr++) {
++                for (int c = firstCol; c <= lastCol; c++) {
++                    const qreal y = transformedPointsLocal[GridIterationTools::pointToIndex(QPoint(c, rr), m_d->gridSize)].y();
++                    rowMin[r] = qMin(rowMin[r], y);
++                    rowMax[r] = qMax(rowMax[r], y);
++                }
++            }
++        }
++
++        const int bandCount = dstBoundsI.height() / bandHeight + 1;
++        std::atomic<int> nextBand {0};
++        auto worker = [&]() {
++            int b;
++            while ((b = nextBand.fetch_add(1)) < bandCount) {
++                const QRect band = QRect(dstBoundsI.left(), dstBoundsI.top() + b * bandHeight,
++                                         dstBoundsI.width(), bandHeight) & dstBoundsI;
++                if (band.isEmpty()) continue;
++                int rFirst = -1;
++                int rLast = -1;
++                for (int r = 0; r < rows; r++) {
++                    if (rowMax[r] >= band.top() - 2 && rowMin[r] <= band.bottom() + 2) {
++                        if (rFirst < 0) rFirst = r;
++                        rLast = r;
++                    }
++                }
++                if (rFirst < 0) continue;
++                QImagePolygonOp bandOp(srcImage, dstImage, srcImageOffset, dstQImageOffset);
++                bandOp.setCanMergeRects(canMergeRects);
++                bandOp.setClipRect(band);
++                RegularGridIndexesOp bandIndexes(m_d->gridSize);
++                const QRect bandSubGrid(QPoint(firstCol, firstRow + rFirst), QPoint(lastCol, firstRow + rLast + 1));
++                iterateThroughGrid<AlwaysCompletePolygonPolicy>(bandOp, bandIndexes,
++                                                                m_d->gridSize,
++                                                                originalPointsLocal,
++                                                                transformedPointsLocal,
++                                                                bandSubGrid);
++            }
++        };
++        dstImage.detach();   // garante a cópia própria antes de dividir entre as threads
++        std::vector<std::thread> pool;
++        for (int i = 1; i < threadCount; i++) {
++            pool.emplace_back(worker);
++        }
++        worker();
++        for (std::thread &t : pool) {
++            t.join();
++        }
++    } else {
++        GridIterationTools::iterateThroughGrid<GridIterationTools::AlwaysCompletePolygonPolicy>(polygonOp, indexesOp,
++                                                        m_d->gridSize,
++                                                        originalPointsLocal,
++                                                        transformedPointsLocal,
++                                                        correctSubGrid);
++    }
++    nanquimTimer.mark(QStringLiteral("%1 x %2 px").arg(dstBoundsI.width()).arg(dstBoundsI.height()), 30);
+ 
+ 
+     QList<QRectF> areasToCopy = GridIterationTools::cutOutSubgridFromBounds(correctSubGrid, m_d->srcBounds, m_d->gridSize, m_d->originalPoints);
+diff --git a/plugins/tools/tool_transform2/kis_tool_transform.cc b/plugins/tools/tool_transform2/kis_tool_transform.cc
+index dbe9957..140921b 100644
+--- a/plugins/tools/tool_transform2/kis_tool_transform.cc
++++ b/plugins/tools/tool_transform2/kis_tool_transform.cc
+@@ -205,7 +205,14 @@ void KisToolTransform::resetCursorStyle()
+ void KisToolTransform::slotGlobalConfigChanged()
+ {
+     KConfigGroup group = KSharedConfig::openConfig()->group(toolId());
++    #ifdef Q_OS_ANDROID
++    // Nanquim: no tablet, a prévia por sobreposição deixa o liquidificar e as
++    // deformações respondendo na hora (a prévia "na pilha" recalculava a imagem
++    // inteira a cada ~2 s). O resultado final é o mesmo ao aplicar.
++    m_preferOverlayPreviewStyle = group.readEntry("useOverlayPreviewStyle", true);
++#else
+     m_preferOverlayPreviewStyle = group.readEntry("useOverlayPreviewStyle", false);
++#endif
+     m_forceLodMode = group.readEntry("forceLodMode", true);
+ }
+ 
+diff --git a/plugins/tools/tool_transform2/kis_tool_transform_config_widget.cpp b/plugins/tools/tool_transform2/kis_tool_transform_config_widget.cpp
+index 532b9c3..8b92f7d 100644
+--- a/plugins/tools/tool_transform2/kis_tool_transform_config_widget.cpp
++++ b/plugins/tools/tool_transform2/kis_tool_transform_config_widget.cpp
+@@ -38,7 +38,11 @@ KisToolTransformConfigWidget::KisToolTransformConfigWidget(TransformTransactionP
+     setupUi(this);
+ 
+     KConfigGroup group = KSharedConfig::openConfig()->group("KisToolTransform");
++    #ifdef Q_OS_ANDROID
++    bool useInStackPreview = !group.readEntry("useOverlayPreviewStyle", true);   // Nanquim
++#else
+     bool useInStackPreview = !group.readEntry("useOverlayPreviewStyle", false);
++#endif
+     bool forceLodMode = group.readEntry("forceLodMode", true);
+ 
+     if (useInStackPreview && !forceLodMode) {
+-- 
+2.43.0
+
