@@ -1,0 +1,148 @@
+From 86fc0633ae348468efd684d02c8ffc01f1a6d74a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 08:46:31 -0300
+Subject: [PATCH] Nanquim: inserir imagem como camada (com Transformar) e
+ remover desenhos da galeria com toque longo
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp | 94 ++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 92 insertions(+), 2 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index 02909b2..df89874 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -136,6 +136,7 @@ const char *PEN = "<path d='M15 4l5 5L9.5 19.5 4 20l.5-5.5z'/><path d='M13 6l5 5
+ const char *LAYERS = "<path d='M12 3.5l8.5 4.5-8.5 4.5L3.5 8z'/><path d='M3.5 12.5l8.5 4.5 8.5-4.5'/><path d='M3.5 16.5L12 21l8.5-4.5'/>";
+ const char *RULER = "<path d='M3 17L17 3l4 4L7 21z'/><path d='M7 13l2 2M10 10l2 2M13 7l2 2'/>";
+ const char *REFERENCE = "<rect x='3.5' y='4.5' width='17' height='15' rx='2'/><circle cx='9' cy='10' r='1.8'/><path d='M20.5 16l-5-5-8 8.5'/>";
++const char *INSERT_IMAGE = "<rect x='3.5' y='5.5' width='13' height='13' rx='2'/><path d='M3.5 15l4-4 5 5'/><path d='M19 3v6M16 6h6'/>";
+ const char *MORE = "<circle cx='5' cy='12' r='1.8' fill='currentColor' stroke='none'/><circle cx='12' cy='12' r='1.8' fill='currentColor' stroke='none'/><circle cx='19' cy='12' r='1.8' fill='currentColor' stroke='none'/>";
+ const char *OPTIONS = "<path d='M4 7h9M17 7h3M4 17h3M11 17h9'/><circle cx='15' cy='7' r='2'/><circle cx='9' cy='17' r='2'/>";
+ const char *ERASER = "<path d='M9 20h11'/><path d='M4.6 14.6l8.8-8.8a2 2 0 0 1 2.8 0l2.6 2.6a2 2 0 0 1 0 2.8L11 19H8.9z'/>";
+@@ -543,6 +544,28 @@ void buildTopBar(KisMainWindow *mw)
+     rulers->setPopupMode(QToolButton::InstantPopup);
+     top->addWidget(rulers);
+ 
++    // Inserir imagem como camada (como o "Inserir" do Photoshop): escolhe o arquivo,
++    // ele entra como camada nova e a ferramenta Transformar já abre para posicionar
++    if (QAction *import = act(mw, "import_layer_as_paint_layer")) {
++        QToolButton *b = iconButton(top, i18n("Inserir imagem como camada"), designIcon(Svg::INSERT_IMAGE));
++        b->setProperty(NEEDS_CANVAS, true);
++        QObject::connect(b, &QToolButton::clicked, mw, [mw, import]() {
++            KisView *view = mw->activeView();
++            if (!view || !view->image()) return;
++            const int before = view->image()->nlayers();
++            import->trigger();
++            QPointer<KisView> guard(view);
++            QTimer::singleShot(400, mw, [mw, guard, before]() {
++                if (guard && guard->image() && guard->image()->nlayers() > before) {
++                    if (QAction *transform = act(mw, "KisToolTransform")) {
++                        transform->trigger();
++                    }
++                }
++            });
++        });
++        top->addWidget(b);
++    }
++
+     // Referência
+     if (QAction *ref = act(mw, "ToolReferenceImages")) {
+         QToolButton *b = iconButton(top, i18n("Referência"), designIcon(Svg::REFERENCE));
+@@ -1219,6 +1242,65 @@ public:
+     }
+ };
+ 
++// toque longo num desenho recente: menu com Abrir / Remover da galeria
++class RecentLongPress : public QObject
++{
++public:
++    RecentLongPress(KisMainWindow *mw, QListView *view)
++        : QObject(view), m_mw(mw), m_view(view)
++    {
++        m_timer.setSingleShot(true);
++        m_timer.setInterval(550);
++        QObject::connect(&m_timer, &QTimer::timeout, this, [this]() { fire(); });
++        view->viewport()->installEventFilter(this);
++    }
++    bool swallowClick()
++    {
++        const bool v = m_fired;
++        m_fired = false;
++        return v;
++    }
++protected:
++    bool eventFilter(QObject *, QEvent *e) override
++    {
++        if (e->type() == QEvent::MouseButtonPress) {
++            m_pos = static_cast<QMouseEvent*>(e)->pos();
++            m_fired = false;
++            m_timer.start();
++        } else if (e->type() == QEvent::MouseMove) {
++            if ((static_cast<QMouseEvent*>(e)->pos() - m_pos).manhattanLength() > 14) m_timer.stop();
++        } else if (e->type() == QEvent::MouseButtonRelease || e->type() == QEvent::Leave) {
++            m_timer.stop();
++        }
++        return false;
++    }
++private:
++    void fire()
++    {
++        const QModelIndex index = m_view->indexAt(m_pos);
++        if (!index.isValid()) return;
++        m_fired = true;
++        const QString path = index.data(Qt::ToolTipRole).toString();
++        QString name = index.data(Qt::DisplayRole).toString();
++        QMenu menu(m_view);
++        QAction *open = menu.addAction(i18n("Abrir"));
++        QAction *remove = menu.addAction(i18n("Remover da galeria"));
++        QAction *chosen = menu.exec(m_view->viewport()->mapToGlobal(m_pos));
++        if (chosen == open) {
++            m_fired = false;
++            m_mw->openDocument(path, KisMainWindow::None);
++        } else if (chosen == remove) {
++            // só tira da lista; o arquivo continua no armazenamento
++            m_mw->removeRecentFile(path);
++        }
++    }
++    KisMainWindow *m_mw;
++    QListView *m_view;
++    QTimer m_timer;
++    QPoint m_pos;
++    bool m_fired = false;
++};
++
+ struct PagePreset {
+     const char *name;
+     const char *detail;
+@@ -1366,7 +1448,13 @@ QWidget *buildGallery(KisMainWindow *mw)
+     bl->addLayout(presetsRow);
+     bl->addSpacing(14);
+ 
+-    bl->addWidget(sectionLabel(i18n("Recentes"), body));
++    QHBoxLayout *recentsHead = new QHBoxLayout();
++    recentsHead->addWidget(sectionLabel(i18n("Recentes"), body));
++    recentsHead->addStretch(1);
++    QLabel *hint = new QLabel(i18n("Toque e segure um desenho para remover da galeria"), body);
++    hint->setObjectName(QStringLiteral("nanquimFooter"));
++    recentsHead->addWidget(hint);
++    bl->addLayout(recentsHead);
+ 
+     QSortFilterProxyModel *proxy = new QSortFilterProxyModel(gallery);
+     proxy->setSourceModel(&KisRecentDocumentsModelWrapper::instance()->model());
+@@ -1389,7 +1477,9 @@ QWidget *buildGallery(KisMainWindow *mw)
+     recents->setFocusPolicy(Qt::NoFocus);
+     recents->setMouseTracking(false);
+     KisKineticScroller::createPreconfiguredScroller(recents);
+-    QObject::connect(recents, &QListView::clicked, mw, [mw](const QModelIndex &index) {
++    RecentLongPress *longPress = new RecentLongPress(mw, recents);
++    QObject::connect(recents, &QListView::clicked, mw, [mw, longPress](const QModelIndex &index) {
++        if (longPress->swallowClick()) return;
+         const QString path = index.data(Qt::ToolTipRole).toString();
+         if (!path.isEmpty()) {
+             mw->openDocument(path, KisMainWindow::None);
+-- 
+2.43.0
+
