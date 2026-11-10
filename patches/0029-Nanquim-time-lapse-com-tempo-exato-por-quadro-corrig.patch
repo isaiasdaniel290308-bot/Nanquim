@@ -1,0 +1,281 @@
+From fc8015b1ad421775adc96f7e1dcca33147f6769a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 09:55:53 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20time-lapse=20com=20tempo=20exato=20p?=
+ =?UTF-8?q?or=20quadro=20(corrige=20v=C3=ADdeo=20de=201=20s)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ .../org/krita/android/NanquimTimelapse.java   | 169 +++++++++++++-----
+ 1 file changed, 122 insertions(+), 47 deletions(-)
+
+diff --git a/packaging/android/apk/src/org/krita/android/NanquimTimelapse.java b/packaging/android/apk/src/org/krita/android/NanquimTimelapse.java
+index afc74fd..f78c7ef 100644
+--- a/packaging/android/apk/src/org/krita/android/NanquimTimelapse.java
++++ b/packaging/android/apk/src/org/krita/android/NanquimTimelapse.java
+@@ -17,7 +17,6 @@ import android.os.Build;
+ import android.os.Environment;
+ import android.provider.MediaStore;
+ import android.util.Log;
+-import android.view.Surface;
+ import android.widget.Toast;
+ 
+ import java.io.File;
+@@ -84,23 +83,28 @@ public final class NanquimTimelapse {
+         Arrays.sort(frames);
+         final int n = frames.length;
+ 
+-        // tamanho do vídeo: o do último quadro, com lados pares
++        // tamanho do vídeo: o do último quadro, em múltiplos de 16 (o que todo codificador aceita)
+         BitmapFactory.Options bounds = new BitmapFactory.Options();
+         bounds.inJustDecodeBounds = true;
+         BitmapFactory.decodeFile(frames[n - 1].getPath(), bounds);
+-        final int w = Math.max(16, bounds.outWidth & ~1);
+-        final int h = Math.max(16, bounds.outHeight & ~1);
++        final int w = Math.max(64, bounds.outWidth & ~15);
++        final int h = Math.max(64, bounds.outHeight & ~15);
+ 
+         // quais quadros entram, e quantas vezes cada um aparece
+-        final int wanted = targetSeconds > 0 ? FPS * targetSeconds : n;
+         final int count;      // quadros de origem usados
+         final int repeat;     // quadros de vídeo por quadro de origem
+-        if (n >= wanted) {
+-            count = wanted;
+-            repeat = 1;
+-        } else {
++        if (targetSeconds <= 0) {
+             count = n;
+-            repeat = Math.max(1, Math.min(8, (int) Math.ceil(wanted / (double) n)));
++            repeat = 3;       // completo: 10 traços por segundo
++        } else {
++            final int wanted = FPS * targetSeconds;
++            if (n >= wanted) {
++                count = wanted;
++                repeat = 1;
++            } else {
++                count = n;
++                repeat = Math.max(1, Math.min(8, (int) Math.ceil(wanted / (double) n)));
++            }
+         }
+         final int tail = FPS * 2;   // segura o desenho final por 2 s
+ 
+@@ -110,52 +114,67 @@ public final class NanquimTimelapse {
+         }
+ 
+         MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h);
+-        format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
++        format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible);
+         format.setInteger(MediaFormat.KEY_BIT_RATE, Math.max(4_000_000, Math.min(16_000_000, w * h * 5)));
+         format.setInteger(MediaFormat.KEY_FRAME_RATE, FPS);
+         format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+ 
+         MediaCodec encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+         MediaMuxer muxer = null;
+-        Surface surface = null;
++        long videoFrames = 0;
+         try {
+             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+-            surface = encoder.createInputSurface();
+             encoder.start();
+             muxer = new MediaMuxer(tmp.getPath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+             State st = new State(encoder, muxer);
+ 
++            Yuv yuv = new Yuv(w, h);
++            Bitmap canvasBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
++            Canvas canvas = new Canvas(canvasBitmap);
+             Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
+-            Bitmap bitmap = null;
+             for (int i = 0; i < count; i++) {
+                 int src = (int) ((long) i * n / count);
+                 if (i == count - 1) {
+                     src = n - 1;   // o vídeo sempre termina no desenho pronto
+                 }
+-                if (bitmap != null) {
+-                    bitmap.recycle();
+-                }
+-                bitmap = BitmapFactory.decodeFile(frames[src].getPath());
++                Bitmap bitmap = BitmapFactory.decodeFile(frames[src].getPath());
+                 if (bitmap == null) {
+                     continue;
+                 }
++                canvas.drawColor(Color.WHITE);
++                float scale = Math.min(w / (float) bitmap.getWidth(), h / (float) bitmap.getHeight());
++                float bw = bitmap.getWidth() * scale;
++                float bh = bitmap.getHeight() * scale;
++                float left = (w - bw) / 2f;
++                float top = (h - bh) / 2f;
++                canvas.drawBitmap(bitmap, null, new RectF(left, top, left + bw, top + bh), paint);
++                bitmap.recycle();
++                yuv.fromBitmap(canvasBitmap);
++
+                 int times = repeat + (i == count - 1 ? tail : 0);
+                 for (int k = 0; k < times; k++) {
+-                    drawFrame(surface, bitmap, w, h, paint);
+-                    drain(st, false);
++                    // cada quadro entra com o seu tempo exato: quadro N = N/30 s
++                    queueFrame(st, yuv, videoFrames * 1_000_000L / FPS);
++                    videoFrames++;
+                 }
+             }
+-            if (bitmap != null) {
+-                bitmap.recycle();
++            canvasBitmap.recycle();
++            // fim do vídeo
++            while (true) {
++                int in = encoder.dequeueInputBuffer(10000);
++                if (in >= 0) {
++                    encoder.queueInputBuffer(in, 0, 0, videoFrames * 1_000_000L / FPS,
++                            MediaCodec.BUFFER_FLAG_END_OF_STREAM);
++                    break;
++                }
++                drain(st, false);
+             }
+-            encoder.signalEndOfInputStream();
+             drain(st, true);
++            Log.i(TAG, "time-lapse: " + n + " quadros gravados, " + videoFrames + " quadros de vídeo, "
++                    + st.outFrames + " codificados");
+         } finally {
+             try { encoder.stop(); } catch (Exception ignored) { }
+             encoder.release();
+-            if (surface != null) {
+-                surface.release();
+-            }
+             if (muxer != null) {
+                 try { muxer.stop(); } catch (Exception ignored) { }
+                 muxer.release();
+@@ -165,25 +184,86 @@ public final class NanquimTimelapse {
+         String safe = (title == null || title.trim().isEmpty() ? "desenho" : title.trim())
+                 .replaceAll("[^\\p{L}\\p{N} _-]", "_");
+         String name = "Nanquim " + safe + " "
+-                + new SimpleDateFormat("yyyy-MM-dd HH.mm", Locale.ROOT).format(new Date()) + ".mp4";
++                + new SimpleDateFormat("yyyy-MM-dd HH.mm.ss", Locale.ROOT).format(new Date()) + ".mp4";
+         String where = publish(a, tmp, name);
+         tmp.delete();
+-        return where;
++        return where + " (" + (videoFrames / FPS) + " s, " + n + " quadros)";
+     }
+ 
+-    private static void drawFrame(Surface surface, Bitmap bitmap, int w, int h, Paint paint) {
+-        Canvas c = Build.VERSION.SDK_INT >= 23 ? surface.lockHardwareCanvas() : surface.lockCanvas(null);
+-        try {
+-            c.drawColor(Color.WHITE);
+-            float scale = Math.min(w / (float) bitmap.getWidth(), h / (float) bitmap.getHeight());
+-            float bw = bitmap.getWidth() * scale;
+-            float bh = bitmap.getHeight() * scale;
+-            float left = (w - bw) / 2f;
+-            float top = (h - bh) / 2f;
+-            c.drawBitmap(bitmap, null, new RectF(left, top, left + bw, top + bh), paint);
+-        } finally {
+-            surface.unlockCanvasAndPost(c);
++    /** Um quadro em YUV 4:2:0 (BT.601), pronto para copiar para o codificador. */
++    private static final class Yuv {
++        final int w, h;
++        final byte[] y, u, v;
++        final int[] argb;
++        Yuv(int w, int h) {
++            this.w = w;
++            this.h = h;
++            y = new byte[w * h];
++            u = new byte[(w / 2) * (h / 2)];
++            v = new byte[(w / 2) * (h / 2)];
++            argb = new int[w * h];
++        }
++        void fromBitmap(Bitmap b) {
++            b.getPixels(argb, 0, w, 0, 0, w, h);
++            for (int i = 0; i < argb.length; i++) {
++                int c = argb[i];
++                int r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, bl = c & 0xff;
++                y[i] = (byte) (((66 * r + 129 * g + 25 * bl + 128) >> 8) + 16);
++            }
++            int ci = 0;
++            for (int row = 0; row < h - 1; row += 2) {
++                for (int col = 0; col < w - 1; col += 2) {
++                    int c = argb[row * w + col];
++                    int r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, bl = c & 0xff;
++                    u[ci] = (byte) (((-38 * r - 74 * g + 112 * bl + 128) >> 8) + 128);
++                    v[ci] = (byte) (((112 * r - 94 * g - 18 * bl + 128) >> 8) + 128);
++                    ci++;
++                }
++            }
++        }
++    }
++
++    private static void queueFrame(State st, Yuv yuv, long ptsUs) {
++        int in;
++        while ((in = st.encoder.dequeueInputBuffer(10000)) < 0) {
++            drain(st, false);   // libera a saída enquanto espera espaço na entrada
++        }
++        android.media.Image image = st.encoder.getInputImage(in);
++        if (image == null) {
++            throw new IllegalStateException("codificador sem acesso ao quadro de entrada");
++        }
++        android.media.Image.Plane[] planes = image.getPlanes();
++        // luminância: linha por linha
++        ByteBuffer yb = planes[0].getBuffer();
++        int yStride = planes[0].getRowStride();
++        for (int row = 0; row < yuv.h; row++) {
++            yb.position(row * yStride);
++            yb.put(yuv.y, row * yuv.w, yuv.w);
++        }
++        // cor: respeita o formato do aparelho (planos separados ou intercalados)
++        int cw = yuv.w / 2, ch = yuv.h / 2;
++        for (int p = 1; p <= 2; p++) {
++            byte[] src = p == 1 ? yuv.u : yuv.v;
++            ByteBuffer cb = planes[p].getBuffer();
++            int stride = planes[p].getRowStride();
++            int step = planes[p].getPixelStride();
++            if (step == 1) {
++                for (int row = 0; row < ch; row++) {
++                    cb.position(row * stride);
++                    cb.put(src, row * cw, cw);
++                }
++            } else {
++                for (int row = 0; row < ch; row++) {
++                    int base = row * stride;
++                    int s = row * cw;
++                    for (int col = 0; col < cw; col++) {
++                        cb.put(base + col * step, src[s + col]);
++                    }
++                }
++            }
+         }
++        st.encoder.queueInputBuffer(in, 0, yuv.w * yuv.h * 3 / 2, ptsUs, 0);
++        drain(st, false);
+     }
+ 
+     private static final class State {
+@@ -196,17 +276,13 @@ public final class NanquimTimelapse {
+         State(MediaCodec e, MediaMuxer m) { encoder = e; muxer = m; }
+     }
+ 
+-    /**
+-     * Passa os quadros codificados para o arquivo. O tempo de cada quadro é
+-     * reescrito aqui (quadro N = N/30 s): desenhando por Canvas, o codificador
+-     * carimbaria a hora do relógio, e o vídeo sairia com a velocidade errada.
+-     */
++    /** Passa os quadros codificados para o arquivo MP4. */
+     private static void drain(State st, boolean end) {
+         int idle = 0;
+         while (true) {
+             int index = st.encoder.dequeueOutputBuffer(st.info, end ? 10000 : 0);
+             if (index == MediaCodec.INFO_TRY_AGAIN_LATER) {
+-                if (!end || ++idle > 500) {
++                if (!end || ++idle > 1000) {
+                     return;
+                 }
+             } else if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+@@ -220,7 +296,6 @@ public final class NanquimTimelapse {
+                 ByteBuffer data = st.encoder.getOutputBuffer(index);
+                 boolean config = (st.info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
+                 if (data != null && !config && st.info.size > 0 && st.started) {
+-                    st.info.presentationTimeUs = st.outFrames * 1_000_000L / FPS;
+                     st.outFrames++;
+                     data.position(st.info.offset);
+                     data.limit(st.info.offset + st.info.size);
+-- 
+2.43.0
+
