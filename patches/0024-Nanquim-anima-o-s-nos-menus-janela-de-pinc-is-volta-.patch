@@ -1,0 +1,32 @@
+From 9652275ab672e3b7db4a18de479b2988a4c233df Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 08:26:31 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20anima=C3=A7=C3=A3o=20s=C3=B3=20nos?=
+ =?UTF-8?q?=20menus=20(janela=20de=20pinc=C3=A9is=20volta=20para=20perto?=
+ =?UTF-8?q?=20do=20bot=C3=A3o)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ libs/ui/NanquimTabletUi.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index 524bf4a..02909b2 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -845,7 +845,9 @@ protected:
+         if (e->type() != QEvent::Show) return false;
+         QWidget *w = qobject_cast<QWidget*>(obj);
+         if (!w || !w->isWindow() || w->windowType() != Qt::Popup) return false;
+-        if (w->inherits("QComboBoxPrivateContainer") || w->property("nanquimAnimating").toBool()) return false;
++        // só menus: as janelas de pincéis do Krita se posicionam depois de aparecer,
++        // e animar a posição delas as jogava para o canto da tela
++        if (!w->inherits("QMenu") || w->property("nanquimAnimating").toBool()) return false;
+         const QPoint end = w->pos();
+         QPropertyAnimation *anim = new QPropertyAnimation(w, "pos", w);
+         anim->setDuration(160);
+-- 
+2.43.0
+
