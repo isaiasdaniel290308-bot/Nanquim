@@ -1,0 +1,471 @@
+From 6ffd6887366b0ef5a8ad181f28978b052071b144 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 22:45:46 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20painel=20de=20ferramentas=20por=20ca?=
+ =?UTF-8?q?tegoria,=20menus=20animados,=20Montserrat=20e=20sem=20o=20paine?=
+ =?UTF-8?q?l=20de=20predefini=C3=A7=C3=B5es=20repetido?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ krita/data/splash/splash-android.qrc          |   5 +
+ libs/ui/KisUiFont.cpp                         |  17 +
+ libs/ui/NanquimTabletUi.cpp                   | 314 +++++++++++++++++-
+ .../src/org/krita/android/NanquimSplash.java  |  16 +-
+ 4 files changed, 339 insertions(+), 13 deletions(-)
+
+diff --git a/krita/data/splash/splash-android.qrc b/krita/data/splash/splash-android.qrc
+index 2eccf55..8992dce 100644
+--- a/krita/data/splash/splash-android.qrc
++++ b/krita/data/splash/splash-android.qrc
+@@ -9,6 +9,11 @@
+         <file alias="hd.jpg">tysontan_kiki_lotus_HD.jpg</file>
+         <file>nanquim-logo.svg</file>
+         <file>nanquim-banner.svg</file>
++        <!-- Nanquim: Montserrat (SIL Open Font License), baixada pelo CI -->
++        <file>fonts/Montserrat-Regular.ttf</file>
++        <file>fonts/Montserrat-Medium.ttf</file>
++        <file>fonts/Montserrat-SemiBold.ttf</file>
++        <file>fonts/Montserrat-Bold.ttf</file>
+     </qresource>
+ </RCC>
+ 
+diff --git a/libs/ui/KisUiFont.cpp b/libs/ui/KisUiFont.cpp
+index b866d9d..1552e63 100644
+--- a/libs/ui/KisUiFont.cpp
++++ b/libs/ui/KisUiFont.cpp
+@@ -85,6 +85,23 @@ QFont normalFont()
+         font = *userFont;
+     } else {
+         font = systemDefaultUiFont();
++#ifdef Q_OS_ANDROID
++        // Nanquim: Montserrat em todo o app (fonte livre, SIL OFL, embutida no APK)
++        static bool s_registered = false;
++        static bool s_available = false;
++        if (!s_registered) {
++            s_registered = true;
++            for (const char *w : {"Regular", "Medium", "SemiBold", "Bold"}) {
++                if (QFontDatabase::addApplicationFont(QStringLiteral(":/splash/fonts/Montserrat-%1.ttf")
++                                                      .arg(QLatin1String(w))) >= 0) {
++                    s_available = true;
++                }
++            }
++        }
++        if (s_available) {
++            font.setFamily(QStringLiteral("Montserrat"));
++        }
++#endif
+     }
+ #ifdef Q_OS_WIN
+     // XXX: Forces Qt to use full hinting for UI text, otherwise the default
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index d062579..524bf4a 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -25,6 +25,13 @@
+ #include <QMenu>
+ #include <QMenuBar>
+ #include <QPainter>
++#include <QMouseEvent>
++#include <QTabletEvent>
++#include <QTouchEvent>
++#include <QGridLayout>
++#include <QPropertyAnimation>
++#include <QScrollArea>
++#include <QComboBox>
+ #include <QPointer>
+ #include <QScreen>
+ #include <QSlider>
+@@ -487,7 +494,6 @@ void buildTopBar(KisMainWindow *mw)
+     // painéis
+     struct Panel { const char *tip; const char *svg; QStringList ids; };
+     const QList<Panel> panels = {
+-        {"Pincéis", Svg::PEN, {QStringLiteral("PresetDocker")}},
+         {"Cor", nullptr, {QStringLiteral("ColorSelectorNg"), QStringLiteral("WideGamutColorSelector")}},
+         {"Camadas", Svg::LAYERS, {QStringLiteral("KisLayerBox")}},
+         {"Opções da ferramenta", Svg::OPTIONS, {QStringLiteral("sharedtooldocker")}},
+@@ -575,6 +581,284 @@ const char *NAV_STYLE =
+     "QToolBar#nanquimTools QSlider::handle:vertical { background: #ffffff; height: 22px; width: 22px;"
+     "  margin: 0 -7px; border-radius: 11px; }";
+ 
++
++// ---------------------------------------------------------------------------
++// Painel "Todas as ferramentas": grade por categoria, flutuando ao lado da
++// barra da esquerda (substitui a caixa de ferramentas do Krita, que deixava
++// os ícones encostados num canto e muito espaço vazio)
++// ---------------------------------------------------------------------------
++const QString FLYOUT_ID = QStringLiteral("nanquimToolsFlyout");
++
++struct FlyoutTool { const char *id; const char *label; };
++struct FlyoutGroup { const char *title; QList<FlyoutTool> tools; };
++
++QList<FlyoutGroup> flyoutGroups()
++{
++    return {
++        {"Desenho", {
++            {"KritaShape/KisToolBrush", "Pincel"},
++            {"KritaShape/KisToolMultiBrush", "Pincel múltiplo"},
++            {"KisToolPencil", "Traço livre"},
++            {"KarbonCalligraphyTool", "Caligrafia"},
++            {"KritaShape/KisToolSmartPatch", "Remendo"},
++            {"KritaSelected/KisToolColorSampler", "Conta-gotas"},
++        }},
++        {"Cor e preenchimento", {
++            {"KritaFill/KisToolFill", "Balde"},
++            {"KisToolEncloseAndFill", "Envolver"},
++            {"KritaFill/KisToolGradient", "Gradiente"},
++            {"KritaShape/KisToolLazyBrush", "Colorir"},
++        }},
++        {"Formas", {
++            {"KritaShape/KisToolLine", "Linha"},
++            {"KritaShape/KisToolRectangle", "Retângulo"},
++            {"KritaShape/KisToolEllipse", "Elipse"},
++            {"KisToolPolygon", "Polígono"},
++            {"KisToolPolyline", "Polilinha"},
++            {"KisToolPath", "Curva"},
++            {"KritaShape/KisToolKnife", "Faca"},
++        }},
++        {"Vetor e texto", {
++            {"InteractionTool", "Selecionar"},
++            {"PathTool", "Editar nós"},
++            {"SvgTextTool", "Texto"},
++        }},
++        {"Seleção", {
++            {"KisToolSelectRectangular", "Retângulo"},
++            {"KisToolSelectElliptical", "Elipse"},
++            {"KisToolSelectPolygonal", "Polígono"},
++            {"KisToolSelectOutline", "Laço"},
++            {"KisToolSelectContiguous", "Varinha"},
++            {"KisToolSelectSimilar", "Por cor"},
++            {"KisToolSelectPath", "Curva"},
++            {"KisToolSelectMagnetic", "Magnética"},
++        }},
++        {"Transformar e ver", {
++            {"KisToolTransform", "Transformar"},
++            {"KritaTransform/KisToolMove", "Mover"},
++            {"KisToolCrop", "Recortar"},
++            {"ToolReferenceImages", "Referência"},
++            {"KisAssistantTool", "Assistentes"},
++            {"KritaShape/KisToolMeasure", "Medir"},
++            {"PanTool", "Mão"},
++            {"ZoomTool", "Zoom"},
++        }},
++    };
++}
++
++const char *FLYOUT_STYLE =
++    "QFrame#nanquimToolsFlyout { background: #1c1c20; border: 1px solid #33333b; border-radius: 16px; }"
++    "QFrame#nanquimToolsFlyout QScrollArea, QFrame#nanquimToolsFlyout QScrollArea > QWidget > QWidget"
++    "  { background: transparent; border: none; }"
++    "QLabel#nanquimFlyoutTitle { color: #ececf1; font-size: 16px; font-weight: 600; }"
++    "QLabel#nanquimFlyoutSection { color: #a3a3ae; font-size: 11px; font-weight: 600; letter-spacing: 1px;"
++    "  padding-top: 6px; }"
++    "QFrame#nanquimToolsFlyout QToolButton { border: none; border-radius: 12px; color: #ececf1;"
++    "  font-size: 11px; padding: 6px 2px; }"
++    "QFrame#nanquimToolsFlyout QToolButton:pressed { background: #26262c; }"
++    "QFrame#nanquimToolsFlyout QToolButton:checked { background: rgba(61,139,255,0.16); color: #7cb7ff; }";
++
++QPointer<NanquimOverlay> s_flyoutOverlay;
++
++void placeFlyout(KisMainWindow *mw, QFrame *flyout)
++{
++    QWidget *central = mw->centralWidget();
++    if (!central) return;
++    const QPoint origin = central->mapTo(mw, QPoint(0, 0));
++    const int margin = 10;
++    QScrollArea *scroll = flyout->findChild<QScrollArea*>();
++    const int want = (scroll && scroll->widget()) ? scroll->widget()->sizeHint().height() + 70
++                                                  : flyout->sizeHint().height();
++    const int h = qMin(want, central->height() - 2 * margin);
++    flyout->setGeometry(origin.x() + margin, origin.y() + margin, flyout->sizeHint().width(), h);
++}
++
++void setFlyoutVisible(KisMainWindow *mw, bool visible)
++{
++    QFrame *flyout = mw->findChild<QFrame*>(FLYOUT_ID);
++    if (!flyout || flyout->isVisible() == visible) return;
++    if (visible) {
++        placeFlyout(mw, flyout);
++        flyout->show();
++        flyout->raise();
++        // entra deslizando da esquerda, saindo de trás da barra de ferramentas
++        const QRect geom = flyout->geometry();
++        const QPixmap shot = flyout->grab();
++        flyout->hide();
++        QPointer<QFrame> guard(flyout);
++        NanquimOverlay *o = new NanquimOverlay(mw, geom, [shot](QPainter &g, const QRect &, qreal p) {
++            g.setOpacity(p);
++            g.drawPixmap(QPointF(-(1.0 - p) * SLIDE, 0), shot);
++        });
++        runOverlay(s_flyoutOverlay, o, 220, QEasingCurve::OutCubic, [guard]() {
++            if (guard) {
++                guard->show();
++                guard->raise();
++            }
++        });
++    } else {
++        const QRect geom = flyout->geometry();
++        const QPixmap shot = flyout->grab();
++        flyout->hide();
++        NanquimOverlay *o = new NanquimOverlay(mw, geom, [shot](QPainter &g, const QRect &, qreal p) {
++            g.setOpacity(1.0 - p);
++            g.drawPixmap(QPointF(-p * SLIDE, 0), shot);
++        });
++        runOverlay(s_flyoutOverlay, o, 170, QEasingCurve::InCubic);
++    }
++    if (QToolButton *toggle = mw->findChild<QToolButton*>(QStringLiteral("nanquimAllToolsButton"))) {
++        toggle->setChecked(visible);
++    }
++}
++
++// fecha o painel ao tocar fora dele
++class FlyoutCloser : public QObject
++{
++public:
++    explicit FlyoutCloser(KisMainWindow *mw) : QObject(mw), m_mw(mw) {}
++protected:
++    bool eventFilter(QObject *, QEvent *e) override
++    {
++        if (e->type() != QEvent::MouseButtonPress && e->type() != QEvent::TabletPress
++                && e->type() != QEvent::TouchBegin) {
++            return false;
++        }
++        QFrame *flyout = m_mw->findChild<QFrame*>(FLYOUT_ID);
++        if (!flyout || !flyout->isVisible()) return false;
++        QPoint global;
++        if (e->type() == QEvent::MouseButtonPress) {
++            global = static_cast<QMouseEvent*>(e)->globalPos();
++        } else if (e->type() == QEvent::TabletPress) {
++            global = static_cast<QTabletEvent*>(e)->globalPos();
++        } else {
++            const auto points = static_cast<QTouchEvent*>(e)->touchPoints();
++            if (points.isEmpty()) return false;
++            global = points.first().screenPos().toPoint();
++        }
++        const QRect flyRect(flyout->mapToGlobal(QPoint(0, 0)), flyout->size());
++        QToolButton *toggle = m_mw->findChild<QToolButton*>(QStringLiteral("nanquimAllToolsButton"));
++        const QRect toggleRect = toggle ? QRect(toggle->mapToGlobal(QPoint(0, 0)), toggle->size()) : QRect();
++        if (!flyRect.contains(global) && !toggleRect.contains(global)) {
++            setFlyoutVisible(m_mw, false);
++        }
++        return false;
++    }
++private:
++    KisMainWindow *m_mw;
++};
++
++void buildToolsFlyout(KisMainWindow *mw)
++{
++    KoToolManager *toolManager = mw->viewManager()->toolManager();
++    QFrame *flyout = new QFrame(mw);
++    flyout->setObjectName(FLYOUT_ID);
++    flyout->setStyleSheet(QLatin1String(FLYOUT_STYLE));
++    flyout->hide();
++
++    QVBoxLayout *root = new QVBoxLayout(flyout);
++    root->setContentsMargins(14, 12, 10, 12);
++    root->setSpacing(6);
++
++    QHBoxLayout *head = new QHBoxLayout();
++    QLabel *title = new QLabel(i18n("Ferramentas"), flyout);
++    title->setObjectName(QStringLiteral("nanquimFlyoutTitle"));
++    head->addWidget(title, 1);
++    QToolButton *close = iconButton(flyout, i18n("Fechar"),
++                                    designIcon("<path d='M6 6l12 12M18 6L6 18'/>", 18));
++    close->setIconSize(QSize(18, 18));
++    QObject::connect(close, &QToolButton::clicked, mw, [mw]() { setFlyoutVisible(mw, false); });
++    head->addWidget(close);
++    root->addLayout(head);
++
++    QScrollArea *scroll = new QScrollArea(flyout);
++    scroll->setWidgetResizable(true);
++    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++    scroll->setFrameShape(QFrame::NoFrame);
++    KisKineticScroller::createPreconfiguredScroller(scroll);
++    QWidget *content = new QWidget(scroll);
++    QVBoxLayout *cl = new QVBoxLayout(content);
++    cl->setContentsMargins(0, 0, 4, 0);
++    cl->setSpacing(2);
++
++    QList<QPair<QToolButton*, QString>> buttons;
++    const int columns = 4;
++    Q_FOREACH (const FlyoutGroup &group, flyoutGroups()) {
++        QList<QPair<QAction*, FlyoutTool>> present;
++        Q_FOREACH (const FlyoutTool &t, group.tools) {
++            if (QAction *a = act(mw, t.id)) {
++                present << qMakePair(a, t);
++            }
++        }
++        if (present.isEmpty()) continue;
++        QLabel *section = new QLabel(i18n(group.title).toUpper(), content);
++        section->setObjectName(QStringLiteral("nanquimFlyoutSection"));
++        cl->addWidget(section);
++        QGridLayout *grid = new QGridLayout();
++        grid->setSpacing(4);
++        for (int i = 0; i < present.size(); i++) {
++            QAction *a = present[i].first;
++            QToolButton *b = new QToolButton(content);
++            b->setIcon(a->icon());
++            b->setIconSize(QSize(26, 26));
++            b->setText(i18n(present[i].second.label));
++            b->setToolTip(a->toolTip());
++            b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
++            b->setCheckable(true);
++            b->setFocusPolicy(Qt::NoFocus);
++            b->setFixedSize(76, 66);
++            QObject::connect(b, &QToolButton::clicked, mw, [mw, a]() {
++                a->trigger();
++                QTimer::singleShot(120, mw, [mw]() { setFlyoutVisible(mw, false); });
++            });
++            grid->addWidget(b, i / columns, i % columns);
++            buttons << qMakePair(b, QString::fromLatin1(present[i].second.id));
++        }
++        cl->addLayout(grid);
++    }
++    cl->addStretch(1);
++    scroll->setWidget(content);
++    root->addWidget(scroll, 1);
++    flyout->setFixedWidth(columns * 80 + 30);
++
++    auto sync = [buttons, toolManager]() {
++        const QString active = toolManager->activeToolId();
++        for (const auto &pair : buttons) {
++            pair.first->setChecked(pair.second == active);
++        }
++    };
++    QObject::connect(toolManager, &KoToolManager::changedTool, flyout, [sync](KoCanvasController *) { sync(); });
++    QTimer::singleShot(0, flyout, sync);
++
++    qApp->installEventFilter(new FlyoutCloser(mw));
++}
++
++// ---------------------------------------------------------------------------
++// Menus e janelinhas (Mais, Arquivo, Réguas, pincéis...) entram deslizando
++// ---------------------------------------------------------------------------
++class PopupAnimator : public QObject
++{
++public:
++    using QObject::QObject;
++protected:
++    bool eventFilter(QObject *obj, QEvent *e) override
++    {
++        if (e->type() != QEvent::Show) return false;
++        QWidget *w = qobject_cast<QWidget*>(obj);
++        if (!w || !w->isWindow() || w->windowType() != Qt::Popup) return false;
++        if (w->inherits("QComboBoxPrivateContainer") || w->property("nanquimAnimating").toBool()) return false;
++        const QPoint end = w->pos();
++        QPropertyAnimation *anim = new QPropertyAnimation(w, "pos", w);
++        anim->setDuration(160);
++        anim->setStartValue(end + QPoint(0, -10));
++        anim->setEndValue(end);
++        anim->setEasingCurve(QEasingCurve::OutCubic);
++        w->setProperty("nanquimAnimating", true);
++        QObject::connect(anim, &QPropertyAnimation::finished, w, [w]() { w->setProperty("nanquimAnimating", false); });
++        anim->start(QAbstractAnimation::DeleteWhenStopped);
++        return false;
++    }
++};
++
+ struct ToolEntry {
+     const char *tip;
+     const char *svg;
+@@ -689,17 +973,16 @@ void buildToolNav(KisMainWindow *mw)
+     }
+     QTimer::singleShot(0, nav, sync);
+ 
+-    // todas as ferramentas do Krita, num painel
+-    if (QDockWidget *toolbox = mw->dockWidget(TOOLBOX_ID)) {
+-        QToolButton *all = iconButton(nav, i18n("Todas as ferramentas"), designIcon(Svg::ALL_TOOLS), true);
+-        all->setProperty(NEEDS_CANVAS, true);
+-        QObject::connect(all, &QToolButton::clicked, mw, [mw, toolbox, all]() {
+-            togglePanel(mw, toolbox);
+-            all->setChecked(toolbox->isVisible());
+-        });
+-        QObject::connect(toolbox->toggleViewAction(), &QAction::toggled, all, [all](bool on) { all->setChecked(on); });
+-        nav->addWidget(all);
+-    }
++    // todas as ferramentas, num painel flutuante organizado por categoria
++    QToolButton *all = iconButton(nav, i18n("Todas as ferramentas"), designIcon(Svg::ALL_TOOLS), true);
++    all->setObjectName(QStringLiteral("nanquimAllToolsButton"));
++    all->setProperty(NEEDS_CANVAS, true);
++    QObject::connect(all, &QToolButton::clicked, mw, [mw, all]() {
++        QFrame *flyout = mw->findChild<QFrame*>(FLYOUT_ID);
++        setFlyoutVisible(mw, !(flyout && flyout->isVisible()));
++        all->setChecked(flyout && flyout->isVisible());
++    });
++    nav->addWidget(all);
+ 
+     QWidget *spacer = new QWidget(nav);
+     spacer->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+@@ -1163,7 +1446,9 @@ void NanquimTabletUi::install(KisMainWindow *mw)
+ {
+     buildTopBar(mw);
+     buildToolNav(mw);
++    buildToolsFlyout(mw);
+     installGallery(mw);
++    qApp->installEventFilter(new PopupAnimator(mw));
+     KisUsageLogger::log(QStringLiteral("[Nanquim] interface de tablet instalada"));
+ }
+ 
+@@ -1222,6 +1507,11 @@ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+         }
+     }
+ 
++    if (!canvasMode) {
++        if (QFrame *flyout = mw->findChild<QFrame*>(FLYOUT_ID)) {
++            flyout->hide();
++        }
++    }
+     QToolButton *tab = mw->findChild<QToolButton*>(QStringLiteral("nanquimExpandTab"));
+     if (canvasMode) {
+         nav->setVisible(!s_navCollapsed);
+diff --git a/packaging/android/apk/src/org/krita/android/NanquimSplash.java b/packaging/android/apk/src/org/krita/android/NanquimSplash.java
+index 355e009..56a41d2 100644
+--- a/packaging/android/apk/src/org/krita/android/NanquimSplash.java
++++ b/packaging/android/apk/src/org/krita/android/NanquimSplash.java
+@@ -4,6 +4,7 @@ import android.animation.ObjectAnimator;
+ import android.animation.ValueAnimator;
+ import android.app.Activity;
+ import android.graphics.Typeface;
++import android.os.Build;
+ import android.graphics.drawable.GradientDrawable;
+ import android.os.Handler;
+ import android.os.Looper;
+@@ -101,12 +102,13 @@ public final class NanquimSplash {
+         name.setText("Nanquim");
+         name.setTextColor(0xFFF2F6FB);
+         name.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 40);
+-        name.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
++        name.setTypeface(font(a, R.font.montserrat_bold, Typeface.create("sans-serif", Typeface.BOLD)));
+         name.setLetterSpacing(-0.02f);
+         TextView tag = new TextView(a);
+         tag.setText("Desenho e quadrinhos no tablet");
+         tag.setTextColor(0xFF9FB6CF);
+         tag.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
++        tag.setTypeface(font(a, R.font.montserrat_regular, Typeface.DEFAULT));
+         texts.addView(name);
+         texts.addView(tag);
+         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+@@ -225,6 +227,18 @@ public final class NanquimSplash {
+         new Handler(Looper.getMainLooper()).postDelayed(NanquimSplash::hideNow, 90000);
+     }
+ 
++    // Montserrat (SIL OFL) em res/font; em Android antigo fica a fonte do sistema
++    private static Typeface font(Activity a, int id, Typeface fallback) {
++        if (Build.VERSION.SDK_INT >= 26) {
++            try {
++                return a.getResources().getFont(id);
++            } catch (Exception e) {
++                Log.w(TAG, "fonte indisponível", e);
++            }
++        }
++        return fallback;
++    }
++
+     private static void setSize(View v, int width, int height) {
+         ViewGroup.LayoutParams lp = v.getLayoutParams();
+         lp.width = width;
+-- 
+2.43.0
+

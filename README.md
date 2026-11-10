@@ -33,3 +33,7 @@ O Krita é software livre sob a GNU GPL v3 ou posterior, e o Nanquim segue a mes
 - **Krita**: Krita Foundation e toda a comunidade do Krita e do KDE (GNU GPL v3).
 - **Arte de abertura**: Tyson Tan, ilustração da Kiki feita para o Krita. As artes do Tyson Tan para o Krita são licenciadas em Creative Commons BY-SA e GNU GPL ([krita.org/en/about/mascot](https://krita.org/en/about/mascot/)).
 - **Logo do Nanquim** (gota-pena): CC BY-SA 4.0.
+
+## Fontes
+
+O Nanquim usa a família **Montserrat** (Julieta Ulanovsky e colaboradores), sob a SIL Open Font License 1.1. Os arquivos são baixados pelo CI no momento da compilação.
