@@ -1,0 +1,278 @@
+From f95a475f4ef932a050a3712d4a4d2c09bbd47f17 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 10:28:19 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20boas-vindas=20com=20guia=20r=C3=A1pi?=
+ =?UTF-8?q?do=20e=20etiqueta=20de=20pinc=C3=A9is=20leves?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp | 221 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 221 insertions(+)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index 194a583..385e46b 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -72,6 +72,11 @@
+ 
+ #include "KisDocument.h"
+ #include "KisPart.h"
++#include "KisResourceServerProvider.h"
++#include <KisTagModel.h>
++#include <KisResourceTypes.h>
++#include <kis_paintop_preset.h>
++#include <QDialog>
+ #include "KisRecentDocumentsModelWrapper.h"
+ #include <KisKineticScroller.h>
+ #include <KoColorSpaceRegistry.h>
+@@ -1557,6 +1562,8 @@ QLabel *sectionLabel(const QString &text, QWidget *parent)
+     return l;
+ }
+ 
++void showWelcome(KisMainWindow *mw, bool startAtGuide);
++
+ QWidget *buildGallery(KisMainWindow *mw)
+ {
+     QWidget *gallery = new QWidget();
+@@ -1597,6 +1604,12 @@ QWidget *buildGallery(KisMainWindow *mw)
+     QObject::connect(back, &QPushButton::clicked, mw, [mw]() { mw->showWelcomeScreen(false); });
+     hl->addWidget(back);
+ 
++    QPushButton *guide = new QPushButton(i18n("Guia"), header);
++    guide->setProperty("class", QStringLiteral("nanquimGhost"));
++    guide->setFocusPolicy(Qt::NoFocus);
++    QObject::connect(guide, &QPushButton::clicked, mw, [mw]() { showWelcome(mw, false); });
++    hl->addWidget(guide);
++
+     QPushButton *open = new QPushButton(i18n("Abrir"), header);
+     open->setProperty("class", QStringLiteral("nanquimGhost"));
+     open->setFocusPolicy(Qt::NoFocus);
+@@ -1756,6 +1769,204 @@ void installGallery(KisMainWindow *mw)
+     }
+ }
+ 
++
++// ---------------------------------------------------------------------------
++// Pincéis do Nanquim: uma etiqueta com pincéis leves (motor nativo do Krita),
++// escolhidos para rascunho, arte-final e retícula. Criada uma vez; os pincéis
++// MyPaint, mais pesados, continuam disponíveis em "Tudo".
++// ---------------------------------------------------------------------------
++void setupNanquimBrushes(KisMainWindow *mw)
++{
++    KConfigGroup cfg = KSharedConfig::openConfig()->group("Nanquim");
++    if (cfg.readEntry("brushSetV1", false)) return;
++
++    const QStringList files = {
++        QStringLiteral("c)_Pencil-2.kpp"),            // rascunho
++        QStringLiteral("c)_Pencil-1_Hard.kpp"),
++        QStringLiteral("c)_Pencil-4_Soft.kpp"),
++        QStringLiteral("c)_Pencil-6_Quick_Shade.kpp"),
++        QStringLiteral("d)_Ink-1_Precision.kpp"),     // arte-final
++        QStringLiteral("d)_Ink-2_Fineliner.kpp"),
++        QStringLiteral("d)_Ink-3_Gpen.kpp"),
++        QStringLiteral("d)_Ink-4_Pen_Rough.kpp"),
++        QStringLiteral("d)_Ink-7_Brush_Rough.kpp"),
++        QStringLiteral("e)_Marker_Details.kpp"),      // preto chapado e cinzas
++        QStringLiteral("b)_Basic-5_Size_default.kpp"),
++        QStringLiteral("b)_Airbrush_Soft.kpp"),
++        QStringLiteral("y)_Screentone_Pressure.kpp"), // retícula
++        QStringLiteral("y)_Screentones_Regular.kpp"),
++        QStringLiteral("a)_Eraser_Circle.kpp"),       // borrachas
++        QStringLiteral("a)_Eraser_Small.kpp"),
++        QStringLiteral("a)_Eraser_Soft.kpp"),
++    };
++    KisPaintOpPresetResourceServer *server = KisResourceServerProvider::instance()->paintOpPresetServer();
++    QVector<KoResourceSP> resources;
++    KisPaintOpPresetSP pencil;
++    Q_FOREACH (const QString &file, files) {
++        KisPaintOpPresetSP preset = server->resource(QString(), file, QString());
++        if (preset) {
++            resources << preset;
++            if (!pencil) pencil = preset;
++        }
++    }
++    if (resources.isEmpty()) {
++        KisUsageLogger::log(QStringLiteral("[Nanquim] pincéis padrão não encontrados; etiqueta não criada"));
++        return;
++    }
++    KisTagModel tags(ResourceType::PaintOpPresets);
++    KisTagSP tag = tags.addTag(QStringLiteral("Nanquim"), true, resources);
++    if (tag) {
++        // a janela de pincéis abre nessa etiqueta; "Tudo" continua a um toque
++        KSharedConfig::openConfig()->group("SelectedTags").writeEntry(ResourceType::PaintOpPresets, tag->url());
++        if (pencil && mw->viewManager() && mw->viewManager()->canvasResourceProvider()) {
++            mw->viewManager()->canvasResourceProvider()->setPaintOpPreset(pencil);
++        }
++        cfg.writeEntry("brushSetV1", true);
++        KisUsageLogger::log(QStringLiteral("[Nanquim] etiqueta de pincéis criada com %1 pincéis").arg(resources.size()));
++    }
++}
++
++// ---------------------------------------------------------------------------
++// Boas-vindas (primeira abertura) e guia rápido
++// ---------------------------------------------------------------------------
++const char *WELCOME_STYLE =
++    "QDialog#nanquimWelcome { background: #17171a; border: 1px solid #33333b; border-radius: 18px; }"
++    "QDialog#nanquimWelcome QLabel { color: #ececf1; background: transparent; }"
++    "QLabel#nanquimWelcomeTitle { font-size: 24px; font-weight: 700; }"
++    "QLabel#nanquimWelcomeBody { font-size: 15px; color: #c9c9d2; }"
++    "QLabel#nanquimWelcomeSmall { font-size: 12px; color: #8a8a96; }"
++    "QLabel#nanquimGuideTitle { font-size: 15px; font-weight: 600; }"
++    "QLabel#nanquimGuideText { font-size: 13px; color: #a3a3ae; }"
++    "QPushButton#nanquimPrimary { min-height: 46px; padding: 0 22px; border: none; border-radius: 12px;"
++    "  color: #04131f; font-size: 15px; font-weight: 600;"
++    "  background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3d8bff, stop:1 #22d3ee); }"
++    "QPushButton#nanquimSecondary { min-height: 46px; padding: 0 18px; border-radius: 12px;"
++    "  border: 1px solid #2c2c33; background: #1f1f24; color: #ececf1; font-size: 15px; }";
++
++QWidget *guideRow(QWidget *parent, const char *svg, const QString &title, const QString &text)
++{
++    QWidget *row = new QWidget(parent);
++    QHBoxLayout *l = new QHBoxLayout(row);
++    l->setContentsMargins(0, 0, 0, 0);
++    l->setSpacing(14);
++    QLabel *icon = new QLabel(row);
++    icon->setPixmap(svgPixmap(QString::fromUtf8(svg), C_ACCENT, 26));
++    icon->setFixedSize(44, 44);
++    icon->setAlignment(Qt::AlignCenter);
++    icon->setStyleSheet(QStringLiteral("background: rgba(61,139,255,0.14); border-radius: 12px;"));
++    QVBoxLayout *t = new QVBoxLayout();
++    t->setSpacing(2);
++    QLabel *a = new QLabel(title, row);
++    a->setObjectName(QStringLiteral("nanquimGuideTitle"));
++    QLabel *b = new QLabel(text, row);
++    b->setObjectName(QStringLiteral("nanquimGuideText"));
++    b->setWordWrap(true);
++    t->addWidget(a);
++    t->addWidget(b);
++    l->addWidget(icon, 0, Qt::AlignTop);
++    l->addLayout(t, 1);
++    return row;
++}
++
++void showWelcome(KisMainWindow *mw, bool startAtGuide)
++{
++    QDialog *dlg = new QDialog(mw);
++    dlg->setObjectName(QStringLiteral("nanquimWelcome"));
++    dlg->setAttribute(Qt::WA_DeleteOnClose);
++    dlg->setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
++    dlg->setStyleSheet(QLatin1String(WELCOME_STYLE));
++    dlg->setModal(true);
++    dlg->setFixedWidth(qMin(680, mw->width() - 80));
++
++    QVBoxLayout *root = new QVBoxLayout(dlg);
++    root->setContentsMargins(32, 28, 32, 24);
++    root->setSpacing(16);
++    QStackedWidget *pages = new QStackedWidget(dlg);
++    root->addWidget(pages);
++
++    // --- página 1: a mensagem ------------------------------------------------
++    QWidget *p1 = new QWidget(pages);
++    QVBoxLayout *l1 = new QVBoxLayout(p1);
++    l1->setContentsMargins(0, 0, 0, 0);
++    l1->setSpacing(14);
++    QHBoxLayout *brand = new QHBoxLayout();
++    QLabel *logo = new QLabel(p1);
++    logo->setPixmap(renderSvg(QLatin1String(DROP_SVG), QSize(44, 44)));
++    QLabel *title = new QLabel(i18n("Bem-vindo ao Nanquim"), p1);
++    title->setObjectName(QStringLiteral("nanquimWelcomeTitle"));
++    brand->addWidget(logo);
++    brand->addSpacing(8);
++    brand->addWidget(title, 1);
++    l1->addLayout(brand);
++    QLabel *body = new QLabel(i18n(
++        "O Nanquim nasceu de um carinho antigo pelo Krita. Foi nele que eu aprendi que um programa "
++        "de desenho pode ser livre, feito por uma comunidade inteira e, ainda assim, estar à altura "
++        "de qualquer trabalho profissional.\n\n"
++        "Este aplicativo é a minha forma de agradecer: o mesmo motor de pincéis do Krita, com uma "
++        "interface pensada para quem desenha quadrinhos no tablet. Nada aqui existiria sem as pessoas "
++        "que constroem o Krita há mais de vinte anos, nem sem a arte do Tyson Tan, que dá rosto ao projeto.\n\n"
++        "Se o Nanquim for útil para você, conheça e apoie o Krita em krita.org."), p1);
++    body->setObjectName(QStringLiteral("nanquimWelcomeBody"));
++    body->setWordWrap(true);
++    l1->addWidget(body);
++    QLabel *credit = new QLabel(i18n("Nanquim é um projeto independente, não é o Krita oficial. "
++                                     "Código livre sob a GNU GPL. Arte da abertura: Tyson Tan (CC BY-SA)."), p1);
++    credit->setObjectName(QStringLiteral("nanquimWelcomeSmall"));
++    credit->setWordWrap(true);
++    l1->addWidget(credit);
++    QHBoxLayout *b1 = new QHBoxLayout();
++    b1->addStretch(1);
++    QPushButton *next = new QPushButton(i18n("Ver o guia rápido"), p1);
++    next->setObjectName(QStringLiteral("nanquimPrimary"));
++    b1->addWidget(next);
++    l1->addLayout(b1);
++    pages->addWidget(p1);
++
++    // --- página 2: guia rápido -----------------------------------------------
++    QWidget *p2 = new QWidget(pages);
++    QVBoxLayout *l2 = new QVBoxLayout(p2);
++    l2->setContentsMargins(0, 0, 0, 0);
++    l2->setSpacing(12);
++    QLabel *gt = new QLabel(i18n("Guia rápido"), p2);
++    gt->setObjectName(QStringLiteral("nanquimWelcomeTitle"));
++    l2->addWidget(gt);
++    l2->addWidget(guideRow(p2, Svg::GALLERY, i18n("Galeria"),
++        i18n("Crie uma página pelos modelos (mangá, comic, tirinha) ou toque num desenho recente. "
++             "O botão de quatro quadrados volta para cá sem fechar o desenho.")));
++    l2->addWidget(guideRow(p2, Svg::PEN, i18n("Ferramentas à esquerda"),
++        i18n("Pincel, borracha, balde, seleção, transformar e texto. O botão de pontinhos abre todas as "
++             "ferramentas. Embaixo ficam o tamanho e a opacidade do pincel.")));
++    l2->addWidget(guideRow(p2, Svg::LAYERS, i18n("Painéis no topo"),
++        i18n("Pincéis (a miniatura), cor, camadas, opções, réguas e referência abrem com um toque e "
++             "fecham com outro. O menu completo do Krita fica nos três pontinhos.")));
++    l2->addWidget(guideRow(p2, Svg::MOVE, i18n("Gestos"),
++        i18n("Dois dedos para mover, dar zoom e girar a página. A caneta desenha; o dedo navega.")));
++    l2->addWidget(guideRow(p2, Svg::INSERT_IMAGE, i18n("Imagens e pincéis"),
++        i18n("Insira uma imagem como camada pelo botão com \"+\". Arquivos .kpp e .bundle abrem direto "
++             "no Nanquim pelo \"Abrir com\" do tablet.")));
++    l2->addWidget(guideRow(p2, Svg::TIMELAPSE, i18n("Time-lapse"),
++        i18n("O Nanquim grava o processo sozinho, sem as pausas. Exporte o vídeo pelo botão de play.")));
++    QHBoxLayout *b2 = new QHBoxLayout();
++    QPushButton *backBtn = new QPushButton(i18n("Voltar"), p2);
++    backBtn->setObjectName(QStringLiteral("nanquimSecondary"));
++    QPushButton *done = new QPushButton(i18n("Começar a desenhar"), p2);
++    done->setObjectName(QStringLiteral("nanquimPrimary"));
++    b2->addWidget(backBtn);
++    b2->addStretch(1);
++    b2->addWidget(done);
++    l2->addLayout(b2);
++    pages->addWidget(p2);
++
++    QObject::connect(next, &QPushButton::clicked, pages, [pages]() { pages->setCurrentIndex(1); });
++    QObject::connect(backBtn, &QPushButton::clicked, pages, [pages]() { pages->setCurrentIndex(0); });
++    QObject::connect(done, &QPushButton::clicked, dlg, &QDialog::accept);
++    QObject::connect(dlg, &QDialog::finished, mw, [](int) {
++        KSharedConfig::openConfig()->group("Nanquim").writeEntry("welcomeShownV1", true);
++    });
++    pages->setCurrentIndex(startAtGuide ? 1 : 0);
++    dlg->open();
++}
++
+ } // namespace
+ 
+ void NanquimTabletUi::install(KisMainWindow *mw)
+@@ -1765,6 +1976,16 @@ void NanquimTabletUi::install(KisMainWindow *mw)
+     buildToolsFlyout(mw);
+     installGallery(mw);
+     qApp->installEventFilter(new PopupAnimator(mw));
++
++    // depois que tudo carregou: etiqueta de pincéis (uma vez) e boas-vindas (primeira abertura)
++    QPointer<KisMainWindow> guard(mw);
++    QTimer::singleShot(2500, mw, [guard]() {
++        if (!guard) return;
++        setupNanquimBrushes(guard);
++        if (!KSharedConfig::openConfig()->group("Nanquim").readEntry("welcomeShownV1", false)) {
++            showWelcome(guard, false);
++        }
++    });
+     KisUsageLogger::log(QStringLiteral("[Nanquim] interface de tablet instalada"));
+ }
+ 
+-- 
+2.43.0
+
