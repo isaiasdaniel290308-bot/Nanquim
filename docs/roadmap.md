@@ -17,6 +17,7 @@
 | Animações: saída da abertura, painéis deslizando, troca de tela | Feito | 0015 |
 | Interface nova, peça 2 (design "Desenho"): barra do topo com título, ferramentas à esquerda, tamanho/opacidade verticais, recolher | Em teste | 0016 |
 | Interface nova, peça 3 (design "Main"): galeria com novas páginas e recentes | Feito (testado no Tab S10 Lite) | 0018 |
+| Requadros (arranjos prontos), balões de fala vetoriais, capítulos na galeria | Em teste | 0034 |
 | Time-lapse automático (quadro por traço, sem pausas) e exportação em MP4 | Em teste | 0026 |
 | Inserir imagem como camada; remover desenhos da galeria | Em teste | 0025 |
 | Pincéis do Nanquim: etiqueta com pincéis leves do motor nativo, aberta por padrão | Em teste | 0030 |
