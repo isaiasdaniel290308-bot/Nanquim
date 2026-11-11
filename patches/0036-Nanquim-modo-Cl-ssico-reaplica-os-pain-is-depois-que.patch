@@ -1,0 +1,73 @@
+From b8da23222ca493adf57c87b02f0e93dc5c0af293 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 17:43:28 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20modo=20Cl=C3=A1ssico=20reaplica=20os?=
+ =?UTF-8?q?=20pain=C3=A9is=20depois=20que=20o=20Krita=20restaura=20o=20est?=
+ =?UTF-8?q?ado=20salvo;=20op=C3=A7=C3=A3o=20manual=20no=20menu?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp | 30 +++++++++++++++++++++++++++---
+ 1 file changed, 27 insertions(+), 3 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index 34e369e..12df241 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -2768,12 +2768,19 @@ void switchUiMode(KisMainWindow *mw)
+         + i18n("Salve o seu desenho, feche o Nanquim (tire-o da lista de apps recentes) e abra de novo para trocar."));
+ }
+ 
++void arrangeClassic(KisMainWindow *mw);
++
+ void fillNanquimMenu(KisMainWindow *mw, QMenu *menu)
+ {
+     menu->clear();
+     QAction *mode = menu->addAction(isClassicMode() ? i18n("Interface: mudar para o modo Tablet")
+                                                     : i18n("Interface: mudar para o modo Clássico"));
+     QObject::connect(mode, &QAction::triggered, mw, [mw]() { switchUiMode(mw); });
++    if (s_classic) {
++        QAction *arrange = menu->addAction(i18n("Arrumar os painéis do modo Clássico"));
++        arrange->setEnabled(mw->activeView() != nullptr);
++        QObject::connect(arrange, &QAction::triggered, mw, [mw]() { arrangeClassic(mw); });
++    }
+     menu->addSeparator();
+     QAction *insert = menu->addAction(i18n("Inserir imagem como camada…"));
+     insert->setEnabled(mw->activeView() != nullptr);
+@@ -2949,9 +2956,26 @@ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+         // sem a barra de menus não haveria como voltar ao modo Tablet
+         mw->menuBar()->setVisible(true);
+         KConfigGroup cfg = KSharedConfig::openConfig()->group("Nanquim");
+-        if (canvasMode && !cfg.readEntry("classicArrangedV2", false)) {
+-            arrangeClassic(mw);
+-            cfg.writeEntry("classicArrangedV2", true);
++        if (canvasMode) {
++            // O Krita restaura por cima o estado salvo no modo Tablet (tudo escondido).
++            // Por isso o arranjo é aplicado depois que a troca de tela termina, e de
++            // novo sempre que a tela de desenho aparece sem nenhum painel principal.
++            QPointer<KisMainWindow> guard(mw);
++            QTimer::singleShot(150, mw, [guard]() {
++                if (!guard) return;
++                KConfigGroup c = KSharedConfig::openConfig()->group("Nanquim");
++                bool anyVisible = false;
++                for (const QString &id : {TOOLBOX_ID, QStringLiteral("KisLayerBox"),
++                                          QStringLiteral("ColorSelectorNg"), QStringLiteral("sharedtooldocker")}) {
++                    if (QDockWidget *dw = guard->dockWidget(id)) anyVisible |= dw->isVisible();
++                }
++                bool anyBar = false;
++                Q_FOREACH (KisToolBar *tb, guard->toolBars()) anyBar |= tb->isVisible();
++                if (!c.readEntry("classicArrangedV3", false) || !anyVisible || !anyBar) {
++                    arrangeClassic(guard);
++                    c.writeEntry("classicArrangedV3", true);
++                }
++            });
+         }
+         if (screenChanged) {
+             flushLayouts();
+-- 
+2.43.0
+
