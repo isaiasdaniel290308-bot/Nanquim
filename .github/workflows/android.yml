@@ -154,10 +154,16 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /mnt/cache/ccache
-          key: ccache-android-arm64-${{ github.run_id }}
-          restore-keys: ccache-android-arm64-
+          key: ccache-android-arm64-v2-${{ github.run_id }}
+          # v2: uma tentativa que falhou antes de compilar salvou um cache vazio com o
+          # prefixo antigo, e a build seguinte recomeçou do zero. Na falta de um v2,
+          # usa o último cache bom conhecido (build 36).
+          restore-keys: |
+            ccache-android-arm64-v2-
+            ccache-android-arm64-42949342015
 
       - name: Compilar o Krita (pode levar algumas horas na primeira vez)
+        id: compile
         shell: bash
         working-directory: krita
         run: |
@@ -284,11 +290,12 @@ jobs:
           timeout 900 gdb -batch -ex run -ex bt -ex "info sharedlibrary" --args "$S" $ARGS 2>&1 | tail -90
 
       - name: Salvar cache de compilação (mesmo se falhar)
-        if: always()
+        # só quando a compilação chegou a rodar: senão salvaria um cache vazio
+        if: always() && steps.compile.outcome != 'skipped' && steps.compile.outcome != ''
         uses: actions/cache/save@v4
         with:
           path: /mnt/cache/ccache
-          key: ccache-android-arm64-${{ github.run_id }}
+          key: ccache-android-arm64-v2-${{ github.run_id }}
 
       - name: Espaço usado
         if: always()
