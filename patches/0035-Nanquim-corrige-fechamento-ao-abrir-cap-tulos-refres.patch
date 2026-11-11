@@ -1,4 +1,4 @@
-From 57feaa4ed123e4054b7057eb3fa6b56b4eb43e9c Mon Sep 17 00:00:00 2001
+From 0218900a37e15034e4a9731eff270915e124b9e7 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 11 Nov 2026 14:20:40 -0300
 Subject: [PATCH] =?UTF-8?q?Nanquim:=20corrige=20fechamento=20ao=20abrir=20?=
@@ -11,11 +11,11 @@ Content-Transfer-Encoding: 8bit
 Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
 ---
- libs/ui/NanquimTabletUi.cpp | 72 +++++++++++++++++++++++++++----------
- 1 file changed, 53 insertions(+), 19 deletions(-)
+ libs/ui/NanquimTabletUi.cpp | 71 +++++++++++++++++++++++++++----------
+ 1 file changed, 52 insertions(+), 19 deletions(-)
 
 diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
-index 2933e80..89c6264 100644
+index 2933e80..34e369e 100644
 --- a/libs/ui/NanquimTabletUi.cpp
 +++ b/libs/ui/NanquimTabletUi.cpp
 @@ -2397,7 +2397,13 @@ QWidget *buildGallery(KisMainWindow *mw)
@@ -85,7 +85,7 @@ index 2933e80..89c6264 100644
      cfg.sync();
      QMessageBox::information(mw, QStringLiteral("Nanquim"),
          (toClassic ? i18n("Modo Clássico escolhido: menus no topo, barras do Krita e painéis fixos.")
-@@ -2847,21 +2858,44 @@ void arrangeClassic(KisMainWindow *mw)
+@@ -2847,21 +2858,43 @@ void arrangeClassic(KisMainWindow *mw)
          }
          return dw;
      };
@@ -119,25 +119,24 @@ index 2933e80..89c6264 100644
 +    if (history && options) {
 +        mw->tabifyDockWidget(history, options);
 +        options->raise();
-     }
--    if (color) {
--        mw->resizeDocks({color}, {qBound(280, mw->width() / 5, 380)}, Qt::Horizontal);
++    }
 +    const int side = qBound(280, mw->width() / 5, 380);
 +    if (brushes && color) {
 +        mw->resizeDocks({brushes, color}, {qBound(120, mw->width() / 12, 170), side}, Qt::Horizontal);
 +    } else if (color) {
 +        mw->resizeDocks({color}, {side}, Qt::Horizontal);
      }
+-    if (color) {
+-        mw->resizeDocks({color}, {qBound(280, mw->width() / 5, 380)}, Qt::Horizontal);
 +    if (color && middle && layers) {
 +        const int h = mw->height();
 +        mw->resizeDocks({color, middle, layers}, {h * 30 / 100, h * 25 / 100, h * 45 / 100}, Qt::Vertical);
-+    }
+     }
 +    Q_UNUSED(toolbox);
-+}
  }
  
  } // namespace
-@@ -2916,9 +2950,9 @@ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+@@ -2916,9 +2949,9 @@ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
          // sem a barra de menus não haveria como voltar ao modo Tablet
          mw->menuBar()->setVisible(true);
          KConfigGroup cfg = KSharedConfig::openConfig()->group("Nanquim");
