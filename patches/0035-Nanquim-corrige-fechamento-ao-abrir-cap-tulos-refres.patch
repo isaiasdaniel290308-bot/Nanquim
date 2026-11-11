@@ -1,0 +1,154 @@
+From 57feaa4ed123e4054b7057eb3fa6b56b4eb43e9c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 14:20:40 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20corrige=20fechamento=20ao=20abrir=20?=
+ =?UTF-8?q?cap=C3=ADtulos=20(refresh=20em=20la=C3=A7o)=20e=20arranjo=20do?=
+ =?UTF-8?q?=20modo=20Cl=C3=A1ssico=20como=20no=20prot=C3=B3tipo?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp | 72 +++++++++++++++++++++++++++----------
+ 1 file changed, 53 insertions(+), 19 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index 2933e80..89c6264 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -2397,7 +2397,13 @@ QWidget *buildGallery(KisMainWindow *mw)
+ 
+     // atualiza títulos, botões, lista e aviso conforme o estado
+     auto refresh = std::make_shared<std::function<void()>>();
++    auto refreshing = std::make_shared<bool>(false);
+     *refresh = [=]() {
++        // rebuildPages() mexe no modelo, que avisa de volta: sem esta trava o
++        // refresh chamava a si mesmo sem parar e o app fechava
++        if (*refreshing) return;
++        *refreshing = true;
++        struct Unlock { std::shared_ptr<bool> f; ~Unlock() { *f = false; } } unlock{refreshing};
+         const bool inChapter = !state->chapter.isEmpty();
+         const ChapterStore::Chapter c = ChapterStore::instance()->chapter(state->chapter);
+         if (inChapter && c.id.isEmpty()) {   // capítulo apagado
+@@ -2436,9 +2442,13 @@ QWidget *buildGallery(KisMainWindow *mw)
+         recents->setVisible(rows > 0);
+     };
+ 
+-    ChapterStore::instance()->listeners << [rebuildChapters, refresh]() {
+-        rebuildChapters();
+-        (*refresh)();
++    QPointer<QWidget> galleryGuard(gallery);
++    ChapterStore::instance()->listeners << [rebuildChapters, refresh, galleryGuard]() {
++        if (!galleryGuard) return;
++        QTimer::singleShot(0, galleryGuard, [rebuildChapters, refresh]() {
++            rebuildChapters();
++            (*refresh)();
++        });
+     };
+     rebuildChapters();
+ 
+@@ -2455,7 +2465,7 @@ QWidget *buildGallery(KisMainWindow *mw)
+         }
+         state->addMode = false;
+         removeMode->setChecked(false);
+-        (*refresh)();
++        QTimer::singleShot(0, mw, [refresh]() { (*refresh)(); });
+     });
+     QObject::connect(addPages, &QPushButton::clicked, mw, [state, refresh, removeMode]() {
+         state->addMode = !state->addMode;
+@@ -2501,11 +2511,12 @@ QWidget *buildGallery(KisMainWindow *mw)
+         mw->openDocument(path, KisMainWindow::None);
+     });
+ 
+-    for (QAbstractItemModel *m : {static_cast<QAbstractItemModel*>(proxy), static_cast<QAbstractItemModel*>(pagesModel)}) {
+-        QObject::connect(m, &QAbstractItemModel::rowsInserted, empty, [refresh]() { (*refresh)(); });
+-        QObject::connect(m, &QAbstractItemModel::rowsRemoved, empty, [refresh]() { (*refresh)(); });
+-    }
+-    QObject::connect(proxy, &QAbstractItemModel::modelReset, empty, [refresh]() { (*refresh)(); });
++    auto later = [refresh, galleryGuard]() {
++        if (galleryGuard) QTimer::singleShot(0, galleryGuard, [refresh]() { (*refresh)(); });
++    };
++    QObject::connect(proxy, &QAbstractItemModel::rowsInserted, empty, later);
++    QObject::connect(proxy, &QAbstractItemModel::rowsRemoved, empty, later);
++    QObject::connect(proxy, &QAbstractItemModel::modelReset, empty, later);
+     (*refresh)();
+ 
+     bl->addWidget(recents, 1);
+@@ -2748,7 +2759,7 @@ void switchUiMode(KisMainWindow *mw)
+     const bool toClassic = !isClassicMode();
+     KConfigGroup cfg = KSharedConfig::openConfig()->group("Nanquim");
+     cfg.writeEntry("uiMode", toClassic ? QStringLiteral("classic") : QStringLiteral("tablet"));
+-    cfg.writeEntry("classicArranged", false);
++    cfg.writeEntry("classicArrangedV2", false);
+     cfg.sync();
+     QMessageBox::information(mw, QStringLiteral("Nanquim"),
+         (toClassic ? i18n("Modo Clássico escolhido: menus no topo, barras do Krita e painéis fixos.")
+@@ -2847,21 +2858,44 @@ void arrangeClassic(KisMainWindow *mw)
+         }
+         return dw;
+     };
+-    place({TOOLBOX_ID}, Qt::LeftDockWidgetArea);
++    // Arranjo do protótipo "Clássico": ferramentas à esquerda; ao lado da tela,
++    // a coluna de pincéis rápidos; à direita, cor em cima, histórico e opções
++    // da ferramenta em abas no meio, camadas embaixo.
++    QDockWidget *toolbox = place({TOOLBOX_ID}, Qt::LeftDockWidgetArea);
++    QDockWidget *brushes = place({QStringLiteral("PresetDocker")}, Qt::RightDockWidgetArea);
+     QDockWidget *color = place({QStringLiteral("ColorSelectorNg"), QStringLiteral("WideGamutColorSelector")},
+                                Qt::RightDockWidgetArea);
++    QDockWidget *history = place({QStringLiteral("History")}, Qt::RightDockWidgetArea);
+     QDockWidget *options = place({QStringLiteral("sharedtooldocker")}, Qt::RightDockWidgetArea);
+     QDockWidget *layers = place({QStringLiteral("KisLayerBox")}, Qt::RightDockWidgetArea);
+-    if (color && layers) {
++    if (brushes && color) {
++        mw->splitDockWidget(brushes, color, Qt::Horizontal);
++    }
++    QDockWidget *middle = history ? history : options;
++    if (color && middle) {
++        mw->splitDockWidget(color, middle, Qt::Vertical);
++    }
++    if (middle && layers) {
++        mw->splitDockWidget(middle, layers, Qt::Vertical);
++    } else if (color && layers) {
+         mw->splitDockWidget(color, layers, Qt::Vertical);
+     }
+-    if (color && options) {
+-        mw->tabifyDockWidget(color, options);
+-        color->raise();
++    if (history && options) {
++        mw->tabifyDockWidget(history, options);
++        options->raise();
+     }
+-    if (color) {
+-        mw->resizeDocks({color}, {qBound(280, mw->width() / 5, 380)}, Qt::Horizontal);
++    const int side = qBound(280, mw->width() / 5, 380);
++    if (brushes && color) {
++        mw->resizeDocks({brushes, color}, {qBound(120, mw->width() / 12, 170), side}, Qt::Horizontal);
++    } else if (color) {
++        mw->resizeDocks({color}, {side}, Qt::Horizontal);
+     }
++    if (color && middle && layers) {
++        const int h = mw->height();
++        mw->resizeDocks({color, middle, layers}, {h * 30 / 100, h * 25 / 100, h * 45 / 100}, Qt::Vertical);
++    }
++    Q_UNUSED(toolbox);
++}
+ }
+ 
+ } // namespace
+@@ -2916,9 +2950,9 @@ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+         // sem a barra de menus não haveria como voltar ao modo Tablet
+         mw->menuBar()->setVisible(true);
+         KConfigGroup cfg = KSharedConfig::openConfig()->group("Nanquim");
+-        if (canvasMode && !cfg.readEntry("classicArranged", false)) {
++        if (canvasMode && !cfg.readEntry("classicArrangedV2", false)) {
+             arrangeClassic(mw);
+-            cfg.writeEntry("classicArranged", true);
++            cfg.writeEntry("classicArrangedV2", true);
+         }
+         if (screenChanged) {
+             flushLayouts();
+-- 
+2.43.0
+
