@@ -1,0 +1,38 @@
+# Mantém viva a chave de assinatura do Nanquim.
+#
+# A chave fica no cache privado do repositório, e o GitHub apaga caches que
+# passam 7 dias sem uso. Sem a mesma chave, o Android recusa atualizar o app
+# por cima do instalado. Este fluxo só lê o cache a cada 3 dias, o que renova
+# o prazo. A solução definitiva é guardar a chave nos segredos do repositório
+# (NANQUIM_KEYSTORE_B64 e NANQUIM_KEYSTORE_PASS), que o fluxo principal já usa
+# quando existem.
+name: Manter chave de assinatura
+
+on:
+  schedule:
+    - cron: "17 5 */3 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manter:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Ler a chave do cache
+        id: keycache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/nanquim-key
+          key: nanquim-signing-key-v1
+
+      - name: Conferir
+        shell: bash
+        run: |
+          if [ -f ~/nanquim-key/nanquim.jks ]; then
+            echo "Chave presente; prazo do cache renovado."
+          else
+            echo "::warning::A chave de assinatura NÃO está no cache. O próximo APK será assinado com uma chave nova e não atualizará por cima do instalado."
+            exit 1
+          fi

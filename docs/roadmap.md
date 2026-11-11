@@ -25,7 +25,9 @@
 | Importador `.sut` (Clip Studio), v1: ponta pela miniatura, ajustes básicos | Em teste | 0032 |
 | Liquidificar mais rápido: aplicação em várias threads | Em teste | 0019 |
 | Liquidificar mais rápido: prévia leve enquanto arrasta | Planejado | — |
-| Modo de interface "Clássico" (desktop), alternável nas configurações | Projetado | — |
+| Modo de interface "Clássico" (desktop), alternável no menu Nanquim | Em teste | 0033 |
+| Ícones dos painéis no estilo do design; "Abrir com" por extensão; limites do time-lapse; cronômetros só com -DNANQUIM_TIMING | Em teste | 0033 |
+| Chave de assinatura: fluxo que renova o cache a cada 3 dias (definitivo: segredos do repositório) | Feito | workflow |
 | Versão para Windows (usa o modo Clássico por padrão) | Ideia | — |
 
 ## Importador `.sut`

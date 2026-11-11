@@ -1,0 +1,778 @@
+From e3f1590dcdd2feeb58790ff09d3fbaae5d2d869f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 23:16:47 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20modo=20Cl=C3=A1ssico,=20=C3=ADcones?=
+ =?UTF-8?q?=20dos=20pain=C3=A9is,=20Abrir=20com=20por=20extens=C3=A3o,=20l?=
+ =?UTF-8?q?imites=20do=20time-lapse=20e=20cron=C3=B4metros=20desligados?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ krita/CMakeLists.txt                       |   1 +
+ krita/pics/nanquim/addlayer.svg            |   1 +
+ krita/pics/nanquim/arrowdown.svg           |   1 +
+ krita/pics/nanquim/arrowup.svg             |   1 +
+ krita/pics/nanquim/deletelayer.svg         |   1 +
+ krita/pics/nanquim/docker_close.svg        |   1 +
+ krita/pics/nanquim/duplicatelayer.svg      |   1 +
+ krita/pics/nanquim/layer-locked.svg        |   1 +
+ krita/pics/nanquim/layer-unlocked.svg      |   1 +
+ krita/pics/nanquim/nanquim-icons.qrc       |  21 ++
+ krita/pics/nanquim/novisible.svg           |   1 +
+ krita/pics/nanquim/properties.svg          |   1 +
+ krita/pics/nanquim/view-choose.svg         |   1 +
+ krita/pics/nanquim/view-filter.svg         |   1 +
+ krita/pics/nanquim/visible.svg             |   1 +
+ libs/global/KisScopedPerformanceLogger.h   |   6 +-
+ libs/global/NanquimStepTimer.h             |   5 +-
+ libs/ui/KisMainWindow.cpp                  |   4 +-
+ libs/ui/NanquimTabletUi.cpp                | 292 ++++++++++++++++-----
+ libs/widgetutils/KisRecentFilesManager.cpp |   4 +
+ libs/widgetutils/kis_icon_utils.cpp        |  14 +
+ packaging/android/apk/AndroidManifest.xml  |  49 ++++
+ 22 files changed, 344 insertions(+), 65 deletions(-)
+ create mode 100644 krita/pics/nanquim/addlayer.svg
+ create mode 100644 krita/pics/nanquim/arrowdown.svg
+ create mode 100644 krita/pics/nanquim/arrowup.svg
+ create mode 100644 krita/pics/nanquim/deletelayer.svg
+ create mode 100644 krita/pics/nanquim/docker_close.svg
+ create mode 100644 krita/pics/nanquim/duplicatelayer.svg
+ create mode 100644 krita/pics/nanquim/layer-locked.svg
+ create mode 100644 krita/pics/nanquim/layer-unlocked.svg
+ create mode 100644 krita/pics/nanquim/nanquim-icons.qrc
+ create mode 100644 krita/pics/nanquim/novisible.svg
+ create mode 100644 krita/pics/nanquim/properties.svg
+ create mode 100644 krita/pics/nanquim/view-choose.svg
+ create mode 100644 krita/pics/nanquim/view-filter.svg
+ create mode 100644 krita/pics/nanquim/visible.svg
+
+diff --git a/krita/CMakeLists.txt b/krita/CMakeLists.txt
+index 8358aa1..286b49f 100644
+--- a/krita/CMakeLists.txt
++++ b/krita/CMakeLists.txt
+@@ -173,6 +173,7 @@ set(krita_QRCS
+     ${CMAKE_SOURCE_DIR}/krita/pics/tools/SVG/16/tools-svg-16-icons.qrc
+     ${CMAKE_SOURCE_DIR}/krita/pics/tool_transform/tool-transform-icons.qrc
+     ${CMAKE_SOURCE_DIR}/krita/pics/svg/svg-icons.qrc
++    ${CMAKE_SOURCE_DIR}/krita/pics/nanquim/nanquim-icons.qrc
+     ${CMAKE_SOURCE_DIR}/libs/flake/flake.qrc
+     ${CMAKE_SOURCE_DIR}/libs/widgets/kritawidgets.qrc
+     ${CMAKE_SOURCE_DIR}/pics/icons.qrc
+diff --git a/krita/pics/nanquim/addlayer.svg b/krita/pics/nanquim/addlayer.svg
+new file mode 100644
+index 0000000..158edf0
+--- /dev/null
++++ b/krita/pics/nanquim/addlayer.svg
+@@ -0,0 +1 @@
++<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#ececf1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M12 5v14M5 12h14'/></svg>
+diff --git a/krita/pics/nanquim/arrowdown.svg b/krita/pics/nanquim/arrowdown.svg
+new file mode 100644
+index 0000000..626c822
+--- /dev/null
++++ b/krita/pics/nanquim/arrowdown.svg
+@@ -0,0 +1 @@
++<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#ececf1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M12 5v14'/><path d='M6 13l6 6 6-6'/></svg>
+diff --git a/krita/pics/nanquim/arrowup.svg b/krita/pics/nanquim/arrowup.svg
+new file mode 100644
+index 0000000..2a47e0c
+--- /dev/null
++++ b/krita/pics/nanquim/arrowup.svg
+@@ -0,0 +1 @@
++<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#ececf1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M12 19V5'/><path d='M6 11l6-6 6 6'/></svg>
+diff --git a/krita/pics/nanquim/deletelayer.svg b/krita/pics/nanquim/deletelayer.svg
+new file mode 100644
+index 0000000..ac79946
+--- /dev/null
++++ b/krita/pics/nanquim/deletelayer.svg
+@@ -0,0 +1 @@
++<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#ececf1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M4 7h16'/><path d='M9 7V4h6v3'/><path d='M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12'/><path d='M10 11v6M14 11v6'/></svg>
+diff --git a/krita/pics/nanquim/docker_close.svg b/krita/pics/nanquim/docker_close.svg
+new file mode 100644
+index 0000000..363de19
+--- /dev/null
++++ b/krita/pics/nanquim/docker_close.svg
+@@ -0,0 +1 @@
++<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#ececf1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M6 6l12 12M18 6L6 18'/></svg>
+diff --git a/krita/pics/nanquim/duplicatelayer.svg b/krita/pics/nanquim/duplicatelayer.svg
+new file mode 100644
+index 0000000..c404976
+--- /dev/null
++++ b/krita/pics/nanquim/duplicatelayer.svg
+@@ -0,0 +1 @@
++<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#ececf1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='8' y='8' width='12' height='12' rx='2'/><path d='M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2'/></svg>
+diff --git a/krita/pics/nanquim/layer-locked.svg b/krita/pics/nanquim/layer-locked.svg
+new file mode 100644
+index 0000000..b8e99bb
+--- /dev/null
++++ b/krita/pics/nanquim/layer-locked.svg
+@@ -0,0 +1 @@
++<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#ececf1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='11' width='14' height='10' rx='2'/><path d='M8 11V7a4 4 0 0 1 8 0v4'/></svg>
+diff --git a/krita/pics/nanquim/layer-unlocked.svg b/krita/pics/nanquim/layer-unlocked.svg
+new file mode 100644
+index 0000000..d24df2e
+--- /dev/null
++++ b/krita/pics/nanquim/layer-unlocked.svg
+@@ -0,0 +1 @@
++<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#6f6f7a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='11' width='14' height='10' rx='2'/><path d='M8 11V7a4 4 0 0 1 7.6-1.7'/></svg>
+diff --git a/krita/pics/nanquim/nanquim-icons.qrc b/krita/pics/nanquim/nanquim-icons.qrc
+new file mode 100644
+index 0000000..d6c0772
+--- /dev/null
++++ b/krita/pics/nanquim/nanquim-icons.qrc
+@@ -0,0 +1,21 @@
++<!--
++  SPDX-FileCopyrightText: 2026 Nanquim
++  SPDX-License-Identifier: CC0-1.0
++-->
++<RCC>
++    <qresource prefix="/nanquim">
++        <file>addlayer.svg</file>
++        <file>arrowdown.svg</file>
++        <file>arrowup.svg</file>
++        <file>deletelayer.svg</file>
++        <file>docker_close.svg</file>
++        <file>duplicatelayer.svg</file>
++        <file>layer-locked.svg</file>
++        <file>layer-unlocked.svg</file>
++        <file>novisible.svg</file>
++        <file>properties.svg</file>
++        <file>view-choose.svg</file>
++        <file>view-filter.svg</file>
++        <file>visible.svg</file>
++    </qresource>
++</RCC>
+diff --git a/krita/pics/nanquim/novisible.svg b/krita/pics/nanquim/novisible.svg
+new file mode 100644
+index 0000000..55a9242
+--- /dev/null
++++ b/krita/pics/nanquim/novisible.svg
+@@ -0,0 +1 @@
++<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#6f6f7a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M3 3l18 18'/><path d='M10.6 5.1A10.9 10.9 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2'/><path d='M6.6 6.6A17.3 17.3 0 0 0 2 12s3.6 7 10 7a10.7 10.7 0 0 0 5.4-1.4'/><path d='M9.9 9.9a3 3 0 0 0 4.2 4.2'/></svg>
+diff --git a/krita/pics/nanquim/properties.svg b/krita/pics/nanquim/properties.svg
+new file mode 100644
+index 0000000..78ef6ed
+--- /dev/null
++++ b/krita/pics/nanquim/properties.svg
+@@ -0,0 +1 @@
++<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#ececf1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M4 7h9M17 7h3M4 17h3M11 17h9'/><circle cx='15' cy='7' r='2'/><circle cx='9' cy='17' r='2'/></svg>
+diff --git a/krita/pics/nanquim/view-choose.svg b/krita/pics/nanquim/view-choose.svg
+new file mode 100644
+index 0000000..00a4a28
+--- /dev/null
++++ b/krita/pics/nanquim/view-choose.svg
+@@ -0,0 +1 @@
++<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#ececf1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6h16M4 12h16M4 18h16'/></svg>
+diff --git a/krita/pics/nanquim/view-filter.svg b/krita/pics/nanquim/view-filter.svg
+new file mode 100644
+index 0000000..88e63b2
+--- /dev/null
++++ b/krita/pics/nanquim/view-filter.svg
+@@ -0,0 +1 @@
++<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#ececf1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M3 5h18l-7 8v6l-4 2v-8z'/></svg>
+diff --git a/krita/pics/nanquim/visible.svg b/krita/pics/nanquim/visible.svg
+new file mode 100644
+index 0000000..fd9c635
+--- /dev/null
++++ b/krita/pics/nanquim/visible.svg
+@@ -0,0 +1 @@
++<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#ececf1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z'/><circle cx='12' cy='12' r='3'/></svg>
+diff --git a/libs/global/KisScopedPerformanceLogger.h b/libs/global/KisScopedPerformanceLogger.h
+index 4b77fa0..d8e24aa 100644
+--- a/libs/global/KisScopedPerformanceLogger.h
++++ b/libs/global/KisScopedPerformanceLogger.h
+@@ -18,8 +18,8 @@ public:
+     explicit KisScopedPerformanceLogger(const QString &title)
+         : m_title(title)
+     {
+-#ifdef Q_OS_ANDROID
+-        // Nanquim: no Android os tempos sempre vão para o log do Krita
++#if defined(Q_OS_ANDROID) && defined(NANQUIM_TIMING)
++        // Nanquim: compilado com -DNANQUIM_TIMING, os tempos vão para o log do Krita
+         // (Ajuda > Mostrar log do Krita), para medir a abertura do app.
+         m_timer.start();
+ #else
+@@ -41,7 +41,7 @@ public:
+                                         .arg(nsecs / 1000000LL)
+                                         .arg(nsecs % 1000000LL, 6, 10, QChar('0'));
+             dbgPerformance.noquote() << message;
+-#ifdef Q_OS_ANDROID
++#if defined(Q_OS_ANDROID) && defined(NANQUIM_TIMING)
+             KisUsageLogger::log(QStringLiteral("[Nanquim tempo] ") + message);
+ #endif
+         }
+diff --git a/libs/global/NanquimStepTimer.h b/libs/global/NanquimStepTimer.h
+index 3ef489c..e466410 100644
+--- a/libs/global/NanquimStepTimer.h
++++ b/libs/global/NanquimStepTimer.h
+@@ -15,7 +15,8 @@
+ /**
+  * Nanquim: cronômetro de etapas. Cada mark() escreve no log do Krita
+  * ("[Nanquim tempo] <prefixo>: <etapa> - N ms") o tempo desde a marca anterior.
+- * Só registra no Android; no desktop não faz nada.
++ * Só registra no Android e quando o app é compilado com -DNANQUIM_TIMING
++ * (diagnóstico de desempenho); fora isso não faz nada.
+  */
+ class NanquimStepTimer
+ {
+@@ -30,7 +31,7 @@ public:
+     void mark(const QString &step, qint64 minMs = 0)
+     {
+         const qint64 ms = m_timer.restart();
+-#ifdef Q_OS_ANDROID
++#if defined(Q_OS_ANDROID) && defined(NANQUIM_TIMING)
+         if (ms >= minMs) {
+             KisUsageLogger::log(QStringLiteral("[Nanquim tempo] %1: %2 - %3 ms").arg(m_prefix, step).arg(ms));
+         }
+diff --git a/libs/ui/KisMainWindow.cpp b/libs/ui/KisMainWindow.cpp
+index 534879c..105ac98 100644
+--- a/libs/ui/KisMainWindow.cpp
++++ b/libs/ui/KisMainWindow.cpp
+@@ -161,9 +161,11 @@
+ #include <NanquimStepTimer.h>
+ 
+ #ifdef Q_OS_ANDROID
++#include "NanquimTabletUi.h"
++#endif
++#if defined(Q_OS_ANDROID) && defined(NANQUIM_TIMING)
+ #include <QElapsedTimer>
+ #include <KisUsageLogger.h>
+-#include "NanquimTabletUi.h"
+ // Nanquim: marca quanto tempo cada etapa da montagem da janela leva (log do Krita)
+ #define NANQUIM_MARK_START QElapsedTimer nanquimTimer; nanquimTimer.start();
+ #define NANQUIM_MARK(what) KisUsageLogger::log(QStringLiteral("[Nanquim tempo] janela: %1 - %2 ms").arg(QStringLiteral(what)).arg(nanquimTimer.restart()));
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index 385e46b..131ffeb 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -24,9 +24,12 @@
+ #include <QStyledItemDelegate>
+ #include <QMenu>
+ #include <QMenuBar>
++#include <QMessageBox>
+ #include <QPainter>
+ #include <QCryptographicHash>
+ #include <QDir>
++#include <QDateTime>
++#include <QFileInfo>
+ #include <QElapsedTimer>
+ #include <QStandardPaths>
+ #include <QUuid>
+@@ -109,6 +112,13 @@ const char *WELCOME_ONLY = "nanquimWelcomeOnly";
+ 
+ bool s_canvasCleaned = false;
+ bool s_navCollapsed = false;
++bool s_classic = false;   // modo de interface desta sessão (decidido ao abrir o app)
++
++bool isClassicMode()
++{
++    return KSharedConfig::openConfig()->group("Nanquim").readEntry("uiMode", QStringLiteral("tablet"))
++            == QLatin1String("classic");
++}
+ 
+ // ---------------------------------------------------------------------------
+ // Ícones do design, desenhados a partir do SVG (traço 1.8, cantos redondos)
+@@ -386,9 +396,8 @@ const char *TOP_STYLE =
+ // ganha um respiro do tamanho dela (senão o relógio fica por cima do título).
+ void updateSafeTop(KisMainWindow *mw)
+ {
+-    QToolBar *top = mw->findChild<QToolBar*>(TOP_ID);
+     QScreen *screen = mw->screen();
+-    if (!top || !screen) {
++    if (!screen) {
+         return;
+     }
+     const int availTop = screen->availableGeometry().top();
+@@ -400,6 +409,10 @@ void updateSafeTop(KisMainWindow *mw)
+             header->layout()->setContentsMargins(28, inset, 20, 0);
+         }
+     }
++    QToolBar *top = mw->findChild<QToolBar*>(TOP_ID);
++    if (!top) {
++        return;   // modo Clássico: não há barra do Nanquim
++    }
+     if (top->property("nanquimInset").toInt() == inset && !top->styleSheet().isEmpty()) {
+         return;
+     }
+@@ -442,6 +455,7 @@ public:
+         timer->setInterval(500);
+         QObject::connect(timer, &QTimer::timeout, this, [this]() { tick(); });
+         timer->start();
++        QtConcurrent::run([]() { removeOrphans(); });
+     }
+ 
+     static bool enabled()
+@@ -459,6 +473,18 @@ public:
+         KisView *view = m_mw->activeView();
+         return view && view->document() ? dirFor(view->document()) : QString();
+     }
++    // espaço que a gravação do desenho ativo ocupa, em bytes
++    qint64 currentBytes() const
++    {
++        const QString dir = currentDir();
++        qint64 total = 0;
++        if (!dir.isEmpty()) {
++            Q_FOREACH (const QFileInfo &info, QDir(dir).entryInfoList({QStringLiteral("frame_*.jpg")}, QDir::Files)) {
++                total += info.size();
++            }
++        }
++        return total;
++    }
+     int frameCount() const
+     {
+         const QString dir = currentDir();
+@@ -482,6 +508,29 @@ private:
+         return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/timelapse/");
+     }
+ 
++    // Limite por desenho: passando de 1500 quadros, fica um sim, um não (750).
++    // O vídeo continua cobrindo o processo inteiro, só com menos passos.
++    static void thinFrames(const QString &dir)
++    {
++        QDir d(dir);
++        const QStringList frames = d.entryList({QStringLiteral("frame_*.jpg")}, QDir::Files, QDir::Name);
++        if (frames.size() <= 1500) return;
++        for (int i = 1; i < frames.size() - 1; i += 2) {
++            d.remove(frames[i]);
++        }
++    }
++
++    // Gravações de desenhos que nunca foram salvos: somem depois de 3 dias.
++    static void removeOrphans()
++    {
++        const QDateTime limit = QDateTime::currentDateTime().addDays(-3);
++        Q_FOREACH (const QFileInfo &info, QDir(baseDir()).entryInfoList({QStringLiteral("novo-*")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
++            if (info.lastModified() < limit) {
++                QDir(info.absoluteFilePath()).removeRecursively();
++            }
++        }
++    }
++
+     // Desenho salvo: pasta pelo caminho do arquivo (continua entre sessões).
+     // Desenho ainda sem nome: pasta provisória, renomeada quando ele for salvo.
+     static QString dirFor(KisDocument *doc)
+@@ -555,7 +604,7 @@ private:
+         std::shared_ptr<std::atomic_bool> busy = m_busy;
+         busy->store(true);
+         // a redução e a gravação do JPEG rodam fora da thread da interface
+-        QtConcurrent::run([projection, bounds, w, h, dir, file, busy]() mutable {
++        QtConcurrent::run([projection, bounds, w, h, dir, file, busy, next]() mutable {
+             QImage thumb = projection->createThumbnailUncached(w, h, bounds, 2);
+             if (!thumb.isNull()) {
+                 QImage frame(w, h, QImage::Format_RGB32);
+@@ -566,6 +615,9 @@ private:
+                 g.end();
+                 QDir().mkpath(dir);
+                 frame.save(file, "JPG", 82);
++                if (next % 100 == 0) {
++                    thinFrames(dir);
++                }
+             }
+             busy->store(false);
+         });
+@@ -601,44 +653,71 @@ void exportTimelapse(KisMainWindow *mw, NanquimTimelapseRecorder *recorder, int
+ #endif
+ }
+ 
++QPointer<NanquimTimelapseRecorder> s_recorder;
++
++void fillTimelapseMenu(KisMainWindow *mw, QMenu *menu)
++{
++    menu->clear();
++    NanquimTimelapseRecorder *recorder = s_recorder.data();
++    if (!recorder) return;
++    const int frames = recorder->frameCount();
++    const qreal megabytes = recorder->currentBytes() / (1024.0 * 1024.0);
++    QAction *info = menu->addAction(frames > 0
++            ? i18n("%1 quadros gravados neste desenho (%2 MB)", frames, QString::number(megabytes, 'f', 0))
++            : i18n("Nenhum quadro gravado ainda"));
++    info->setEnabled(false);
++    menu->addSeparator();
++    struct Option { const char *label; int seconds; };
++    for (const Option &o : {Option{"Exportar vídeo de 30 segundos", 30},
++                            Option{"Exportar vídeo de 1 minuto", 60},
++                            Option{"Exportar vídeo completo", 0}}) {
++        QAction *a = menu->addAction(i18n(o.label));
++        a->setEnabled(frames > 0);
++        const int seconds = o.seconds;
++        QObject::connect(a, &QAction::triggered, mw, [mw, seconds]() {
++            if (s_recorder) exportTimelapse(mw, s_recorder.data(), seconds);
++        });
++    }
++    menu->addSeparator();
++    QAction *autoRecord = menu->addAction(i18n("Gravar sozinho enquanto desenho"));
++    autoRecord->setCheckable(true);
++    autoRecord->setChecked(NanquimTimelapseRecorder::enabled());
++    QObject::connect(autoRecord, &QAction::toggled, mw, [](bool on) { NanquimTimelapseRecorder::setEnabled(on); });
++    QAction *clear = menu->addAction(i18n("Apagar a gravação deste desenho"));
++    clear->setEnabled(frames > 0);
++    QObject::connect(clear, &QAction::triggered, mw, []() { if (s_recorder) s_recorder->clearCurrent(); });
++}
++
+ void addTimelapseButton(KisMainWindow *mw, QToolBar *top)
+ {
+-    NanquimTimelapseRecorder *recorder = new NanquimTimelapseRecorder(mw);
+     QToolButton *b = iconButton(top, i18n("Time-lapse"), designIcon(Svg::TIMELAPSE));
+     b->setProperty(NEEDS_CANVAS, true);
+     QMenu *menu = new QMenu(b);
+-    QObject::connect(menu, &QMenu::aboutToShow, mw, [mw, menu, recorder]() {
+-        menu->clear();
+-        const int frames = recorder->frameCount();
+-        QAction *info = menu->addAction(frames > 0 ? i18n("%1 quadros gravados neste desenho", frames)
+-                                                   : i18n("Nenhum quadro gravado ainda"));
+-        info->setEnabled(false);
+-        menu->addSeparator();
+-        struct Option { const char *label; int seconds; };
+-        for (const Option &o : {Option{"Exportar vídeo de 30 segundos", 30},
+-                                Option{"Exportar vídeo de 1 minuto", 60},
+-                                Option{"Exportar vídeo completo", 0}}) {
+-            QAction *a = menu->addAction(i18n(o.label));
+-            a->setEnabled(frames > 0);
+-            const int seconds = o.seconds;
+-            QObject::connect(a, &QAction::triggered, mw, [mw, recorder, seconds]() {
+-                exportTimelapse(mw, recorder, seconds);
+-            });
+-        }
+-        menu->addSeparator();
+-        QAction *autoRecord = menu->addAction(i18n("Gravar sozinho enquanto desenho"));
+-        autoRecord->setCheckable(true);
+-        autoRecord->setChecked(NanquimTimelapseRecorder::enabled());
+-        QObject::connect(autoRecord, &QAction::toggled, mw, [](bool on) { NanquimTimelapseRecorder::setEnabled(on); });
+-        QAction *clear = menu->addAction(i18n("Apagar a gravação deste desenho"));
+-        clear->setEnabled(frames > 0);
+-        QObject::connect(clear, &QAction::triggered, mw, [recorder]() { recorder->clearCurrent(); });
+-    });
++    QObject::connect(menu, &QMenu::aboutToShow, mw, [mw, menu]() { fillTimelapseMenu(mw, menu); });
+     b->setMenu(menu);
+     b->setPopupMode(QToolButton::InstantPopup);
+     top->addWidget(b);
+ }
+ 
++// Inserir imagem como camada (como o "Inserir" do Photoshop): escolhe o arquivo,
++// ele entra como camada nova e a ferramenta Transformar já abre para posicionar
++void insertImageAsLayer(KisMainWindow *mw)
++{
++    QAction *import = act(mw, "import_layer_as_paint_layer");
++    KisView *view = mw->activeView();
++    if (!import || !view || !view->image()) return;
++    const int before = view->image()->nlayers();
++    import->trigger();
++    QPointer<KisView> guard(view);
++    QTimer::singleShot(400, mw, [mw, guard, before]() {
++        if (guard && guard->image() && guard->image()->nlayers() > before) {
++            if (QAction *transform = act(mw, "KisToolTransform")) {
++                transform->trigger();
++            }
++        }
++    });
++}
++
+ void buildTopBar(KisMainWindow *mw)
+ {
+     QToolBar *top = new QToolBar(i18n("Barra do Nanquim"), mw);
+@@ -781,25 +860,10 @@ void buildTopBar(KisMainWindow *mw)
+     rulers->setPopupMode(QToolButton::InstantPopup);
+     top->addWidget(rulers);
+ 
+-    // Inserir imagem como camada (como o "Inserir" do Photoshop): escolhe o arquivo,
+-    // ele entra como camada nova e a ferramenta Transformar já abre para posicionar
+-    if (QAction *import = act(mw, "import_layer_as_paint_layer")) {
++    if (act(mw, "import_layer_as_paint_layer")) {
+         QToolButton *b = iconButton(top, i18n("Inserir imagem como camada"), designIcon(Svg::INSERT_IMAGE));
+         b->setProperty(NEEDS_CANVAS, true);
+-        QObject::connect(b, &QToolButton::clicked, mw, [mw, import]() {
+-            KisView *view = mw->activeView();
+-            if (!view || !view->image()) return;
+-            const int before = view->image()->nlayers();
+-            import->trigger();
+-            QPointer<KisView> guard(view);
+-            QTimer::singleShot(400, mw, [mw, guard, before]() {
+-                if (guard && guard->image() && guard->image()->nlayers() > before) {
+-                    if (QAction *transform = act(mw, "KisToolTransform")) {
+-                        transform->trigger();
+-                    }
+-                }
+-            });
+-        });
++        QObject::connect(b, &QToolButton::clicked, mw, [mw]() { insertImageAsLayer(mw); });
+         top->addWidget(b);
+     }
+ 
+@@ -1967,14 +2031,104 @@ void showWelcome(KisMainWindow *mw, bool startAtGuide)
+     dlg->open();
+ }
+ 
++
++// ---------------------------------------------------------------------------
++// Menu "Nanquim" (na barra de menus; no modo Tablet ele aparece dentro de "Mais")
++// e troca entre os modos de interface Tablet e Clássico
++// ---------------------------------------------------------------------------
++void switchUiMode(KisMainWindow *mw)
++{
++    const bool toClassic = !isClassicMode();
++    KConfigGroup cfg = KSharedConfig::openConfig()->group("Nanquim");
++    cfg.writeEntry("uiMode", toClassic ? QStringLiteral("classic") : QStringLiteral("tablet"));
++    cfg.writeEntry("classicArranged", false);
++    cfg.sync();
++    QMessageBox::information(mw, QStringLiteral("Nanquim"),
++        (toClassic ? i18n("Modo Clássico escolhido: menus no topo, barras do Krita e painéis fixos.")
++                   : i18n("Modo Tablet escolhido: barra do Nanquim, ferramentas à esquerda e painéis em um toque."))
++        + QStringLiteral("\n\n")
++        + i18n("Salve o seu desenho, feche o Nanquim (tire-o da lista de apps recentes) e abra de novo para trocar."));
++}
++
++void fillNanquimMenu(KisMainWindow *mw, QMenu *menu)
++{
++    menu->clear();
++    QAction *mode = menu->addAction(isClassicMode() ? i18n("Interface: mudar para o modo Tablet")
++                                                    : i18n("Interface: mudar para o modo Clássico"));
++    QObject::connect(mode, &QAction::triggered, mw, [mw]() { switchUiMode(mw); });
++    menu->addSeparator();
++    QAction *insert = menu->addAction(i18n("Inserir imagem como camada…"));
++    insert->setEnabled(mw->activeView() != nullptr);
++    QObject::connect(insert, &QAction::triggered, mw, [mw]() { insertImageAsLayer(mw); });
++    QMenu *timelapse = menu->addMenu(i18n("Time-lapse"));
++    fillTimelapseMenu(mw, timelapse);
++    menu->addSeparator();
++    QAction *guide = menu->addAction(i18n("Boas-vindas e guia rápido"));
++    QObject::connect(guide, &QAction::triggered, mw, [mw]() { showWelcome(mw, false); });
++}
++
++void buildNanquimMenu(KisMainWindow *mw)
++{
++    QMenu *menu = new QMenu(QStringLiteral("Nanquim"), mw->menuBar());
++    menu->setObjectName(QStringLiteral("nanquimMenu"));
++    mw->menuBar()->addMenu(menu);
++    fillNanquimMenu(mw, menu);
++    QObject::connect(menu, &QMenu::aboutToShow, mw, [mw, menu]() { fillNanquimMenu(mw, menu); });
++}
++
++// Modo Clássico: arranjo de desktop. Menus e barras do Krita no topo, caixa de
++// ferramentas à esquerda e, à direita, cor (com as opções da ferramenta em aba)
++// em cima das camadas. Aplicado uma vez a cada troca de modo; depois vale o que
++// o usuário arrumar.
++void arrangeClassic(KisMainWindow *mw)
++{
++    Q_FOREACH (KisToolBar *tb, mw->toolBars()) {
++        const QString name = tb->objectName();
++        tb->setVisible(name == QLatin1String("mainToolBar") || name == QLatin1String("editToolBar")
++                       || name == OLD_TOP_ID);
++    }
++    Q_FOREACH (QDockWidget *dw, mw->dockWidgets()) {
++        dw->hide();
++    }
++    auto place = [mw](const QStringList &ids, Qt::DockWidgetArea area) -> QDockWidget* {
++        QDockWidget *dw = findDock(mw, ids);
++        if (dw) {
++            dw->setFloating(false);
++            mw->addDockWidget(area, dw);
++            dw->show();
++        }
++        return dw;
++    };
++    place({TOOLBOX_ID}, Qt::LeftDockWidgetArea);
++    QDockWidget *color = place({QStringLiteral("ColorSelectorNg"), QStringLiteral("WideGamutColorSelector")},
++                               Qt::RightDockWidgetArea);
++    QDockWidget *options = place({QStringLiteral("sharedtooldocker")}, Qt::RightDockWidgetArea);
++    QDockWidget *layers = place({QStringLiteral("KisLayerBox")}, Qt::RightDockWidgetArea);
++    if (color && layers) {
++        mw->splitDockWidget(color, layers, Qt::Vertical);
++    }
++    if (color && options) {
++        mw->tabifyDockWidget(color, options);
++        color->raise();
++    }
++    if (color) {
++        mw->resizeDocks({color}, {qBound(280, mw->width() / 5, 380)}, Qt::Horizontal);
++    }
++}
++
+ } // namespace
+ 
+ void NanquimTabletUi::install(KisMainWindow *mw)
+ {
+-    buildTopBar(mw);
+-    buildToolNav(mw);
+-    buildToolsFlyout(mw);
++    s_classic = isClassicMode();
++    s_recorder = new NanquimTimelapseRecorder(mw);
++    if (!s_classic) {
++        buildTopBar(mw);
++        buildToolNav(mw);
++        buildToolsFlyout(mw);
++    }
+     installGallery(mw);
++    buildNanquimMenu(mw);
+     qApp->installEventFilter(new PopupAnimator(mw));
+ 
+     // depois que tudo carregou: etiqueta de pincéis (uma vez) e boas-vindas (primeira abertura)
+@@ -1986,14 +2140,16 @@ void NanquimTabletUi::install(KisMainWindow *mw)
+             showWelcome(guard, false);
+         }
+     });
+-    KisUsageLogger::log(QStringLiteral("[Nanquim] interface de tablet instalada"));
++    KisUsageLogger::log(QStringLiteral("[Nanquim] interface instalada (modo %1)")
++                        .arg(s_classic ? QStringLiteral("Clássico") : QStringLiteral("Tablet")));
+ }
+ 
+ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+ {
++    const bool hasGallery = mw->findChild<QWidget*>(GALLERY_ID) != nullptr;
+     QToolBar *top = mw->findChild<QToolBar*>(TOP_ID);
+     QToolBar *nav = mw->findChild<QToolBar*>(NAV_ID);
+-    if (!top || !nav) {
++    if (!hasGallery && !top) {
+         return;   // install() não rodou: deixa o Krita como está
+     }
+ 
+@@ -2002,20 +2158,38 @@ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+     const bool screenChanged = s_lastMode != -1 && s_lastMode != mode;
+     s_lastMode = mode;
+ 
++    const bool hasDrawing = mw->activeView() != nullptr;
++    updateSafeTop(mw);
++    if (QWidget *back = mw->findChild<QWidget*>(QStringLiteral("nanquimBackToDrawing"))) {
++        back->setVisible(hasDrawing);
++    }
++
++    if (s_classic) {
++        // sem a barra de menus não haveria como voltar ao modo Tablet
++        mw->menuBar()->setVisible(true);
++        KConfigGroup cfg = KSharedConfig::openConfig()->group("Nanquim");
++        if (canvasMode && !cfg.readEntry("classicArranged", false)) {
++            arrangeClassic(mw);
++            cfg.writeEntry("classicArranged", true);
++        }
++        if (screenChanged) {
++            flushLayouts();
++            animateScreenIn(mw);
++        }
++        return;
++    }
++    if (!top || !nav) {
++        return;
++    }
++
+     // menus e barras padrão do Krita somem; o Nanquim tem as suas
+     mw->menuBar()->setVisible(false);
+     Q_FOREACH (KisToolBar *tb, mw->toolBars()) {
+         tb->setVisible(false);
+     }
+ 
+-    const bool hasDrawing = mw->activeView() != nullptr;
+-    const bool hasGallery = mw->findChild<QWidget*>(GALLERY_ID) != nullptr;
+     // na galeria, o cabeçalho dela faz o papel da barra do topo
+     top->setVisible(canvasMode || !hasGallery);
+-    updateSafeTop(mw);
+-    if (QWidget *back = mw->findChild<QWidget*>(QStringLiteral("nanquimBackToDrawing"))) {
+-        back->setVisible(hasDrawing);
+-    }
+     Q_FOREACH (QWidget *w, top->findChildren<QWidget*>()) {
+         if (w->property(WELCOME_ONLY).toBool()) {
+             // o botão fica dentro de uma QWidgetAction da barra: mostra a ação
+diff --git a/libs/widgetutils/KisRecentFilesManager.cpp b/libs/widgetutils/KisRecentFilesManager.cpp
+index 68cb764..8ae96cb 100644
+--- a/libs/widgetutils/KisRecentFilesManager.cpp
++++ b/libs/widgetutils/KisRecentFilesManager.cpp
+@@ -21,7 +21,11 @@ class KisRecentFilesManager::Private
+ {
+ public:
+     KisRecentFilesManager *m_q;
++#ifdef Q_OS_ANDROID
++    int m_maxItems {24};   // Nanquim: a galeria mostra mais desenhos recentes
++#else
+     int m_maxItems {10};
++#endif
+     QVector<KisRecentFilesEntry> m_entries;
+ 
+ private:
+diff --git a/libs/widgetutils/kis_icon_utils.cpp b/libs/widgetutils/kis_icon_utils.cpp
+index 7ec6cc4..7ae39ca 100644
+--- a/libs/widgetutils/kis_icon_utils.cpp
++++ b/libs/widgetutils/kis_icon_utils.cpp
+@@ -33,6 +33,20 @@ QIcon loadIcon(const QString &name)
+         return cached.value();
+     }
+ 
++#ifdef Q_OS_ANDROID
++    // Nanquim: ícones no estilo do design (traço fino, cantos redondos) para os
++    // botões mais usados dos painéis. Só no tema escuro, porque são claros.
++    if (!useDarkIcons()) {
++        const QString nanquimIcon = QStringLiteral(":/nanquim/") + name + QStringLiteral(".svg");
++        if (QFile(nanquimIcon).exists()) {
++            QIcon icon(nanquimIcon);
++            s_icons.insert(icon.cacheKey(), name);
++            s_cache.insert(name, icon);
++            return icon;
++        }
++    }
++#endif
++
+     // try load themed icon
+     const char * const prefix = useDarkIcons() ? "dark_" : "light_";
+ 
+diff --git a/packaging/android/apk/AndroidManifest.xml b/packaging/android/apk/AndroidManifest.xml
+index 1483875..c974712 100644
+--- a/packaging/android/apk/AndroidManifest.xml
++++ b/packaging/android/apk/AndroidManifest.xml
+@@ -29,6 +29,55 @@
+                 <data android:mimeType="application/octet-stream" />
+                 <data android:mimeType="application/zip" />
+             </intent-filter>
++            <!-- Nanquim: exploradores que não informam o tipo certo do arquivo (Samsung
++                 Meus Arquivos e outros). Vale pela extensão no fim do caminho. -->
++            <intent-filter>
++                <action android:name="android.intent.action.VIEW" />
++                <category android:name="android.intent.category.DEFAULT" />
++                <category android:name="android.intent.category.BROWSABLE" />
++                <data android:scheme="content" />
++                <data android:scheme="file" />
++                <data android:host="*" />
++                <data android:mimeType="*/*" />
++                <data android:pathSuffix=".kpp" />
++                <data android:pathPattern=".*\\.kpp" />
++                <data android:pathPattern=".*\\..*\\.kpp" />
++                <data android:pathPattern=".*\\..*\\..*\\.kpp" />
++                <data android:pathPattern=".*\\..*\\..*\\..*\\.kpp" />
++                <data android:pathSuffix=".bundle" />
++                <data android:pathPattern=".*\\.bundle" />
++                <data android:pathPattern=".*\\..*\\.bundle" />
++                <data android:pathPattern=".*\\..*\\..*\\.bundle" />
++                <data android:pathPattern=".*\\..*\\..*\\..*\\.bundle" />
++                <data android:pathSuffix=".sut" />
++                <data android:pathPattern=".*\\.sut" />
++                <data android:pathPattern=".*\\..*\\.sut" />
++                <data android:pathPattern=".*\\..*\\..*\\.sut" />
++                <data android:pathPattern=".*\\..*\\..*\\..*\\.sut" />
++            </intent-filter>
++            <intent-filter>
++                <action android:name="android.intent.action.VIEW" />
++                <category android:name="android.intent.category.DEFAULT" />
++                <category android:name="android.intent.category.BROWSABLE" />
++                <data android:scheme="content" />
++                <data android:scheme="file" />
++                <data android:host="*" />
++                <data android:pathSuffix=".kpp" />
++                <data android:pathPattern=".*\\.kpp" />
++                <data android:pathPattern=".*\\..*\\.kpp" />
++                <data android:pathPattern=".*\\..*\\..*\\.kpp" />
++                <data android:pathPattern=".*\\..*\\..*\\..*\\.kpp" />
++                <data android:pathSuffix=".bundle" />
++                <data android:pathPattern=".*\\.bundle" />
++                <data android:pathPattern=".*\\..*\\.bundle" />
++                <data android:pathPattern=".*\\..*\\..*\\.bundle" />
++                <data android:pathPattern=".*\\..*\\..*\\..*\\.bundle" />
++                <data android:pathSuffix=".sut" />
++                <data android:pathPattern=".*\\.sut" />
++                <data android:pathPattern=".*\\..*\\.sut" />
++                <data android:pathPattern=".*\\..*\\..*\\.sut" />
++                <data android:pathPattern=".*\\..*\\..*\\..*\\.sut" />
++            </intent-filter>
+         </activity>
+ 
+         <activity android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|mcc|mnc|density"
+-- 
+2.43.0
+
