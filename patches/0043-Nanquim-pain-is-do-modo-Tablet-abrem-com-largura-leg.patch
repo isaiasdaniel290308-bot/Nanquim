@@ -1,0 +1,55 @@
+From a8c307faa7179529ca8c5e61d06dc4d6dae75d3b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 17:24:07 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20pain=C3=A9is=20do=20modo=20Tablet=20?=
+ =?UTF-8?q?abrem=20com=20largura=20leg=C3=ADvel=20(n=C3=A3o=20herdam=20a?=
+ =?UTF-8?q?=20coluna=20estreita=20do=20Cl=C3=A1ssico)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index 5df7aea..b9834a5 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -391,9 +391,22 @@ void togglePanel(KisMainWindow *mw, QDockWidget *dw)
+         dw->setFloating(false);
+         mw->addDockWidget(Qt::RightDockWidgetArea, dw);
+     }
++    // A largura salva pode vir do modo Clássico (coluna estreita de pincéis) e o
++    // resizeDocks é ignorado antes do primeiro layout: por isso a largura mínima
++    // garante o painel legível já na hora, e o ajuste fino vem depois do layout.
++    const int width = qBound(300, mw->width() / 4, 420);
++    dw->setMinimumWidth(300);
+     dw->show();
+     dw->raise();
+-    mw->resizeDocks({dw}, {qBound(300, mw->width() / 4, 420)}, Qt::Horizontal);
++    flushLayouts();
++    mw->resizeDocks({dw}, {width}, Qt::Horizontal);
++    QPointer<QDockWidget> guard(dw);
++    QPointer<KisMainWindow> mwGuard(mw);
++    QTimer::singleShot(0, mw, [guard, mwGuard, width]() {
++        if (guard && mwGuard && guard->isVisible() && guard->width() < width - 20) {
++            mwGuard->resizeDocks({guard.data()}, {width}, Qt::Horizontal);
++        }
++    });
+     animateIn(s_panelOverlay, mw, dw, +1, dw->palette().color(QPalette::Window));
+ }
+ 
+@@ -4044,6 +4057,7 @@ void arrangeClassic(KisMainWindow *mw)
+     }
+     Q_FOREACH (QDockWidget *dw, mw->dockWidgets()) {
+         dw->hide();
++        dw->setMinimumWidth(0);
+     }
+     auto place = [mw](const QStringList &ids, Qt::DockWidgetArea area) -> QDockWidget* {
+         QDockWidget *dw = findDock(mw, ids);
+-- 
+2.43.0
+
