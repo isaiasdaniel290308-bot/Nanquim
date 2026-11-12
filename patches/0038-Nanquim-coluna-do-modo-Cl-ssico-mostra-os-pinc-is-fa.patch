@@ -1,0 +1,423 @@
+From df2124632d50e4fea0515897a9d3d44af4c0ff6a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 21:55:20 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20coluna=20do=20modo=20Cl=C3=A1ssico?=
+ =?UTF-8?q?=20mostra=20os=20pinc=C3=A9is=20favoritos;=20estrela=20e=20aba?=
+ =?UTF-8?q?=20Favoritos=20na=20janela=20de=20pinc=C3=A9is?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp | 233 +++++++++++++++++++++++++++++++++---
+ 1 file changed, 219 insertions(+), 14 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index e2802fb..7380cc1 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -74,6 +74,8 @@
+ #include <KoFileDialog.h>
+ #include <brushengine/kis_paintop_settings.h>
+ #include "kis_paintop_box.h"
++#include "kis_favorite_resource_manager.h"
++#include <QSet>
+ #include <QScreen>
+ #include <QSlider>
+ #include <QTimer>
+@@ -1099,6 +1101,7 @@ const NanquimBrush NANQUIM_BRUSHES[] = {
+ 
+ const QString BRUSH_IMPORTED = QStringLiteral("Importados");
+ const QString BRUSH_ALL = QStringLiteral("Todos");
++const QString BRUSH_FAVORITES = QStringLiteral("Favoritos");
+ 
+ struct BrushItem {
+     KisPaintOpPresetSP preset;   // nulo em "Todos" até a linha aparecer
+@@ -1192,6 +1195,31 @@ bool isBundledNanquimFile(const QString &filename)
+     return false;
+ }
+ 
++// um pincel qualquer: usa o nome e a amostra do Nanquim se for um dos nossos
++BrushItem itemForPreset(const KisPaintOpPresetSP &preset)
++{
++    BrushItem item;
++    item.preset = preset;
++    item.id = preset->resourceId();
++    const QString filename = preset->filename();
++    for (const NanquimBrush &b : NANQUIM_BRUSHES) {
++        const QString file = QString::fromUtf8(b.file);
++        if (file.endsWith(QLatin1Char('*')) ? filename.startsWith(file.left(file.size() - 1)) : filename == file) {
++            item.name = QString::fromUtf8(b.name);
++            item.shortName = QString::fromUtf8(b.shortName);
++            item.subtitle = QStringLiteral("%1 · %2").arg(QString::fromUtf8(b.category), QString::fromUtf8(b.detail));
++            item.style = b.style;
++            item.weight = b.weight;
++            return item;
++        }
++    }
++    item.name = preset->name().replace(QLatin1Char('_'), QLatin1Char(' '));
++    item.shortName = item.name;
++    item.weight = weightForPreset(preset);
++    item.subtitle = QStringLiteral("%1 px").arg(qRound(preset->settings() ? preset->settings()->paintOpSize() : 0));
++    return item;
++}
++
+ // pincéis que o artista trouxe (.kpp, .sut ou criados com "+"): ficam na etiqueta "Nanquim"
+ QVector<BrushItem> importedBrushItems()
+ {
+@@ -1351,8 +1379,64 @@ enum BrushRoles {
+     BrushSubtitleRole,
+     BrushStyleRole,
+     BrushWeightRole,
++    BrushFavoriteRole,
+ };
+ 
++const int BRUSH_MORE_ID = -2;   // quadradinho "+ Pincéis" no fim da coluna
++
++// Favoritos: a mesma etiqueta da paleta rápida do Krita (clique com o botão direito na tela)
++KisTagSP favoritesTag()
++{
++    const QString url = KisConfig(true).readEntry<QString>("favoritePresetsTag", QStringLiteral("★ My Favorites"));
++    KisTagModel tagModel(ResourceType::PaintOpPresets);
++    KisTagSP tag = tagModel.tagForUrl(url);
++    if (!tag && url != QStringLiteral("★ My Favorites")) tag = tagModel.tagForUrl(QStringLiteral("★ My Favorites"));
++    if (!tag) tag = tagModel.addTag(QStringLiteral("★ My Favorites"), false, QVector<KoResourceSP>());
++    return tag;
++}
++
++QVector<KisPaintOpPresetSP> favoritePresets()
++{
++    QVector<KisPaintOpPresetSP> out;
++    KisTagSP tag = favoritesTag();
++    if (!tag) return out;
++    KisTagResourceModel model(ResourceType::PaintOpPresets);
++    model.setTagsFilter(QVector<int>() << tag->id());
++    for (int row = 0; row < model.rowCount(); ++row) {
++        KisPaintOpPresetSP preset = model.resourceForIndex(model.index(row, 0)).dynamicCast<KisPaintOpPreset>();
++        if (preset) out << preset;
++    }
++    return out;
++}
++
++QSet<int> s_favoriteIds;
++
++void refreshFavoriteIds()
++{
++    s_favoriteIds.clear();
++    Q_FOREACH (const KisPaintOpPresetSP &p, favoritePresets()) s_favoriteIds.insert(p->resourceId());
++}
++
++void notifyFavoritesChanged(KisMainWindow *mw)
++{
++    refreshFavoriteIds();
++    KisViewManager *vm = mw->viewManager();
++    if (vm && vm->paintOpBox() && vm->paintOpBox()->favoriteResourcesManager()) {
++        vm->paintOpBox()->favoriteResourcesManager()->updateFavoritePresets();
++    }
++    if (QTimer *t = mw->findChild<QTimer*>(QStringLiteral("nanquimBrushDockReload"))) t->start();
++}
++
++void setFavorite(KisMainWindow *mw, int id, bool on)
++{
++    KisTagSP tag = favoritesTag();
++    if (!tag || id < 0) return;
++    KisTagResourceModel model(ResourceType::PaintOpPresets);
++    if (on) model.tagResources(tag, QVector<int>() << id);
++    else model.untagResources(tag, QVector<int>() << id);
++    notifyFavoritesChanged(mw);
++}
++
+ int s_currentBrushId = -1;
+ QString s_currentBrushName;
+ 
+@@ -1419,9 +1503,21 @@ public:
+         g->setPen(QColor(138, 138, 150));
+         g->drawText(subRect, Qt::AlignLeft | Qt::AlignVCenter,
+                     QFontMetrics(subFont).elidedText(index.data(BrushSubtitleRole).toString(), Qt::ElideRight, int(subRect.width())));
+-        const QRectF sample(card.left() + textW + 6, card.top() + 12, card.width() - textW - 22, card.height() - 24);
++        const QRectF sample(card.left() + textW + 6, card.top() + 12, card.width() - textW - 52, card.height() - 24);
+         paintStrokeSample(*g, sample, StrokeStyle(index.data(BrushStyleRole).toInt()),
+                           qMax<qreal>(0.12, index.data(BrushWeightRole).toReal()));
++        // estrela: toca para pôr ou tirar dos favoritos
++        const bool fav = index.data(BrushFavoriteRole).toBool();
++        const QPointF c(card.right() - 20, card.center().y());
++        QPolygonF star;
++        for (int i = 0; i < 10; ++i) {
++            const qreal a = -M_PI / 2 + i * M_PI / 5;
++            const qreal rad = (i % 2 == 0) ? 8.5 : 3.8;
++            star << c + QPointF(std::cos(a) * rad, std::sin(a) * rad);
++        }
++        g->setPen(QPen(fav ? QColor(34, 211, 238) : QColor(110, 110, 122), 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
++        g->setBrush(fav ? QColor(34, 211, 238) : QColor(Qt::transparent));
++        g->drawPolygon(star);
+         g->restore();
+     }
+ };
+@@ -1442,6 +1538,23 @@ public:
+         g->save();
+         g->setRenderHint(QPainter::Antialiasing);
+         const QRectF tile = QRectF(option.rect).adjusted(5, 4, -5, -4);
++        if (index.data(BrushIdRole).toInt() == BRUSH_MORE_ID) {
++            QPen dash(QColor(70, 70, 80), 1.2, Qt::DashLine);
++            g->setPen(dash);
++            g->setBrush(Qt::NoBrush);
++            g->drawRoundedRect(tile.adjusted(0.5, 0.5, -0.5, -0.5), 9, 9);
++            QFont plus = option.font;
++            plus.setPixelSize(22);
++            g->setFont(plus);
++            g->setPen(QColor(160, 160, 172));
++            g->drawText(QRectF(tile.left(), tile.top() + 4, tile.width(), tile.height() * 0.5), Qt::AlignCenter, QStringLiteral("+"));
++            QFont f = option.font;
++            f.setPixelSize(11);
++            g->setFont(f);
++            g->drawText(QRectF(tile.left() + 3, tile.bottom() - 22, tile.width() - 6, 18), Qt::AlignCenter, i18n("Pincéis"));
++            g->restore();
++            return;
++        }
+         const bool current = isCurrentBrush(index);
+         g->setPen(QPen(current ? QColor(61, 139, 255) : QColor(44, 44, 51), current ? 1.4 : 1.0));
+         g->setBrush(current ? QColor(30, 42, 68) : QColor(32, 32, 37));
+@@ -1472,6 +1585,7 @@ void fillBrushModel(QStandardItemModel *model, const QVector<BrushItem> &items)
+         it->setData(b.subtitle, BrushSubtitleRole);
+         it->setData(int(b.style), BrushStyleRole);
+         it->setData(b.weight, BrushWeightRole);
++        it->setData(s_favoriteIds.contains(b.id), BrushFavoriteRole);
+         model->appendRow(it);
+     }
+ }
+@@ -1606,6 +1720,7 @@ void openBrushEditor(KisMainWindow *mw)
+ }
+ 
+ const QString BRUSH_PANEL_ID = QStringLiteral("nanquimBrushPanel");
++const QString BRUSH_DOCK_ID = QStringLiteral("NanquimBrushDock");
+ QPointer<NanquimOverlay> s_brushOverlay;
+ 
+ const char *BRUSH_PANEL_STYLE =
+@@ -1627,10 +1742,18 @@ void setBrushPanelVisible(KisMainWindow *mw, bool visible);
+ void placeBrushPanel(KisMainWindow *mw, QFrame *panel)
+ {
+     QToolBar *top = mw->findChild<QToolBar*>(TOP_ID);
+-    const int topBottom = top ? top->mapTo(mw, QPoint(0, top->height())).y() : 60;
++    const int topBottom = top ? top->mapTo(mw, QPoint(0, top->height())).y()
++                              : (mw->centralWidget() ? mw->centralWidget()->mapTo(mw, QPoint(0, 0)).y() : 60);
+     const int w = qMin(400, mw->width() - 24);
+     const int h = qMin(640, mw->height() - topBottom - 24);
+-    panel->setGeometry(mw->width() - w - 14, topBottom + 8, w, h);
++    int right = mw->width() - 14;
++    if (!top) {
++        // modo Clássico: abre ao lado da coluna de pincéis
++        if (QDockWidget *dock = mw->findChild<QDockWidget*>(BRUSH_DOCK_ID)) {
++            if (dock->isVisible()) right = dock->mapTo(mw, QPoint(0, 0)).x() - 8;
++        }
++    }
++    panel->setGeometry(qMax(8, right - w), topBottom + 8, w, h);
+ }
+ 
+ void buildBrushPanel(KisMainWindow *mw)
+@@ -1661,7 +1784,7 @@ void buildBrushPanel(KisMainWindow *mw)
+     QStandardItemModel *model = static_cast<QStandardItemModel*>(list->model());
+ 
+     const QStringList chips = {QStringLiteral("Tinta"), QStringLiteral("Lápis"), QStringLiteral("Pintura"),
+-                               QStringLiteral("Retícula"), BRUSH_IMPORTED, BRUSH_ALL};
++                               QStringLiteral("Retícula"), BRUSH_FAVORITES, BRUSH_IMPORTED, BRUSH_ALL};
+     QButtonGroup *group = new QButtonGroup(panel);
+     group->setExclusive(true);
+     QHBoxLayout *row1 = new QHBoxLayout();
+@@ -1710,12 +1833,22 @@ void buildBrushPanel(KisMainWindow *mw)
+         QAbstractButton *chip = group->checkedButton();
+         const QString cat = chip ? chip->property("nanquimCategory").toString() : QStringLiteral("Tinta");
+         QVector<BrushItem> items;
++        refreshFavoriteIds();
+         if (cat == BRUSH_IMPORTED) items = importedBrushItems();
+         else if (cat == BRUSH_ALL) items = allBrushItems();
++        else if (cat == BRUSH_FAVORITES) {
++            Q_FOREACH (const KisPaintOpPresetSP &p, favoritePresets()) items << itemForPreset(p);
++        }
+         else items = nanquimBrushItems(cat, false);
+         fillBrushModel(model, items);
+-        list->setVisible(!items.isEmpty() || cat != BRUSH_IMPORTED);
+-        empty->setVisible(items.isEmpty() && cat == BRUSH_IMPORTED);
++        const bool showEmpty = items.isEmpty() && (cat == BRUSH_IMPORTED || cat == BRUSH_FAVORITES);
++        empty->setText(cat == BRUSH_FAVORITES
++                       ? i18n("Nenhum favorito ainda.\nToque na estrela ao lado de um pincel para colocá-lo aqui "
++                              "e na coluna do modo Clássico.")
++                       : i18n("Nenhum pincel importado ainda.\nToque em \"Importar pincéis\" para trazer arquivos .kpp, .bundle ou .sut, "
++                              "ou em + para guardar o pincel atual."));
++        list->setVisible(!showEmpty);
++        empty->setVisible(showEmpty);
+     };
+     QObject::connect(group, &QButtonGroup::idClicked, panel, [group, reload](int) {
+         if (QAbstractButton *chip = group->checkedButton()) {
+@@ -1733,7 +1866,31 @@ void buildBrushPanel(KisMainWindow *mw)
+     };
+     panel->installEventFilter(new ShowReload(panel, [mw, reload]() { syncCurrentBrush(mw); reload(); }));
+ 
+-    QObject::connect(list, &QListView::clicked, panel, [mw, list](const QModelIndex &index) {
++    // guarda onde o dedo soltou, para saber se o toque foi na estrela
++    class ReleaseSpy : public QObject {
++    public:
++        using QObject::QObject;
++        bool eventFilter(QObject *obj, QEvent *e) override {
++            if (e->type() == QEvent::MouseButtonRelease || e->type() == QEvent::MouseButtonPress) {
++                obj->setProperty("nanquimLastX", static_cast<QMouseEvent*>(e)->pos().x());
++            }
++            return false;
++        }
++    };
++    list->viewport()->installEventFilter(new ReleaseSpy(list));
++    QObject::connect(list, &QListView::clicked, panel, [mw, list, reload, group](const QModelIndex &index) {
++        const int x = list->viewport()->property("nanquimLastX").toInt();
++        if (x > list->viewport()->width() - 48 && index.data(BrushIdRole).toInt() >= 0) {
++            const bool fav = !index.data(BrushFavoriteRole).toBool();
++            setFavorite(mw, index.data(BrushIdRole).toInt(), fav);
++            QAbstractButton *chip = group->checkedButton();
++            if (chip && chip->property("nanquimCategory").toString() == BRUSH_FAVORITES) {
++                reload();
++            } else {
++                const_cast<QAbstractItemModel*>(index.model())->setData(index, fav, BrushFavoriteRole);
++            }
++            return;
++        }
+         selectBrush(mw, index);
+         syncCurrentBrush(mw);
+         list->viewport()->update();
+@@ -1745,13 +1902,13 @@ void buildBrushPanel(KisMainWindow *mw)
+     });
+     QObject::connect(importButton, &QPushButton::clicked, mw, [mw, group]() {
+         setBrushPanelVisible(mw, false);
+-        if (QAbstractButton *chip = group->button(4)) chip->setChecked(true);
++        if (QAbstractButton *chip = group->button(5)) chip->setChecked(true);
+         KSharedConfig::openConfig()->group("Nanquim").writeEntry("brushCategory", BRUSH_IMPORTED);
+         QTimer::singleShot(200, mw, [mw]() { importBrushFiles(mw); });
+     });
+     QObject::connect(add, &QToolButton::clicked, mw, [mw, group, reload]() {
+         if (saveCurrentAsNewBrush(mw)) {
+-            if (QAbstractButton *chip = group->button(4)) chip->setChecked(true);
++            if (QAbstractButton *chip = group->button(5)) chip->setChecked(true);
+             KSharedConfig::openConfig()->group("Nanquim").writeEntry("brushCategory", BRUSH_IMPORTED);
+             syncCurrentBrush(mw);
+             reload();
+@@ -1843,7 +2000,6 @@ private:
+ };
+ 
+ // coluna de pincéis do modo Clássico
+-const QString BRUSH_DOCK_ID = QStringLiteral("NanquimBrushDock");
+ 
+ QDockWidget *buildBrushDock(KisMainWindow *mw)
+ {
+@@ -1868,17 +2024,37 @@ QDockWidget *buildBrushDock(KisMainWindow *mw)
+     dock->setMinimumWidth(84);
+     QStandardItemModel *model = static_cast<QStandardItemModel*>(list->model());
+ 
++    // a coluna mostra os favoritos do artista; o último quadradinho abre a janela de pincéis
+     auto reload = [mw, model]() {
+         syncCurrentBrush(mw);
+-        QVector<BrushItem> items = nanquimBrushItems(QString(), true);
+-        items += importedBrushItems();
++        refreshFavoriteIds();
++        QVector<BrushItem> items;
++        Q_FOREACH (const KisPaintOpPresetSP &p, favoritePresets()) items << itemForPreset(p);
++        BrushItem more;
++        more.id = BRUSH_MORE_ID;
++        more.name = i18n("Pincéis");
++        more.shortName = more.name;
++        items << more;
+         fillBrushModel(model, items);
+     };
+     QObject::connect(list, &QListView::clicked, dock, [mw, list](const QModelIndex &index) {
++        if (index.data(BrushIdRole).toInt() == BRUSH_MORE_ID) {
++            setBrushPanelVisible(mw, true);
++            return;
++        }
+         selectBrush(mw, index);
+         syncCurrentBrush(mw);
+         list->viewport()->update();
+     });
++    list->setContextMenuPolicy(Qt::CustomContextMenu);
++    QObject::connect(list, &QListView::customContextMenuRequested, dock, [mw, list](const QPoint &pos) {
++        const QModelIndex index = list->indexAt(pos);
++        const int id = index.data(BrushIdRole).toInt();
++        if (!index.isValid() || id < 0) return;
++        QMenu menu(list);
++        QAction *remove = menu.addAction(i18n("Tirar dos favoritos"));
++        if (menu.exec(list->viewport()->mapToGlobal(pos)) == remove) setFavorite(mw, id, false);
++    });
+     if (KoCanvasResourceProvider *r = resources(mw)) {
+         QObject::connect(r, &KoCanvasResourceProvider::canvasResourceChanged, list, [mw, list](int key, const QVariant &) {
+             if (key == KoCanvasResource::CurrentPaintOpPreset) {
+@@ -1889,6 +2065,7 @@ QDockWidget *buildBrushDock(KisMainWindow *mw)
+     }
+     // pincéis novos ou importados entram na coluna
+     QTimer *pending = new QTimer(dock);
++    pending->setObjectName(QStringLiteral("nanquimBrushDockReload"));
+     pending->setSingleShot(true);
+     pending->setInterval(400);
+     QObject::connect(pending, &QTimer::timeout, dock, reload);
+@@ -3475,6 +3652,29 @@ void setupNanquimBrushes(KisMainWindow *mw)
+     }
+ }
+ 
++// Favoritos começam com a coluna do protótipo (Caneta G, Maru, Nanquim...), uma vez.
++// Depois, quem manda é a estrela da janela de pincéis.
++void seedNanquimFavorites(KisMainWindow *mw)
++{
++    KConfigGroup cfg = KSharedConfig::openConfig()->group("Nanquim");
++    if (cfg.readEntry("favoritesSeedV1", false)) return;
++    KisTagSP tag = favoritesTag();
++    if (!tag) return;
++    QVector<int> ids;
++    Q_FOREACH (const BrushItem &b, nanquimBrushItems(QString(), true)) {
++        if (b.id >= 0) ids << b.id;
++    }
++    if (ids.isEmpty()) return;   // pacote padrão ainda não carregou: tenta na próxima abertura
++    QVector<int> old;
++    Q_FOREACH (const KisPaintOpPresetSP &p, favoritePresets()) old << p->resourceId();
++    KisTagResourceModel model(ResourceType::PaintOpPresets);
++    if (!old.isEmpty()) model.untagResources(tag, old);
++    model.tagResources(tag, ids);
++    cfg.writeEntry("favoritesSeedV1", true);
++    notifyFavoritesChanged(mw);
++    KisUsageLogger::log(QStringLiteral("[Nanquim] favoritos iniciais: %1 pincéis").arg(ids.size()));
++}
++
+ // ---------------------------------------------------------------------------
+ // Boas-vindas (primeira abertura) e guia rápido
+ // ---------------------------------------------------------------------------
+@@ -3789,11 +3989,12 @@ void NanquimTabletUi::install(KisMainWindow *mw)
+         buildTopBar(mw);
+         buildToolNav(mw);
+         buildToolsFlyout(mw);
+-        buildBrushPanel(mw);
+-        qApp->installEventFilter(new BrushPanelCloser(mw));
+     } else {
+         buildBrushDock(mw);
+     }
++    // a janela de pincéis existe nos dois modos (no Clássico, abre pelo "+ Pincéis" da coluna)
++    buildBrushPanel(mw);
++    qApp->installEventFilter(new BrushPanelCloser(mw));
+     installGallery(mw);
+     buildNanquimMenu(mw);
+     qApp->installEventFilter(new PopupAnimator(mw));
+@@ -3803,6 +4004,7 @@ void NanquimTabletUi::install(KisMainWindow *mw)
+     QTimer::singleShot(2500, mw, [guard]() {
+         if (!guard) return;
+         setupNanquimBrushes(guard);
++        seedNanquimFavorites(guard);
+         if (!KSharedConfig::openConfig()->group("Nanquim").readEntry("welcomeShownV1", false)) {
+             showWelcome(guard, false);
+         }
+@@ -3834,6 +4036,9 @@ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+     if (s_classic) {
+         // sem a barra de menus não haveria como voltar ao modo Tablet
+         mw->menuBar()->setVisible(true);
++        if (!canvasMode) {
++            if (QFrame *brushPanel = mw->findChild<QFrame*>(BRUSH_PANEL_ID)) brushPanel->hide();
++        }
+         KConfigGroup cfg = KSharedConfig::openConfig()->group("Nanquim");
+         if (canvasMode) {
+             // O Krita restaura por cima o estado salvo no modo Tablet (tudo escondido).
+-- 
+2.43.0
+
