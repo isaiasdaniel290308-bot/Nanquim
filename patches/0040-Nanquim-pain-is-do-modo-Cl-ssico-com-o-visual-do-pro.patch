@@ -1,0 +1,121 @@
+From 0967ca996257b50a608caa25ea569e20d89758ad Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 22:31:47 -0300
+Subject: [PATCH 40/41] =?UTF-8?q?Nanquim:=20pain=C3=A9is=20do=20modo=20Cl?=
+ =?UTF-8?q?=C3=A1ssico=20com=20o=20visual=20do=20prot=C3=B3tipo?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp | 71 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 71 insertions(+)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index 7380cc1..52ee6e7 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -64,6 +64,7 @@
+ #include <QComboBox>
+ #include <QPointer>
+ #include <QButtonGroup>
++#include <QPalette>
+ #include <QFile>
+ #include <QPainterPath>
+ #include <QRandomGenerator>
+@@ -3909,6 +3910,73 @@ void buildNanquimMenu(KisMainWindow *mw)
+     QObject::connect(menu, &QMenu::aboutToShow, mw, [mw, menu]() { fillNanquimMenu(mw, menu); });
+ }
+ 
++
++// Painéis do modo Clássico no estilo do protótipo: fundo #1f1f23, títulos discretos,
++// campos e botões arredondados e o azul do Nanquim na seleção. Só nos painéis, para
++// não pesar o resto da janela (folha de estilo em tudo deixaria a tela mais lenta).
++const char *CLASSIC_DOCK_STYLE =
++    "QDockWidget { color: #c9c9d1; font-size: 12px; }"
++    "QDockWidget > QWidget { background: #1f1f23; }"
++    "KoDockWidgetTitleBar { background: #1f1f23; border-top: 1px solid #2c2c32; min-height: 26px; }"
++    "KoDockWidgetTitleBar QLabel { color: #c9c9d1; font-weight: 600; font-size: 13px; padding-left: 4px; }"
++    "QMenu { background: #1c1c20; border: 1px solid #33333b; color: #ececf1; padding: 4px; }"
++    "QMenu::item { padding: 6px 18px; border-radius: 6px; }"
++    "QMenu::item:selected { background: rgba(61,139,255,0.19); }"
++    "QAbstractScrollArea, QAbstractScrollArea > QWidget { background: #1f1f23; border: none; }"
++    "QAbstractItemView { background: #1f1f23; alternate-background-color: #222227; border: none;"
++    "  selection-background-color: rgba(61,139,255,0.19); selection-color: #ececf1; outline: 0; }"
++    "QAbstractItemView::item { padding: 3px 4px; border-radius: 6px; color: #b5b5bf; }"
++    "QAbstractItemView::item:selected { background: rgba(61,139,255,0.19); color: #ececf1; }"
++    "QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #18181b; border: 1px solid #34343b;"
++    "  border-radius: 6px; color: #dcdce2; padding: 3px 8px; min-height: 20px; }"
++    "QComboBox::drop-down { border: none; width: 18px; }"
++    "QComboBox QAbstractItemView { background: #1c1c20; border: 1px solid #33333b; }"
++    "QPushButton, QToolButton { background: #26262b; border: 1px solid #34343b; border-radius: 6px;"
++    "  color: #dcdce2; padding: 3px 8px; min-height: 20px; }"
++    "QToolButton { padding: 3px; }"
++    "QPushButton:pressed, QToolButton:pressed { background: #2f2f36; border-color: #3d8bff; }"
++    "QPushButton:checked, QToolButton:checked { background: rgba(61,139,255,0.19); border-color: #3d8bff; }"
++    "KoDockWidgetTitleBar QAbstractButton, KoDockWidgetTitleBarButton { background: transparent; border: none; min-height: 0; padding: 0; }"
++    "QTabBar::tab { background: transparent; color: #8f8f9a; padding: 6px 12px; border: none; }"
++    "QTabBar::tab:selected { color: #ececf1; border-bottom: 2px solid #3d8bff; }"
++    "QScrollBar:vertical { background: transparent; width: 8px; margin: 2px; }"
++    "QScrollBar::handle:vertical { background: #3a3a42; border-radius: 3px; min-height: 30px; }"
++    "QScrollBar:horizontal { background: transparent; height: 8px; margin: 2px; }"
++    "QScrollBar::handle:horizontal { background: #3a3a42; border-radius: 3px; min-width: 30px; }"
++    "QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page { background: none; border: none; width: 0; height: 0; }";
++
++void styleClassicDocks(KisMainWindow *mw)
++{
++    const QStringList ids = {QStringLiteral("ColorSelectorNg"), QStringLiteral("WideGamutColorSelector"),
++                             QStringLiteral("History"), QStringLiteral("sharedtooldocker"),
++                             QStringLiteral("KisLayerBox"), QStringLiteral("PresetDocker")};
++    Q_FOREACH (const QString &id, ids) {
++        QDockWidget *dw = mw->dockWidget(id);
++        if (!dw || dw->property("nanquimStyled").toBool()) continue;
++        dw->setProperty("nanquimStyled", true);
++        dw->setStyleSheet(QLatin1String(CLASSIC_DOCK_STYLE));
++        // a lista de camadas pinta a seleção com a cor de destaque da paleta
++        QPalette pal = dw->palette();
++        pal.setColor(QPalette::Highlight, QColor(36, 52, 84));
++        pal.setColor(QPalette::HighlightedText, QColor(236, 236, 241));
++        pal.setColor(QPalette::Base, QColor(31, 31, 35));
++        pal.setColor(QPalette::AlternateBase, QColor(34, 34, 39));
++        pal.setColor(QPalette::Window, QColor(31, 31, 35));
++        dw->setPalette(pal);
++    }
++    // títulos em português como no protótipo
++    const QList<QPair<QString, QString>> titles = {
++        {QStringLiteral("ColorSelectorNg"), i18n("Cor")},
++        {QStringLiteral("WideGamutColorSelector"), i18n("Cor")},
++        {QStringLiteral("History"), i18n("Histórico")},
++        {QStringLiteral("KisLayerBox"), i18n("Camadas")},
++        {QStringLiteral("sharedtooldocker"), i18n("Opções")},
++    };
++    for (const auto &p : titles) {
++        if (QDockWidget *dw = mw->dockWidget(p.first)) dw->setWindowTitle(p.second);
++    }
++}
++
+ // Modo Clássico: arranjo de desktop. Menus e barras do Krita no topo, caixa de
+ // ferramentas à esquerda e, à direita, cor (com as opções da ferramenta em aba)
+ // em cima das camadas. Aplicado uma vez a cada troca de modo; depois vale o que
+@@ -3977,6 +4045,7 @@ void arrangeClassic(KisMainWindow *mw)
+         mw->resizeDocks({color, middle, layers}, {h * 30 / 100, h * 25 / 100, h * 45 / 100}, Qt::Vertical);
+     }
+     Q_UNUSED(toolbox);
++    styleClassicDocks(mw);
+ }
+ 
+ } // namespace
+@@ -4058,6 +4127,8 @@ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+                 if (!c.readEntry("classicArrangedV4", false) || !anyVisible || !anyBar) {
+                     arrangeClassic(guard);
+                     c.writeEntry("classicArrangedV4", true);
++                } else {
++                    styleClassicDocks(guard);
+                 }
+             });
+         }
+-- 
+2.43.0
+

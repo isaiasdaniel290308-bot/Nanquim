@@ -1,0 +1,133 @@
+From 0b5285b692de645d1484d6f6b4e9f810401a20ba Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 22:32:25 -0300
+Subject: [PATCH 41/41] =?UTF-8?q?Nanquim:=20organizar=20a=20ordem=20das=20?=
+ =?UTF-8?q?p=C3=A1ginas=20dos=20cap=C3=ADtulos?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp | 70 ++++++++++++++++++++++++++++++++-----
+ 1 file changed, 62 insertions(+), 8 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index 52ee6e7..5df7aea 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -2936,6 +2936,29 @@ public:
+             g->drawLine(badge.center() + QPointF(-6, 0), badge.center() + QPointF(6, 0));
+             g->drawLine(badge.center() + QPointF(0, -6), badge.center() + QPointF(0, 6));
+         }
++        if (option.widget && option.widget->property("nanquimOrderMode").toBool()) {
++            // organizar: setas nas laterais e o número da página no meio
++            const qreal cy = paper.center().y();
++            const QRectF left(paper.left() + 8, cy - 18, 36, 36);
++            const QRectF right(paper.right() - 44, cy - 18, 36, 36);
++            g->setPen(Qt::NoPen);
++            g->setBrush(QColor(23, 23, 26, 220));
++            g->drawEllipse(left);
++            g->drawEllipse(right);
++            g->setPen(QPen(C_ACCENT, 2.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
++            g->drawPolyline(QPolygonF() << left.center() + QPointF(4, -7) << left.center() + QPointF(-4, 0) << left.center() + QPointF(4, 7));
++            g->drawPolyline(QPolygonF() << right.center() + QPointF(-4, -7) << right.center() + QPointF(4, 0) << right.center() + QPointF(-4, 7));
++            const QRectF num(paper.center().x() - 20, paper.top() + 8, 40, 26);
++            g->setPen(Qt::NoPen);
++            g->setBrush(C_ACCENT);
++            g->drawRoundedRect(num, 13, 13);
++            QFont nf = option.font;
++            nf.setPixelSize(13);
++            nf.setWeight(QFont::Bold);
++            g->setFont(nf);
++            g->setPen(Qt::white);
++            g->drawText(num, Qt::AlignCenter, QString::number(index.row() + 1));
++        }
+         if (option.widget && option.widget->property("nanquimRemoveMode").toBool()) {
+             const QRectF badge(paper.right() - 34, paper.top() + 8, 26, 26);
+             g->setPen(Qt::NoPen);
+@@ -3365,7 +3388,9 @@ QWidget *buildGallery(KisMainWindow *mw)
+     QPushButton *closeChapter = ghost(i18n("Todos os desenhos"));
+     QPushButton *removeMode = ghost(i18n("Remover desenhos"));
+     removeMode->setCheckable(true);
+-    for (QPushButton *b : {addPages, renameChapter, deleteChapter, closeChapter}) {
++    QPushButton *orderMode = ghost(i18n("Organizar páginas"));
++    orderMode->setCheckable(true);
++    for (QPushButton *b : {orderMode, addPages, renameChapter, deleteChapter, closeChapter}) {
+         b->hide();
+         recentsHead->addWidget(b);
+     }
+@@ -3461,12 +3486,19 @@ QWidget *buildGallery(KisMainWindow *mw)
+         recentsTitle->setText((state->chapter.isEmpty() ? i18n("Recentes")
+                                : state->addMode ? i18n("Toque para adicionar a \"%1\"", c.name)
+                                : i18n("Capítulo: %1", c.name)).toUpper());
++        if (!showChapter && orderMode->isChecked()) {
++            QSignalBlocker block(orderMode);
++            orderMode->setChecked(false);
++        }
++        const bool ordering = orderMode->isChecked();
+         for (QPushButton *b : {addPages, renameChapter, deleteChapter, closeChapter}) {
+-            b->setVisible(!state->chapter.isEmpty());
++            b->setVisible(!state->chapter.isEmpty() && !ordering);
+         }
+-        renameChapter->setVisible(showChapter);
+-        deleteChapter->setVisible(showChapter);
+-        removeMode->setVisible(!state->addMode);
++        orderMode->setVisible(showChapter && !removeMode->isChecked());
++        orderMode->setText(ordering ? i18n("Concluir") : i18n("Organizar páginas"));
++        renameChapter->setVisible(showChapter && !ordering);
++        deleteChapter->setVisible(showChapter && !ordering);
++        removeMode->setVisible(!state->addMode && !ordering);
+         removeMode->setText(removeMode->isChecked() ? i18n("Concluir")
+                             : state->chapter.isEmpty() ? i18n("Remover desenhos") : i18n("Tirar páginas"));
+         addPages->setText(state->addMode ? i18n("Concluir") : i18n("Adicionar páginas"));
+@@ -3474,9 +3506,11 @@ QWidget *buildGallery(KisMainWindow *mw)
+         recents->setModel(showChapter ? static_cast<QAbstractItemModel*>(pagesModel) : static_cast<QAbstractItemModel*>(proxy));
+         recents->setProperty("nanquimRemoveMode", removeMode->isChecked() && !state->addMode);
+         recents->setProperty("nanquimAddMode", state->addMode);
++        recents->setProperty("nanquimOrderMode", ordering && showChapter);
+         recents->viewport()->update();
+-        hint->setVisible(removeMode->isChecked() || state->addMode);
+-        hint->setText(state->addMode ? i18n("Toque nos desenhos para pôr neste capítulo")
++        hint->setVisible(removeMode->isChecked() || state->addMode || ordering);
++        hint->setText(ordering ? i18n("Toque na seta da esquerda ou da direita para mudar a página de lugar")
++                      : state->addMode ? i18n("Toque nos desenhos para pôr neste capítulo")
+                       : state->chapter.isEmpty() ? i18n("Toque nos desenhos que quer tirar da galeria (os arquivos não são apagados)")
+                                                  : i18n("Toque nas páginas que quer tirar do capítulo (os arquivos não são apagados)"));
+         const int rows = recents->model()->rowCount();
+@@ -3539,10 +3573,30 @@ QWidget *buildGallery(KisMainWindow *mw)
+         }
+     });
+     QObject::connect(removeMode, &QPushButton::toggled, mw, [refresh](bool) { (*refresh)(); });
++    QObject::connect(orderMode, &QPushButton::toggled, mw, [refresh](bool) { (*refresh)(); });
++    // lembra onde o dedo tocou no cartão, para saber qual seta foi tocada
++    class PressSpy : public QObject {
++    public:
++        using QObject::QObject;
++        bool eventFilter(QObject *obj, QEvent *e) override {
++            if (e->type() == QEvent::MouseButtonRelease || e->type() == QEvent::MouseButtonPress) {
++                obj->setProperty("nanquimLastPos", static_cast<QMouseEvent*>(e)->pos());
++            }
++            return false;
++        }
++    };
++    recents->viewport()->installEventFilter(new PressSpy(recents));
+ 
+-    QObject::connect(recents, &QListView::clicked, mw, [mw, state, removeMode](const QModelIndex &index) {
++    QObject::connect(recents, &QListView::clicked, mw, [mw, state, removeMode, orderMode, recents](const QModelIndex &index) {
+         const QString path = index.data(Qt::ToolTipRole).toString();
+         if (path.isEmpty()) return;
++        if (orderMode->isChecked() && !state->chapter.isEmpty()) {
++            const QPoint p = recents->viewport()->property("nanquimLastPos").toPoint();
++            const QRect r = recents->visualRect(index);
++            if (p.x() < r.center().x() - r.width() / 6) ChapterStore::instance()->movePage(state->chapter, path, -1);
++            else if (p.x() > r.center().x() + r.width() / 6) ChapterStore::instance()->movePage(state->chapter, path, +1);
++            return;
++        }
+         if (state->addMode) {
+             ChapterStore::instance()->addPage(state->chapter, path);
+             return;
+-- 
+2.43.0
+
