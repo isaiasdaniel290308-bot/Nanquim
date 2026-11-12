@@ -1,0 +1,2558 @@
+From 5d50cf46578183a45cfc2b736da62d6d041a6789 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 19:13:11 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20identidade=20visual=20em=20todas=20a?=
+ =?UTF-8?q?s=20=C3=A1reas=20(cor,=20ajustes=20do=20pincel,=20nova=20p?=
+ =?UTF-8?q?=C3=A1gina,=20exportar,=20configura=C3=A7=C3=B5es,=20requadros?=
+ =?UTF-8?q?=20e=20bal=C3=B5es,=20etapas=20do=20cap=C3=ADtulo,=20sobre,=20a?=
+ =?UTF-8?q?visos)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp                   | 2215 +++++++++++++++--
+ .../src/org/krita/android/NanquimMedia.java   |  101 +
+ 2 files changed, 2158 insertions(+), 158 deletions(-)
+ create mode 100644 packaging/android/apk/src/org/krita/android/NanquimMedia.java
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index b9834a5..7b42009 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -64,6 +64,22 @@
+ #include <QComboBox>
+ #include <QPointer>
+ #include <QButtonGroup>
++#include <QCheckBox>
++#include <QPlainTextEdit>
++#include <QProgressBar>
++#include <QProgressDialog>
++#include <QPdfWriter>
++#include <QPageSize>
++#include <QDesktopServices>
++#include <QRegularExpression>
++#include <KisVisualColorSelector.h>
++#include <KoColorSpace.h>
++#include "kis_display_color_converter.h"
++#include <kis_config_notifier.h>
++#include <kis_cubic_curve.h>
++#include <kis_image_config.h>
++#include "kis_guides_config.h"
++#include <kis_paint_layer.h>
+ #include <QPalette>
+ #include <QFile>
+ #include <QPainterPath>
+@@ -208,9 +224,19 @@ const char *SELECT = "<rect x='4' y='4' width='16' height='16' rx='1' stroke-das
+ const char *TRANSFORM = "<rect x='6' y='6' width='12' height='12' rx='1'/><rect x='3' y='3' width='4' height='4' rx='.8'/><rect x='17' y='3' width='4' height='4' rx='.8'/><rect x='3' y='17' width='4' height='4' rx='.8'/><rect x='17' y='17' width='4' height='4' rx='.8'/>";
+ const char *TEXT = "<path d='M12 4c5 0 9 2.9 9 6.5S17 17 12 17c-.9 0-1.8-.1-2.6-.3L5 19.5l1.2-3.6C4.2 14.7 3 12.7 3 10.5 3 6.9 7 4 12 4z'/><path d='M9 9h6M12 9v5'/>";
+ const char *PICKER = "<path d='M16.5 3.5a2.1 2.1 0 0 1 3 3l-2 2-3-3z'/><path d='M14.5 7.5L6 16v3h3l8.5-8.5'/>";
++const char *EXPORT = "<path d='M12 15V4M7.5 8.5L12 4l4.5 4.5'/><path d='M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5'/>";
++const char *SETTINGS = "<circle cx='12' cy='12' r='3'/><path d='M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7'/>";
+ const char *ALL_TOOLS = "<circle cx='6' cy='6' r='1.6'/><circle cx='12' cy='6' r='1.6'/><circle cx='18' cy='6' r='1.6'/><circle cx='6' cy='12' r='1.6'/><circle cx='12' cy='12' r='1.6'/><circle cx='18' cy='12' r='1.6'/><circle cx='6' cy='18' r='1.6'/><circle cx='12' cy='18' r='1.6'/><circle cx='18' cy='18' r='1.6'/>";
+ }
+ 
++// telas do Nanquim (definidas mais adiante)
++void showComicsSheet(KisMainWindow *mw, int tab);
++void showExport(KisMainWindow *mw);
++void showBrushSettings(KisMainWindow *mw);
++void showSettings(KisMainWindow *mw);
++void showAbout(KisMainWindow *mw);
++void showNewPage(KisMainWindow *mw);
++
+ // ---------------------------------------------------------------------------
+ // Animações
+ // O Krita desliga as animações nativas de painéis no Android (eram lentas e
+@@ -732,16 +758,6 @@ void fillTimelapseMenu(KisMainWindow *mw, QMenu *menu)
+     QObject::connect(clear, &QAction::triggered, mw, []() { if (s_recorder) s_recorder->clearCurrent(); });
+ }
+ 
+-void addTimelapseButton(KisMainWindow *mw, QToolBar *top)
+-{
+-    QToolButton *b = iconButton(top, i18n("Time-lapse"), designIcon(Svg::TIMELAPSE));
+-    b->setProperty(NEEDS_CANVAS, true);
+-    QMenu *menu = new QMenu(b);
+-    QObject::connect(menu, &QMenu::aboutToShow, mw, [mw, menu]() { fillTimelapseMenu(mw, menu); });
+-    b->setMenu(menu);
+-    b->setPopupMode(QToolButton::InstantPopup);
+-    top->addWidget(b);
+-}
+ 
+ // Inserir imagem como camada (como o "Inserir" do Photoshop): escolhe o arquivo,
+ // ele entra como camada nova e a ferramenta Transformar já abre para posicionar
+@@ -878,100 +894,6 @@ bool addVectorShapes(KisMainWindow *mw, const QString &layerName, const QString
+     return true;
+ }
+ 
+-void showPanelsDialog(KisMainWindow *mw)
+-{
+-    KisView *view = mw->activeView();
+-    if (!view || !view->image()) return;
+-
+-    QDialog dlg(mw);
+-    dlg.setWindowTitle(i18n("Criar requadros"));
+-    dlg.setStyleSheet(QStringLiteral(
+-        "QDialog { background: #17171a; } QLabel { color: #ececf1; }"
+-        "QToolButton { color: #ececf1; border: 1px solid #2c2c33; border-radius: 12px; background: #1f1f24;"
+-        "  padding: 8px 4px; font-size: 12px; }"
+-        "QToolButton:checked { border: 2px solid #3d8bff; background: rgba(61,139,255,0.14); }"
+-        "QSpinBox, QDoubleSpinBox { min-height: 36px; color: #ececf1; background: #1f1f24; border: 1px solid #2c2c33;"
+-        "  border-radius: 8px; padding: 0 8px; }"
+-        "QPushButton { min-height: 44px; padding: 0 20px; border-radius: 12px; border: 1px solid #2c2c33;"
+-        "  background: #1f1f24; color: #ececf1; font-size: 15px; }"
+-        "QPushButton#nanquimPrimary { border: none; color: #04131f; font-weight: 600;"
+-        "  background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3d8bff, stop:1 #22d3ee); }"));
+-    QVBoxLayout *root = new QVBoxLayout(&dlg);
+-    root->setContentsMargins(24, 20, 24, 20);
+-    root->setSpacing(14);
+-    QLabel *hint = new QLabel(i18n("Escolha um arranjo. Os quadros entram numa camada vetorial \"Requadros\": "
+-                                   "dá para mover e redimensionar cada um com a ferramenta Selecionar formas."), &dlg);
+-    hint->setWordWrap(true);
+-    root->addWidget(hint);
+-
+-    const QList<PanelLayout> layouts = panelLayouts();
+-    QGridLayout *grid = new QGridLayout();
+-    grid->setSpacing(8);
+-    QList<QToolButton*> buttons;
+-    for (int i = 0; i < layouts.size(); i++) {
+-        QToolButton *b = new QToolButton(&dlg);
+-        b->setIcon(layoutIcon(layouts[i]));
+-        b->setIconSize(QSize(64, 90));
+-        b->setText(i18n(layouts[i].name));
+-        b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+-        b->setCheckable(true);
+-        b->setAutoExclusive(true);
+-        b->setFixedSize(118, 132);
+-        if (i == 5) b->setChecked(true);
+-        grid->addWidget(b, i / 5, i % 5);
+-        buttons << b;
+-    }
+-    root->addLayout(grid);
+-
+-    QFormLayout *form = new QFormLayout();
+-    QDoubleSpinBox *margin = new QDoubleSpinBox(&dlg);
+-    margin->setRange(0, 25); margin->setValue(7); margin->setSuffix(QStringLiteral(" %"));
+-    QDoubleSpinBox *gutterX = new QDoubleSpinBox(&dlg);
+-    gutterX->setRange(0, 10); gutterX->setValue(1.5); gutterX->setSuffix(QStringLiteral(" %"));
+-    QDoubleSpinBox *gutterY = new QDoubleSpinBox(&dlg);
+-    gutterY->setRange(0, 10); gutterY->setValue(2.5); gutterY->setSuffix(QStringLiteral(" %"));
+-    QDoubleSpinBox *border = new QDoubleSpinBox(&dlg);
+-    border->setRange(0.5, 40); border->setValue(qMax(2.0, view->image()->width() * 0.0012)); border->setSuffix(QStringLiteral(" px"));
+-    form->addRow(i18n("Margem da página"), margin);
+-    form->addRow(i18n("Espaço entre colunas"), gutterX);
+-    form->addRow(i18n("Espaço entre faixas"), gutterY);
+-    form->addRow(i18n("Espessura da borda"), border);
+-    root->addLayout(form);
+-
+-    QHBoxLayout *actions = new QHBoxLayout();
+-    actions->addStretch(1);
+-    QPushButton *cancel = new QPushButton(i18n("Cancelar"), &dlg);
+-    QPushButton *ok = new QPushButton(i18n("Criar requadros"), &dlg);
+-    ok->setObjectName(QStringLiteral("nanquimPrimary"));
+-    actions->addWidget(cancel);
+-    actions->addWidget(ok);
+-    root->addLayout(actions);
+-    QObject::connect(cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+-    QObject::connect(ok, &QPushButton::clicked, &dlg, &QDialog::accept);
+-    if (dlg.exec() != QDialog::Accepted) return;
+-
+-    int chosen = 0;
+-    for (int i = 0; i < buttons.size(); i++) if (buttons[i]->isChecked()) chosen = i;
+-
+-    KisImageSP image = view->image();
+-    const qreal xRes = image->xRes();
+-    const qreal W = image->width() / xRes;     // em pontos
+-    const qreal H = image->height() / image->yRes();
+-    const qreal m = W * margin->value() / 100.0;
+-    const QRectF area(m, m * (H / W > 1.2 ? 1.0 : 0.7), W - 2 * m, H - 2 * m * (H / W > 1.2 ? 1.0 : 0.7));
+-    const QList<QRectF> rects = layoutRects(layouts[chosen], area, W * gutterX->value() / 100.0, W * gutterY->value() / 100.0);
+-    const qreal stroke = border->value() / xRes;
+-
+-    QString body;
+-    for (const QRectF &r : rects) {
+-        body += QStringLiteral("<rect x=\"%1\" y=\"%2\" width=\"%3\" height=\"%4\" fill=\"none\" stroke=\"#000000\" "
+-                               "stroke-width=\"%5\" stroke-linejoin=\"miter\"/>")
+-                .arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height()).arg(stroke);
+-    }
+-    if (!addVectorShapes(mw, i18n("Requadros"), body, false)) {
+-        QMessageBox::warning(mw, QStringLiteral("Nanquim"), i18n("Não consegui criar os requadros."));
+-    }
+-}
+ 
+ // balões: forma com contorno preto e fundo branco, no centro da página
+ QString balloonPath(int kind, const QRectF &r, qreal unit)
+@@ -1035,41 +957,13 @@ QString balloonPath(int kind, const QRectF &r, qreal unit)
+             .arg(r.x()).arg(r.y() + r.height() * 0.2).arg(r.width()).arg(r.height() * 0.6).arg(unit);
+ }
+ 
+-void insertBalloon(KisMainWindow *mw, int kind)
+-{
+-    KisView *view = mw->activeView();
+-    if (!view || !view->image()) return;
+-    KisImageSP image = view->image();
+-    const qreal W = image->width() / image->xRes();
+-    const qreal H = image->height() / image->yRes();
+-    const qreal bw = W * 0.26, bh = bw * 0.62;
+-    const QRectF r(W / 2 - bw / 2, H / 2 - bh / 2, bw, bh);
+-    const qreal unit = qMax(2.0, image->width() * 0.0011) / image->xRes();
+-    if (!addVectorShapes(mw, i18n("Balões"), balloonPath(kind, r, unit), true)) {
+-        QMessageBox::warning(mw, QStringLiteral("Nanquim"), i18n("Não consegui criar o balão."));
+-        return;
+-    }
+-    // seleciona a ferramenta de formas para mover/redimensionar; depois é só escrever com Texto
+-    if (QAction *select = act(mw, "InteractionTool")) select->trigger();
+-}
+ 
+ void addBalloonButton(KisMainWindow *mw, QToolBar *top)
+ {
++    // abre "Requadros e balões" já na aba de balões
+     QToolButton *b = iconButton(top, i18n("Balões de fala"), designIcon(Svg::BALLOON));
+     b->setProperty(NEEDS_CANVAS, true);
+-    QMenu *menu = new QMenu(b);
+-    struct Kind { const char *label; int kind; };
+-    for (const Kind &k : {Kind{"Balão de fala", 0}, Kind{"Balão de pensamento", 1},
+-                          Kind{"Balão de grito", 2}, Kind{"Caixa de narração", 3}}) {
+-        QAction *a = menu->addAction(i18n(k.label));
+-        const int kind = k.kind;
+-        QObject::connect(a, &QAction::triggered, mw, [mw, kind]() { insertBalloon(mw, kind); });
+-    }
+-    menu->addSeparator();
+-    QAction *text = menu->addAction(i18n("Escrever texto (ferramenta Texto)"));
+-    QObject::connect(text, &QAction::triggered, mw, [mw]() { if (QAction *t = act(mw, "SvgTextTool")) t->trigger(); });
+-    b->setMenu(menu);
+-    b->setPopupMode(QToolButton::InstantPopup);
++    QObject::connect(b, &QToolButton::clicked, mw, [mw]() { showComicsSheet(mw, 1); });
+     top->addWidget(b);
+ }
+ 
+@@ -1912,7 +1806,7 @@ void buildBrushPanel(KisMainWindow *mw)
+     });
+     QObject::connect(settings, &QPushButton::clicked, mw, [mw]() {
+         setBrushPanelVisible(mw, false);
+-        QTimer::singleShot(200, mw, [mw]() { openBrushEditor(mw); });
++        QTimer::singleShot(200, mw, [mw]() { showBrushSettings(mw); });
+     });
+     QObject::connect(importButton, &QPushButton::clicked, mw, [mw, group]() {
+         setBrushPanelVisible(mw, false);
+@@ -2186,7 +2080,7 @@ void buildTopBar(KisMainWindow *mw)
+     // painéis
+     struct Panel { const char *tip; const char *svg; QStringList ids; };
+     const QList<Panel> panels = {
+-        {"Cor", nullptr, {QStringLiteral("ColorSelectorNg"), QStringLiteral("WideGamutColorSelector")}},
++        {"Cor", nullptr, {QStringLiteral("NanquimColorDock"), QStringLiteral("ColorSelectorNg"), QStringLiteral("WideGamutColorSelector")}},
+         {"Camadas", Svg::LAYERS, {QStringLiteral("KisLayerBox")}},
+         {"Opções da ferramenta", Svg::OPTIONS, {QStringLiteral("sharedtooldocker")}},
+     };
+@@ -2233,7 +2127,7 @@ void buildTopBar(KisMainWindow *mw)
+     }
+     rulerMenu->addSeparator();
+     QAction *panelsMenuAction = rulerMenu->addAction(designIcon(Svg::PANELS), i18n("Criar requadros…"));
+-    QObject::connect(panelsMenuAction, &QAction::triggered, mw, [mw]() { showPanelsDialog(mw); });
++    QObject::connect(panelsMenuAction, &QAction::triggered, mw, [mw]() { showComicsSheet(mw, 0); });
+     rulers->setMenu(rulerMenu);
+     rulers->setPopupMode(QToolButton::InstantPopup);
+     top->addWidget(rulers);
+@@ -2254,7 +2148,13 @@ void buildTopBar(KisMainWindow *mw)
+         top->addWidget(b);
+     }
+ 
+-    addTimelapseButton(mw, top);
++    {
++        // exportar: página, capítulo e time-lapse num lugar só
++        QToolButton *exportButton = iconButton(top, i18n("Exportar"), designIcon(Svg::EXPORT));
++        exportButton->setProperty(NEEDS_CANVAS, true);
++        QObject::connect(exportButton, &QToolButton::clicked, mw, [mw]() { showExport(mw); });
++        top->addWidget(exportButton);
++    }
+ 
+     // Mais: o menu completo do Krita
+     QToolButton *more = iconButton(top, i18n("Mais opções"), designIcon(Svg::MORE));
+@@ -2875,7 +2775,7 @@ const char *GALLERY_STYLE =
+     "QWidget#nanquimGallery QLabel { color: #ececf1; }"
+     "QWidget#nanquimGalleryHeader { background: #141417; border-bottom: 1px solid #26262c; }"
+     "QLabel#nanquimBrand { font-size: 23px; font-weight: 700; }"
+-    "QLabel#nanquimSection { color: #a3a3ae; font-size: 15px; font-weight: 600; letter-spacing: 1px; }"
++    "QLabel#nanquimSection { color: #a3a3ae; font-size: 13px; font-weight: 700; letter-spacing: 2px; }"
+     "QLabel#nanquimFooter { color: #6f6f7a; font-size: 12px; }"
+     "QLabel#nanquimEmpty { color: #8a8a96; font-size: 15px; }"
+     "QLineEdit#nanquimSearch { min-height: 42px; padding: 0 14px; border-radius: 12px; background: #1f1f24;"
+@@ -2972,6 +2872,25 @@ public:
+             g->setPen(Qt::white);
+             g->drawText(num, Qt::AlignCenter, QString::number(index.row() + 1));
+         }
++        const QVariant stage = index.data(Qt::UserRole + 60);
++        if (stage.isValid() && option.widget && option.widget->property("nanquimChapterView").toBool()) {
++            const int s = stage.toInt();
++            const QColor dot = s == 2 ? QColor(0x22, 0xd3, 0xee) : s == 1 ? QColor(0x6f, 0x86, 0xb8) : QColor(0x8a, 0x8a, 0x96);
++            const QString label = s == 2 ? i18n("Pronta") : s == 1 ? i18n("Arte-final") : i18n("Rascunho");
++            QFont sf = option.font;
++            sf.setPixelSize(11);
++            sf.setWeight(QFont::DemiBold);
++            const int pw = QFontMetrics(sf).horizontalAdvance(label) + 28;
++            const QRectF pill(paper.left() + 8, paper.bottom() - 30, pw, 22);
++            g->setPen(Qt::NoPen);
++            g->setBrush(QColor(23, 23, 26, 225));
++            g->drawRoundedRect(pill, 11, 11);
++            g->setBrush(dot);
++            g->drawEllipse(QPointF(pill.left() + 11, pill.center().y()), 4, 4);
++            g->setFont(sf);
++            g->setPen(QColor(0xec, 0xec, 0xf1));
++            g->drawText(pill.adjusted(20, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, label);
++        }
+         if (option.widget && option.widget->property("nanquimRemoveMode").toBool()) {
+             const QRectF badge(paper.right() - 34, paper.top() + 8, 26, 26);
+             g->setPen(Qt::NoPen);
+@@ -3150,6 +3069,28 @@ public:
+         c.writeEntry("pages", pages);
+         changed();
+     }
++    // etapa da página: 0 rascunho, 1 arte-final, 2 pronta
++    int status(const QString &id, const QString &path) const
++    {
++        KConfigGroup c = KSharedConfig::openConfig()->group(QStringLiteral("NanquimChapter-") + id);
++        Q_FOREACH (const QString &entry, c.readEntry("status", QStringList())) {
++            const int sep = entry.indexOf(QLatin1Char('|'));
++            if (sep > 0 && entry.mid(sep + 1) == path) return qBound(0, entry.left(sep).toInt(), 2);
++        }
++        return 0;
++    }
++    void setStatus(const QString &id, const QString &path, int value)
++    {
++        KConfigGroup c = KSharedConfig::openConfig()->group(QStringLiteral("NanquimChapter-") + id);
++        QStringList list = c.readEntry("status", QStringList());
++        for (int i = list.size() - 1; i >= 0; --i) {
++            const int sep = list[i].indexOf(QLatin1Char('|'));
++            if (sep > 0 && list[i].mid(sep + 1) == path) list.removeAt(i);
++        }
++        if (value > 0) list << QStringLiteral("%1|%2").arg(value).arg(path);
++        c.writeEntry("status", list);
++        changed();
++    }
+     void movePage(const QString &id, const QString &path, int delta)
+     {
+         KConfigGroup c = KSharedConfig::openConfig()->group(QStringLiteral("NanquimChapter-") + id);
+@@ -3295,6 +3236,14 @@ QWidget *buildGallery(KisMainWindow *mw)
+     QObject::connect(guide, &QPushButton::clicked, mw, [mw]() { showWelcome(mw, false); });
+     hl->addWidget(guide);
+ 
++    QPushButton *settingsButton = new QPushButton(header);
++    settingsButton->setIcon(designIcon(Svg::SETTINGS));
++    settingsButton->setToolTip(i18n("Configurações"));
++    settingsButton->setProperty("class", QStringLiteral("nanquimGhost"));
++    settingsButton->setFocusPolicy(Qt::NoFocus);
++    QObject::connect(settingsButton, &QPushButton::clicked, mw, [mw]() { showSettings(mw); });
++    hl->addWidget(settingsButton);
++
+     QPushButton *open = new QPushButton(i18n("Abrir"), header);
+     open->setProperty("class", QStringLiteral("nanquimGhost"));
+     open->setFocusPolicy(Qt::NoFocus);
+@@ -3324,7 +3273,7 @@ QWidget *buildGallery(KisMainWindow *mw)
+         {"Comic americano", "6,625 × 10,25 pol · 400 dpi", 2650, 4100, 400},
+         {"Tirinha", "4 quadros na horizontal · 300 dpi", 4000, 1250, 300},
+         {"Ilustração", "A4 · 300 dpi · 2480 × 3508", 2480, 3508, 300},
+-        {"Personalizado", "Escolha tamanho e resolução", 0, 0, 0},
++        {"Mais formatos", "Webtoon, A4, B5, papel creme…", 0, 0, 0},
+     };
+     Q_FOREACH (const PagePreset &p, presets) {
+         QPushButton *card = new QPushButton(body);
+@@ -3345,7 +3294,7 @@ QWidget *buildGallery(KisMainWindow *mw)
+         cl->addWidget(d);
+         QObject::connect(card, &QPushButton::clicked, mw, [mw, p]() {
+             if (p.width == 0) {
+-                mw->slotFileNew();
++                showNewPage(mw);
+             } else {
+                 createPage(p);
+             }
+@@ -3403,13 +3352,20 @@ QWidget *buildGallery(KisMainWindow *mw)
+     removeMode->setCheckable(true);
+     QPushButton *orderMode = ghost(i18n("Organizar páginas"));
+     orderMode->setCheckable(true);
+-    for (QPushButton *b : {orderMode, addPages, renameChapter, deleteChapter, closeChapter}) {
++    QPushButton *stageMode = ghost(i18n("Marcar etapas"));
++    stageMode->setCheckable(true);
++    for (QPushButton *b : {stageMode, orderMode, addPages, renameChapter, deleteChapter, closeChapter}) {
+         b->hide();
+         recentsHead->addWidget(b);
+     }
+     recentsHead->addWidget(removeMode);
+     bl->addLayout(recentsHead);
+ 
++    QLabel *chapterProgress = new QLabel(body);
++    chapterProgress->setFixedHeight(30);
++    chapterProgress->hide();
++    bl->addWidget(chapterProgress);
++
+     QSortFilterProxyModel *proxy = new QSortFilterProxyModel(gallery);
+     proxy->setSourceModel(&KisRecentDocumentsModelWrapper::instance()->model());
+     proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
+@@ -3448,6 +3404,7 @@ QWidget *buildGallery(KisMainWindow *mw)
+             QStandardItem *item = new QStandardItem(QStringLiteral("%1. %2").arg(i + 1, 2, 10, QLatin1Char('0'))
+                                                     .arg(displayNameFor(path)));
+             item->setData(path, Qt::ToolTipRole);
++            item->setData(ChapterStore::instance()->status(state->chapter, path), Qt::UserRole + 60);
+             const QIcon icon = KisRecentFileIconCache::instance()->getOrQueueFileIcon(urlForPath(path));
+             if (!icon.isNull()) item->setData(icon, Qt::DecorationRole);
+             pagesModel->appendRow(item);
+@@ -3503,11 +3460,59 @@ QWidget *buildGallery(KisMainWindow *mw)
+             QSignalBlocker block(orderMode);
+             orderMode->setChecked(false);
+         }
+-        const bool ordering = orderMode->isChecked();
++        if (!showChapter && stageMode->isChecked()) {
++            QSignalBlocker block(stageMode);
++            stageMode->setChecked(false);
++        }
++        const bool marking = stageMode->isChecked();
++        const bool ordering = orderMode->isChecked() || marking;
+         for (QPushButton *b : {addPages, renameChapter, deleteChapter, closeChapter}) {
+             b->setVisible(!state->chapter.isEmpty() && !ordering);
+         }
+-        orderMode->setVisible(showChapter && !removeMode->isChecked());
++        orderMode->setVisible(showChapter && !removeMode->isChecked() && !marking);
++        stageMode->setVisible(showChapter && !removeMode->isChecked() && !orderMode->isChecked());
++        stageMode->setText(marking ? i18n("Concluir") : i18n("Marcar etapas"));
++        // progresso do capítulo: prontas, arte-final e rascunho
++        if (showChapter && !c.pages.isEmpty()) {
++            int counts[3] = {0, 0, 0};
++            Q_FOREACH (const QString &p, c.pages) counts[ChapterStore::instance()->status(c.id, p)]++;
++            const qreal dpr = chapterProgress->devicePixelRatioF();
++            const int w = qMax(200, body->width() - 56);
++            QPixmap pm(QSize(w, 30) * dpr);
++            pm.setDevicePixelRatio(dpr);
++            pm.fill(Qt::transparent);
++            {
++                QPainter g(&pm);
++                g.setRenderHint(QPainter::Antialiasing);
++                const QString legend = i18n("%1 prontas · %2 arte-final · %3 rascunho", counts[2], counts[1], counts[0]);
++                QFont f = chapterProgress->font();
++                f.setPixelSize(12);
++                g.setFont(f);
++                const int lw = QFontMetrics(f).horizontalAdvance(legend) + 16;
++                const QRectF bar(0, 11, w - lw, 8);
++                g.setPen(Qt::NoPen);
++                g.setBrush(QColor(0x24, 0x24, 0x2b));
++                g.drawRoundedRect(bar, 4, 4);
++                const int total = c.pages.size();
++                const qreal readyW = bar.width() * counts[2] / total;
++                const qreal inkW = bar.width() * counts[1] / total;
++                QLinearGradient grad(bar.topLeft(), bar.topRight());
++                grad.setColorAt(0, C_ACCENT);
++                grad.setColorAt(1, QColor(0x22, 0xd3, 0xee));
++                g.setClipRect(bar);
++                g.setBrush(grad);
++                g.drawRoundedRect(QRectF(bar.left(), bar.top(), readyW, bar.height()), 4, 4);
++                g.setBrush(QColor(0x6f, 0x86, 0xb8));
++                g.drawRect(QRectF(bar.left() + readyW, bar.top(), inkW, bar.height()));
++                g.setClipping(false);
++                g.setPen(QColor(0xc9, 0xc9, 0xd1));
++                g.drawText(QRectF(w - lw + 16, 0, lw, 30), Qt::AlignVCenter | Qt::AlignLeft, legend);
++            }
++            chapterProgress->setPixmap(pm);
++            chapterProgress->show();
++        } else {
++            chapterProgress->hide();
++        }
+         orderMode->setText(ordering ? i18n("Concluir") : i18n("Organizar páginas"));
+         renameChapter->setVisible(showChapter && !ordering);
+         deleteChapter->setVisible(showChapter && !ordering);
+@@ -3519,10 +3524,12 @@ QWidget *buildGallery(KisMainWindow *mw)
+         recents->setModel(showChapter ? static_cast<QAbstractItemModel*>(pagesModel) : static_cast<QAbstractItemModel*>(proxy));
+         recents->setProperty("nanquimRemoveMode", removeMode->isChecked() && !state->addMode);
+         recents->setProperty("nanquimAddMode", state->addMode);
+-        recents->setProperty("nanquimOrderMode", ordering && showChapter);
++        recents->setProperty("nanquimOrderMode", orderMode->isChecked() && showChapter);
++        recents->setProperty("nanquimChapterView", showChapter);
+         recents->viewport()->update();
+         hint->setVisible(removeMode->isChecked() || state->addMode || ordering);
+-        hint->setText(ordering ? i18n("Toque na seta da esquerda ou da direita para mudar a página de lugar")
++        hint->setText(marking ? i18n("Toque numa página para passar de rascunho para arte-final e para pronta")
++                      : ordering ? i18n("Toque na seta da esquerda ou da direita para mudar a página de lugar")
+                       : state->addMode ? i18n("Toque nos desenhos para pôr neste capítulo")
+                       : state->chapter.isEmpty() ? i18n("Toque nos desenhos que quer tirar da galeria (os arquivos não são apagados)")
+                                                  : i18n("Toque nas páginas que quer tirar do capítulo (os arquivos não são apagados)"));
+@@ -3587,6 +3594,7 @@ QWidget *buildGallery(KisMainWindow *mw)
+     });
+     QObject::connect(removeMode, &QPushButton::toggled, mw, [refresh](bool) { (*refresh)(); });
+     QObject::connect(orderMode, &QPushButton::toggled, mw, [refresh](bool) { (*refresh)(); });
++    QObject::connect(stageMode, &QPushButton::toggled, mw, [refresh](bool) { (*refresh)(); });
+     // lembra onde o dedo tocou no cartão, para saber qual seta foi tocada
+     class PressSpy : public QObject {
+     public:
+@@ -3600,9 +3608,14 @@ QWidget *buildGallery(KisMainWindow *mw)
+     };
+     recents->viewport()->installEventFilter(new PressSpy(recents));
+ 
+-    QObject::connect(recents, &QListView::clicked, mw, [mw, state, removeMode, orderMode, recents](const QModelIndex &index) {
++    QObject::connect(recents, &QListView::clicked, mw, [mw, state, removeMode, orderMode, stageMode, recents](const QModelIndex &index) {
+         const QString path = index.data(Qt::ToolTipRole).toString();
+         if (path.isEmpty()) return;
++        if (stageMode->isChecked() && !state->chapter.isEmpty()) {
++            const int s = ChapterStore::instance()->status(state->chapter, path);
++            ChapterStore::instance()->setStatus(state->chapter, path, (s + 1) % 3);
++            return;
++        }
+         if (orderMode->isChecked() && !state->chapter.isEmpty()) {
+             const QPoint p = recents->viewport()->property("nanquimLastPos").toPoint();
+             const QRect r = recents->visualRect(index);
+@@ -3949,23 +3962,24 @@ void fillNanquimMenu(KisMainWindow *mw, QMenu *menu)
+             }
+         });
+     }
+-    QAction *panelsAction = menu->addAction(i18n("Criar requadros…"));
++    QAction *panelsAction = menu->addAction(i18n("Requadros e balões…"));
+     panelsAction->setEnabled(mw->activeView() != nullptr);
+-    QObject::connect(panelsAction, &QAction::triggered, mw, [mw]() { showPanelsDialog(mw); });
+-    QMenu *balloons = menu->addMenu(i18n("Balões de fala"));
+-    balloons->setEnabled(mw->activeView() != nullptr);
+-    struct Kind { const char *label; int kind; };
+-    for (const Kind &k : {Kind{"Balão de fala", 0}, Kind{"Balão de pensamento", 1},
+-                          Kind{"Balão de grito", 2}, Kind{"Caixa de narração", 3}}) {
+-        QAction *a = balloons->addAction(i18n(k.label));
+-        const int kind = k.kind;
+-        QObject::connect(a, &QAction::triggered, mw, [mw, kind]() { insertBalloon(mw, kind); });
+-    }
++    QObject::connect(panelsAction, &QAction::triggered, mw, [mw]() { showComicsSheet(mw, 0); });
++    QAction *exportAction = menu->addAction(i18n("Exportar…"));
++    exportAction->setEnabled(mw->activeView() != nullptr);
++    QObject::connect(exportAction, &QAction::triggered, mw, [mw]() { showExport(mw); });
++    QAction *brushSettings = menu->addAction(i18n("Ajustes do pincel…"));
++    brushSettings->setEnabled(mw->activeView() != nullptr);
++    QObject::connect(brushSettings, &QAction::triggered, mw, [mw]() { showBrushSettings(mw); });
+     QMenu *timelapse = menu->addMenu(i18n("Time-lapse"));
+     fillTimelapseMenu(mw, timelapse);
+     menu->addSeparator();
+     QAction *guide = menu->addAction(i18n("Boas-vindas e guia rápido"));
+     QObject::connect(guide, &QAction::triggered, mw, [mw]() { showWelcome(mw, false); });
++    QAction *settings = menu->addAction(i18n("Configurações do Nanquim…"));
++    QObject::connect(settings, &QAction::triggered, mw, [mw]() { showSettings(mw); });
++    QAction *about = menu->addAction(i18n("Sobre e créditos"));
++    QObject::connect(about, &QAction::triggered, mw, [mw]() { showAbout(mw); });
+ }
+ 
+ void buildNanquimMenu(KisMainWindow *mw)
+@@ -4116,6 +4130,1860 @@ void arrangeClassic(KisMainWindow *mw)
+     styleClassicDocks(mw);
+ }
+ 
++
++// ===========================================================================
++// Identidade visual do Nanquim em todas as áreas (protótipo "Identidade visual")
++// ===========================================================================
++
++// Folha de estilo comum às janelas do Nanquim: fundo #1c1c20, títulos de seção
++// em maiúsculas espaçadas, botão principal com o degradê da gota, chips em pílula.
++const char *SHEET_STYLE =
++    "QDialog#nanquimSheet { background: #1c1c20; border: 1px solid #33333b; border-radius: 18px; }"
++    "QDialog#nanquimSheet QLabel { color: #ececf1; background: transparent; }"
++    "QLabel#nqSection { color: #a3a3ae; font-size: 13px; font-weight: 700; letter-spacing: 2px; }"
++    "QLabel#nqTitle { font-size: 24px; font-weight: 700; }"
++    "QLabel#nqHint { color: #a3a3ae; font-size: 12px; }"
++    "QLabel#nqBody { color: #c9c9d1; font-size: 14px; }"
++    "QLabel#nqItem { font-size: 14px; font-weight: 600; }"
++    "QLabel#nqSmall { color: #a3a3ae; font-size: 12px; }"
++    "QPushButton { min-height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid #33333b;"
++    "  background: #24242b; color: #ececf1; font-size: 14px; font-weight: 600; }"
++    "QPushButton:pressed { background: #2f2f36; border-color: #3d8bff; }"
++    "QPushButton:disabled { color: #6b6b76; }"
++    "QPushButton#nqPrimary { border: none; color: #0b1220; font-weight: 700;"
++    "  background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3d8bff, stop:1 #22d3ee); }"
++    "QPushButton#nqGhost { border: none; background: transparent; }"
++    "QPushButton#nqDanger { border: none; background: transparent; color: #ff8585; }"
++    "QPushButton#nqClose { border: none; background: transparent; min-width: 44px; max-width: 44px; padding: 0; font-size: 20px; }"
++    "QPushButton.nqChip { min-height: 34px; padding: 0 14px; border-radius: 17px; font-size: 13px; }"
++    "QPushButton.nqChip:checked { border: none; color: #0b1220;"
++    "  background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3d8bff, stop:1 #22d3ee); }"
++    "QPushButton.nqCard { min-height: 64px; border-radius: 12px; padding: 8px; }"
++    "QPushButton.nqCard:checked { background: #1e2a44; border: 2px solid #3d8bff; }"
++    "QPushButton.nqSwatch { min-height: 44px; max-height: 44px; min-width: 44px; max-width: 44px; padding: 0; border-radius: 10px; }"
++    "QPushButton.nqSwatch:checked { border: 2px solid #3d8bff; }"
++    "QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit { min-height: 40px; padding: 0 10px; border-radius: 10px;"
++    "  border: 1px solid #33333b; background: #17171a; color: #ececf1; font-size: 14px; }"
++    "QPlainTextEdit { padding: 8px 10px; }"
++    "QComboBox::drop-down { border: none; width: 22px; }"
++    "QComboBox QAbstractItemView { background: #1c1c20; color: #ececf1; border: 1px solid #33333b; selection-background-color: #1e2a44; }"
++    "QCheckBox { color: #ececf1; font-size: 14px; spacing: 12px; min-height: 36px; }"
++    "QCheckBox::indicator { width: 22px; height: 22px; border-radius: 6px; border: 2px solid #4a4a54; background: #17171a; }"
++    "QCheckBox::indicator:checked { background: #3d8bff; border-color: #3d8bff; }"
++    "QSlider { min-height: 30px; }"
++    "QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #2c2c33; }"
++    "QSlider::sub-page:horizontal { border-radius: 3px;"
++    "  background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3d8bff, stop:1 #22d3ee); }"
++    "QSlider::handle:horizontal { width: 22px; height: 22px; margin: -8px 0; border-radius: 11px; background: #ececf1; }"
++    "QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }"
++    "QFrame#nqPanel { background: #17171a; border: 1px solid #26262c; border-radius: 14px; }"
++    "QFrame#nqDivider { background: #26262c; max-height: 1px; min-height: 1px; border: none; }";
++
++QDialog *makeSheet(KisMainWindow *mw, int width, int height = 0)
++{
++    QDialog *d = new QDialog(mw);
++    d->setObjectName(QStringLiteral("nanquimSheet"));
++    d->setAttribute(Qt::WA_DeleteOnClose);
++    d->setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
++    d->setStyleSheet(QLatin1String(SHEET_STYLE));
++    d->setModal(true);
++    d->setFixedWidth(qMin(width, mw->width() - 40));
++    if (height > 0) d->setFixedHeight(qMin(height, mw->height() - 40));
++    return d;
++}
++
++QLabel *nqLabel(const QString &text, const char *name, QWidget *parent, bool wrap = false)
++{
++    QLabel *l = new QLabel(text, parent);
++    l->setObjectName(QLatin1String(name));
++    l->setWordWrap(wrap);
++    return l;
++}
++
++QPushButton *nqButton(const QString &text, QWidget *parent, const char *name = nullptr)
++{
++    QPushButton *b = new QPushButton(text, parent);
++    if (name) b->setObjectName(QLatin1String(name));
++    b->setFocusPolicy(Qt::NoFocus);
++    return b;
++}
++
++QPushButton *nqChip(const QString &text, QWidget *parent, QButtonGroup *group, int id)
++{
++    QPushButton *b = nqButton(text, parent);
++    b->setProperty("class", QStringLiteral("nqChip"));
++    b->setCheckable(true);
++    if (group) group->addButton(b, id);
++    return b;
++}
++
++QFrame *nqDivider(QWidget *parent)
++{
++    QFrame *f = new QFrame(parent);
++    f->setObjectName(QStringLiteral("nqDivider"));
++    return f;
++}
++
++// cabeçalho: seção em maiúsculas, título e o X de fechar
++QHBoxLayout *sheetHeader(QDialog *d, const QString &section, const QString &title)
++{
++    QHBoxLayout *h = new QHBoxLayout();
++    QVBoxLayout *t = new QVBoxLayout();
++    t->setSpacing(4);
++    t->addWidget(nqLabel(section.toUpper(), "nqSection", d));
++    if (!title.isEmpty()) t->addWidget(nqLabel(title, "nqTitle", d));
++    h->addLayout(t, 1);
++    QPushButton *close = nqButton(QStringLiteral("✕"), d, "nqClose");
++    close->setToolTip(i18n("Fechar"));
++    QObject::connect(close, &QPushButton::clicked, d, &QDialog::reject);
++    h->addWidget(close, 0, Qt::AlignTop);
++    return h;
++}
++
++QHBoxLayout *chipRow(QWidget *parent, QButtonGroup *group, const QStringList &labels, int checked)
++{
++    QHBoxLayout *row = new QHBoxLayout();
++    row->setSpacing(8);
++    for (int i = 0; i < labels.size(); i++) {
++        QPushButton *c = nqChip(labels[i], parent, group, i);
++        c->setChecked(i == checked);
++        row->addWidget(c);
++    }
++    row->addStretch(1);
++    return row;
++}
++
++QPushButton *swatchButton(QWidget *parent, const QColor &c, const QString &tip)
++{
++    QPushButton *b = nqButton(QString(), parent);
++    b->setProperty("class", QStringLiteral("nqSwatch"));
++    b->setToolTip(tip);
++    b->setStyleSheet(QStringLiteral("background: %1;").arg(c.name()));
++    return b;
++}
++
++// ---------------------------------------------------------------------------
++// Avisos: "página salva" que aparece e some embaixo da tela
++// ---------------------------------------------------------------------------
++void showToast(KisMainWindow *mw, const QString &text)
++{
++    if (!mw) return;
++    QFrame *old = mw->findChild<QFrame*>(QStringLiteral("nanquimToast"));
++    if (old) old->deleteLater();
++    QFrame *toast = new QFrame(mw);
++    toast->setObjectName(QStringLiteral("nanquimToast"));
++    toast->setAttribute(Qt::WA_TransparentForMouseEvents);
++    toast->setStyleSheet(QStringLiteral(
++        "QFrame#nanquimToast { background: #1c1c20; border: 1px solid #33333b; border-radius: 24px; }"
++        "QLabel { color: #ececf1; font-size: 14px; font-weight: 500; background: transparent; }"));
++    QHBoxLayout *l = new QHBoxLayout(toast);
++    l->setContentsMargins(18, 10, 22, 10);
++    l->setSpacing(12);
++    QLabel *icon = new QLabel(toast);
++    icon->setPixmap(svgPixmap(QStringLiteral("<path d='M5 12.5l4.5 4.5L19 7.5'/>"), QColor(0x22, 0xd3, 0xee), 20));
++    l->addWidget(icon);
++    l->addWidget(new QLabel(text, toast));
++    toast->adjustSize();
++    const int x = (mw->width() - toast->width()) / 2;
++    const int yEnd = mw->height() - toast->height() - 28;
++    toast->move(x, yEnd + 30);
++    toast->show();
++    toast->raise();
++    QPropertyAnimation *in = new QPropertyAnimation(toast, "pos", toast);
++    in->setDuration(220);
++    in->setStartValue(QPoint(x, yEnd + 30));
++    in->setEndValue(QPoint(x, yEnd));
++    in->setEasingCurve(QEasingCurve::OutCubic);
++    in->start(QAbstractAnimation::DeleteWhenStopped);
++    QPointer<QFrame> guard(toast);
++    QTimer::singleShot(2600, toast, [guard, x, yEnd]() {
++        if (!guard) return;
++        QPropertyAnimation *out = new QPropertyAnimation(guard, "pos", guard);
++        out->setDuration(170);
++        out->setStartValue(QPoint(x, yEnd));
++        out->setEndValue(QPoint(x, yEnd + 40));
++        out->setEasingCurve(QEasingCurve::InCubic);
++        QObject::connect(out, &QPropertyAnimation::finished, guard, [guard]() { if (guard) guard->deleteLater(); });
++        out->start(QAbstractAnimation::DeleteWhenStopped);
++    });
++}
++
++// perguntas do Krita (salvar, fechar...) com a cara do Nanquim
++const char *MESSAGE_STYLE =
++    "QMessageBox, QInputDialog { background: #1c1c20; }"
++    "QMessageBox QLabel, QInputDialog QLabel { color: #ececf1; font-size: 15px; }"
++    "QMessageBox QPushButton, QInputDialog QPushButton { min-height: 44px; min-width: 96px; padding: 0 16px; border-radius: 10px;"
++    "  border: 1px solid #33333b; background: #24242b; color: #ececf1; font-size: 14px; font-weight: 600; }"
++    "QMessageBox QPushButton:default, QInputDialog QPushButton:default { border: none; color: #0b1220;"
++    "  background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3d8bff, stop:1 #22d3ee); }"
++    "QInputDialog QLineEdit, QInputDialog QComboBox, QInputDialog QSpinBox { min-height: 40px; padding: 0 10px; border-radius: 10px;"
++    "  border: 1px solid #33333b; background: #17171a; color: #ececf1; font-size: 14px; }";
++
++class MessageStyler : public QObject
++{
++public:
++    using QObject::QObject;
++protected:
++    bool eventFilter(QObject *obj, QEvent *e) override
++    {
++        if (e->type() != QEvent::Polish) return false;
++        QWidget *w = qobject_cast<QWidget*>(obj);
++        if (!w || !w->isWindow() || w->property("nanquimStyled").toBool()) return false;
++        if (!w->inherits("QMessageBox") && !w->inherits("QInputDialog")) return false;
++        w->setProperty("nanquimStyled", true);
++        if (w->styleSheet().isEmpty()) w->setStyleSheet(QLatin1String(MESSAGE_STYLE));
++        return false;
++    }
++};
++
++// ---------------------------------------------------------------------------
++// Aviso de memória: páginas muito grandes fazem o Android fechar o app
++// ---------------------------------------------------------------------------
++qint64 estimateImageBytes(KisImageSP image)
++{
++    if (!image) return 0;
++    const qint64 pixels = qint64(image->width()) * image->height();
++    const int pixelSize = image->colorSpace() ? int(image->colorSpace()->pixelSize()) : 4;
++    int layers = 1;   // a projeção
++    std::function<void(KisNodeSP)> walk = [&](KisNodeSP node) {
++        for (KisNodeSP child = node->firstChild(); child; child = child->nextSibling()) {
++            if (child->paintDevice() && child->inherits("KisPaintLayer")) layers++;
++            walk(child);
++        }
++    };
++    walk(image->root());
++    return pixels * pixelSize * layers;
++}
++
++void showMemoryWarning(KisMainWindow *mw, KisView *view)
++{
++    if (!mw || !view || !view->image() || !view->document()) return;
++    static QSet<QString> warned;
++    const QString key = view->document()->path().isEmpty() ? view->document()->caption() : view->document()->path();
++    if (warned.contains(key)) return;
++    const qint64 bytes = estimateImageBytes(view->image());
++    const qint64 limit = qint64(1200) * 1024 * 1024;
++    if (bytes < limit) return;
++    warned.insert(key);
++
++    QDialog *d = makeSheet(mw, 560);
++    QVBoxLayout *root = new QVBoxLayout(d);
++    root->setContentsMargins(26, 22, 26, 22);
++    root->setSpacing(14);
++    root->addLayout(sheetHeader(d, i18n("Cuidado com a memória"),
++                                i18n("Esta página usa cerca de %1 GB", QString::number(bytes / (1024.0 * 1024 * 1024), 'f', 1))));
++    root->addWidget(nqLabel(i18n("O tablet pode fechar o Nanquim ao transformar ou liquidificar uma página deste tamanho. "
++                                 "Juntar camadas que já estão prontas, ou reduzir a página para 600 dpi, deixa tudo mais leve."),
++                            "nqBody", d, true));
++    QProgressBar *bar = new QProgressBar(d);
++    bar->setRange(0, 100);
++    bar->setValue(qBound(10, int(100.0 * bytes / (2.0 * limit)), 100));
++    bar->setTextVisible(false);
++    bar->setFixedHeight(10);
++    bar->setStyleSheet(QStringLiteral("QProgressBar { background: #2c2c33; border: none; border-radius: 5px; }"
++                                      "QProgressBar::chunk { background: #ffb020; border-radius: 5px; }"));
++    root->addWidget(bar);
++    QHBoxLayout *actions = new QHBoxLayout();
++    actions->setSpacing(8);
++    QPushButton *reduce = nqButton(i18n("Reduzir a página…"), d);
++    QPushButton *ok = nqButton(i18n("Entendi"), d, "nqPrimary");
++    actions->addWidget(reduce);
++    actions->addStretch(1);
++    actions->addWidget(ok);
++    root->addLayout(actions);
++    QObject::connect(ok, &QPushButton::clicked, d, &QDialog::accept);
++    QObject::connect(reduce, &QPushButton::clicked, d, [mw, d]() {
++        d->accept();
++        if (QAction *a = act(mw, "imagesize")) a->trigger();
++    });
++    d->open();
++}
++
++// ---------------------------------------------------------------------------
++// Sobre e créditos
++// ---------------------------------------------------------------------------
++void showAbout(KisMainWindow *mw)
++{
++    QDialog *d = makeSheet(mw, 940, 580);
++    QHBoxLayout *root = new QHBoxLayout(d);
++    root->setContentsMargins(0, 0, 0, 0);
++    root->setSpacing(0);
++
++    // arte do Krita (a mesma da abertura), cortada para a coluna
++    const int artW = qMin(400, d->width() / 2 - 40);
++    const int artH = d->height();
++    QLabel *art = new QLabel(d);
++    art->setFixedSize(artW, artH);
++    QPixmap src(QStringLiteral(":/splash/hd.jpg"));
++    QPixmap canvas(artW, artH);
++    canvas.fill(QColor(0x0b, 0x10, 0x19));
++    {
++        QPainter g(&canvas);
++        g.setRenderHint(QPainter::SmoothPixmapTransform);
++        g.setRenderHint(QPainter::Antialiasing);
++        if (!src.isNull()) {
++            const QPixmap scaled = src.scaledToHeight(artH, Qt::SmoothTransformation);
++            const int sx = qMax(0, (scaled.width() - artW) / 2 - scaled.width() / 8);
++            g.drawPixmap(0, 0, scaled, sx, 0, artW, artH);
++        }
++        QLinearGradient fade(0, artH * 0.45, 0, artH);
++        fade.setColorAt(0, QColor(11, 16, 25, 0));
++        fade.setColorAt(1, QColor(11, 16, 25, 235));
++        g.fillRect(QRect(0, 0, artW, artH), fade);
++        g.drawPixmap(28, artH - 116, renderSvg(QLatin1String(DROP_SVG), QSize(56, 56)));
++        QFont f = g.font();
++        f.setPixelSize(34);
++        f.setWeight(QFont::Black);
++        g.setFont(f);
++        g.setPen(QColor(0xf2, 0xf6, 0xfb));
++        g.drawText(QRect(96, artH - 118, artW - 110, 44), Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("Nanquim"));
++        f.setPixelSize(13);
++        f.setWeight(QFont::Normal);
++        g.setFont(f);
++        g.setPen(QColor(0x9f, 0xb6, 0xcf));
++        g.drawText(QRect(96, artH - 76, artW - 110, 22), Qt::AlignLeft | Qt::AlignVCenter, i18n("Desenho e quadrinhos no tablet"));
++        f.setPixelSize(11);
++        g.setFont(f);
++        g.setPen(QColor(0x7f, 0x93, 0xab));
++        g.drawText(QRect(28, artH - 40, artW - 40, 20), Qt::AlignLeft | Qt::AlignVCenter, i18n("Arte: Tyson Tan · CC BY-SA"));
++    }
++    art->setPixmap(canvas);
++    root->addWidget(art);
++
++    QWidget *right = new QWidget(d);
++    QVBoxLayout *rl = new QVBoxLayout(right);
++    rl->setContentsMargins(34, 28, 28, 24);
++    rl->setSpacing(14);
++    rl->addLayout(sheetHeader(d, i18n("Sobre e créditos"), QString()));
++    rl->addWidget(nqLabel(i18n("O Nanquim existe porque o Krita existe. Cada traço passa pelo motor de pintura que a "
++                               "comunidade do Krita constrói há mais de vinte anos; aqui só mudamos a casca, para quem "
++                               "desenha quadrinhos no tablet."), "nqBody", right, true));
++    struct Credit { const char *badge; const char *name; const char *info; const char *license; };
++    const Credit credits[] = {
++        {"K", "Krita", "Motor de pintura, pincéis e formato .kra · comunidade KDE", "GNU GPL"},
++        {"TT", "Tyson Tan", "Arte da abertura e a mascote Kiki", "CC BY-SA"},
++        {"M", "Montserrat", "Tipografia do Nanquim · Julieta Ulanovsky", "SIL OFL"},
++        {"N", "Nanquim", "Interface de tablet, capítulos, balões e time-lapse", "GNU GPL"},
++    };
++    for (const Credit &c : credits) {
++        QWidget *row = new QWidget(right);
++        row->setMinimumHeight(58);
++        QHBoxLayout *l = new QHBoxLayout(row);
++        l->setContentsMargins(0, 6, 0, 6);
++        l->setSpacing(14);
++        QLabel *badge = new QLabel(QString::fromUtf8(c.badge), row);
++        badge->setFixedSize(42, 42);
++        badge->setAlignment(Qt::AlignCenter);
++        badge->setStyleSheet(QStringLiteral("background: #17171a; border-radius: 12px; color: #22d3ee; font-size: 14px; font-weight: 800;"));
++        QVBoxLayout *t = new QVBoxLayout();
++        t->setSpacing(2);
++        t->addWidget(nqLabel(QString::fromUtf8(c.name), "nqItem", row));
++        t->addWidget(nqLabel(i18n(c.info), "nqSmall", row, true));
++        l->addWidget(badge);
++        l->addLayout(t, 1);
++        l->addWidget(nqLabel(QString::fromUtf8(c.license), "nqSmall", row));
++        rl->addWidget(row);
++        rl->addWidget(nqDivider(right));
++    }
++    rl->addStretch(1);
++    QHBoxLayout *actions = new QHBoxLayout();
++    actions->setSpacing(8);
++    QPushButton *support = nqButton(i18n("Apoiar o Krita"), right, "nqPrimary");
++    QPushButton *code = nqButton(i18n("Código do Nanquim"), right);
++    QPushButton *krita = nqButton(i18n("Sobre o Krita"), right, "nqGhost");
++    actions->addWidget(support);
++    actions->addWidget(code);
++    actions->addWidget(krita);
++    actions->addStretch(1);
++    rl->addLayout(actions);
++    root->addWidget(right, 1);
++
++    QObject::connect(support, &QPushButton::clicked, d, []() {
++        QDesktopServices::openUrl(QUrl(QStringLiteral("https://krita.org/en/donations/")));
++    });
++    QObject::connect(code, &QPushButton::clicked, d, []() {
++        QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/isaiasdaniel290308-bot/Nanquim")));
++    });
++    QObject::connect(krita, &QPushButton::clicked, d, [mw, d]() {
++        d->accept();
++        if (QAction *a = act(mw, "help_about_app")) a->trigger();
++    });
++    d->open();
++}
++
++// ---------------------------------------------------------------------------
++// Cor: roda de cor do Krita, tinta e correção, cinzas de mangá e cores recentes
++// ---------------------------------------------------------------------------
++const QString COLOR_DOCK_ID = QStringLiteral("NanquimColorDock");
++
++void setForeground(KisMainWindow *mw, const QColor &c)
++{
++    KisViewManager *vm = mw->viewManager();
++    if (!vm || !vm->canvasResourceProvider()) return;
++    vm->canvasResourceProvider()->setFGColor(KoColor(c, KoColorSpaceRegistry::instance()->rgb8()));
++}
++
++QDockWidget *buildColorDock(KisMainWindow *mw)
++{
++    QDockWidget *dock = new QDockWidget(i18n("Cor"), mw);
++    dock->setObjectName(COLOR_DOCK_ID);
++    dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable);
++    dock->setTitleBarWidget(new QWidget(dock));
++    QWidget *body = new QWidget(dock);
++    body->setObjectName(QStringLiteral("nanquimColorBody"));
++    body->setAttribute(Qt::WA_StyledBackground);
++    body->setStyleSheet(QLatin1String(SHEET_STYLE) + QStringLiteral(
++        "QWidget#nanquimColorBody { background: #1c1c20; }"
++        "QWidget#nanquimColorBody QLabel { color: #ececf1; background: transparent; }"));
++    QVBoxLayout *root = new QVBoxLayout(body);
++    root->setContentsMargins(18, 14, 18, 16);
++    root->setSpacing(12);
++
++    QHBoxLayout *head = new QHBoxLayout();
++    head->addWidget(nqLabel(i18n("COR"), "nqSection", body), 1);
++    QPushButton *picker = nqButton(QString(), body, "nqGhost");
++    picker->setIcon(designIcon(Svg::PICKER, 20));
++    picker->setToolTip(i18n("Conta-gotas"));
++    picker->setFixedWidth(48);
++    head->addWidget(picker);
++    root->addLayout(head);
++
++    KisVisualColorSelector *selector = new KisVisualColorSelector(body);
++    selector->setAcceptTabletEvents(true);
++    selector->setDisplayRenderer(KisDisplayColorConverter::dumbConverterInstance()->displayRendererInterface());
++    selector->setConfig(true, false);
++    selector->setMinimumSize(220, 220);
++    selector->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
++    root->addWidget(selector, 1);
++
++    QHBoxLayout *hexRow = new QHBoxLayout();
++    hexRow->setSpacing(10);
++    QLabel *current = new QLabel(body);
++    current->setFixedSize(36, 36);
++    QLineEdit *hex = new QLineEdit(body);
++    hex->setMaxLength(7);
++    hexRow->addWidget(current);
++    hexRow->addWidget(hex, 1);
++    root->addLayout(hexRow);
++
++    root->addWidget(nqLabel(i18n("Tinta e correção"), "nqSmall", body));
++    QHBoxLayout *ink = new QHBoxLayout();
++    ink->setSpacing(8);
++    struct Swatch { QColor c; const char *tip; };
++    const QList<Swatch> inks = {
++        {QColor(0x15, 0x15, 0x15), "Preto nanquim"}, {QColor(0xfa, 0xfa, 0xf7), "Branco de correção"},
++        {QColor(0x8f, 0xb3, 0xff), "Azul de rascunho"}, {QColor(0xe5, 0x48, 0x4d), "Vermelho de revisão"},
++    };
++    for (const Swatch &s : inks) {
++        QPushButton *b = swatchButton(body, s.c, i18n(s.tip));
++        const QColor c = s.c;
++        QObject::connect(b, &QPushButton::clicked, mw, [mw, c]() { setForeground(mw, c); });
++        ink->addWidget(b);
++    }
++    ink->addStretch(1);
++    root->addLayout(ink);
++
++    root->addWidget(nqLabel(i18n("Cinzas para mangá · 10 a 90%"), "nqSmall", body));
++    QGridLayout *grays = new QGridLayout();
++    grays->setSpacing(4);
++    for (int i = 1; i <= 9; i++) {
++        const int v = qRound(255 * (1.0 - i / 10.0));
++        const QColor c(v, v, v);
++        QPushButton *b = nqButton(QString(), body);
++        b->setToolTip(i18n("Cinza %1%", i * 10));
++        b->setFixedHeight(34);
++        b->setMinimumWidth(24);
++        b->setStyleSheet(QStringLiteral("QPushButton { background: %1; border: 1px solid #33333b; border-radius: 6px; min-height: 34px; padding: 0; }")
++                         .arg(c.name()));
++        QObject::connect(b, &QPushButton::clicked, mw, [mw, c]() { setForeground(mw, c); });
++        grays->addWidget(b, 0, i - 1);
++    }
++    root->addLayout(grays);
++
++    root->addWidget(nqLabel(i18n("Usadas há pouco"), "nqSmall", body));
++    QHBoxLayout *recent = new QHBoxLayout();
++    recent->setSpacing(8);
++    QList<QPushButton*> recentButtons;
++    for (int i = 0; i < 7; i++) {
++        QPushButton *b = nqButton(QString(), body);
++        b->setFixedSize(32, 32);
++        recentButtons << b;
++        recent->addWidget(b);
++    }
++    recent->addStretch(1);
++    root->addLayout(recent);
++
++    QPushButton *full = nqButton(i18n("Seletor completo do Krita"), body, "nqGhost");
++    root->addWidget(full, 0, Qt::AlignLeft);
++    dock->setWidget(body);
++
++    auto recentColors = std::make_shared<QList<QColor>>();
++    auto sync = [mw, selector, current, hex, recentButtons, recentColors]() {
++        KisViewManager *vm = mw->viewManager();
++        if (!vm || !vm->canvasResourceProvider()) return;
++        const KoColor fg = vm->canvasResourceProvider()->fgColor();
++        {
++            QSignalBlocker block(selector);
++            selector->slotSetColor(fg);
++        }
++        const QColor qc = fg.toQColor();
++        current->setStyleSheet(QStringLiteral("background: %1; border-radius: 18px; border: 2px solid #ececf1;").arg(qc.name()));
++        if (!hex->hasFocus()) hex->setText(qc.name());
++        recentColors->clear();
++        if (vm->paintOpBox() && vm->paintOpBox()->favoriteResourcesManager()) {
++            KisFavoriteResourceManager *fav = vm->paintOpBox()->favoriteResourcesManager();
++            for (int i = 0; i < fav->recentColorsTotal() && recentColors->size() < recentButtons.size(); i++) {
++                *recentColors << fav->recentColorAt(i).toQColor();
++            }
++        }
++        for (int i = 0; i < recentButtons.size(); i++) {
++            const bool has = i < recentColors->size();
++            recentButtons[i]->setVisible(has);
++            if (has) {
++                recentButtons[i]->setStyleSheet(QStringLiteral(
++                    "QPushButton { background: %1; border: 1px solid #3a3a42; border-radius: 16px; min-height: 32px; padding: 0; }")
++                    .arg(recentColors->at(i).name()));
++            }
++        }
++    };
++    for (int i = 0; i < recentButtons.size(); i++) {
++        QObject::connect(recentButtons[i], &QPushButton::clicked, mw, [mw, recentColors, i]() {
++            if (i < recentColors->size()) setForeground(mw, recentColors->at(i));
++        });
++    }
++    QObject::connect(selector, &KisVisualColorSelector::sigNewColor, mw, [mw](const KoColor &c) {
++        KisViewManager *vm = mw->viewManager();
++        if (vm && vm->canvasResourceProvider()) vm->canvasResourceProvider()->setFGColor(c);
++    });
++    QObject::connect(hex, &QLineEdit::editingFinished, mw, [mw, hex]() {
++        const QColor c(hex->text().trimmed());
++        if (c.isValid()) setForeground(mw, c);
++    });
++    QObject::connect(picker, &QPushButton::clicked, mw, [mw]() {
++        if (QAction *a = act(mw, "KritaSelected/KisToolColorSampler")) a->trigger();
++    });
++    QObject::connect(full, &QPushButton::clicked, mw, [mw, dock]() {
++        QDockWidget *krita = findDock(mw, {QStringLiteral("ColorSelectorNg"), QStringLiteral("WideGamutColorSelector")});
++        if (krita) togglePanel(mw, krita);
++        Q_UNUSED(dock);
++    });
++    if (KisViewManager *vm = mw->viewManager()) {
++        if (vm->canvasResourceProvider()) {
++            QObject::connect(vm->canvasResourceProvider(), &KisCanvasResourceProvider::sigFGColorChanged, dock,
++                             [sync](const KoColor &) { sync(); });
++        }
++    }
++    QObject::connect(dock, &QDockWidget::visibilityChanged, dock, [sync](bool on) { if (on) sync(); });
++
++    mw->addDockWidget(Qt::RightDockWidgetArea, dock);
++    dock->hide();
++    return dock;
++}
++
++// ---------------------------------------------------------------------------
++// Ajustes do pincel: o essencial do editor do Krita, num toque
++// ---------------------------------------------------------------------------
++struct PressureCurve { const char *name; const char *curve; };
++const PressureCurve PRESSURE_CURVES[] = {
++    {"Leve", "0,0;0.25,0.55;1,1;"},
++    {"Normal", "0,0;1,1;"},
++    {"Firme", "0,0;0.6,0.3;1,1;"},
++};
++
++int currentPressureCurve()
++{
++    const QString cur = KisConfig(true).pressureTabletCurve().remove(QLatin1Char(' '));
++    for (int i = 0; i < 3; i++) {
++        if (cur == QLatin1String(PRESSURE_CURVES[i].curve)) return i;
++    }
++    return -1;
++}
++
++void setPressureCurve(int index)
++{
++    if (index < 0 || index > 2) return;
++    KisConfig cfg(false);
++    cfg.setPressureTabletCurve(QLatin1String(PRESSURE_CURVES[index].curve));
++    KisConfigNotifier::instance()->notifyConfigChanged();
++}
++
++// curva de pressão desenhada (só para mostrar)
++class CurvePreview : public QWidget
++{
++public:
++    explicit CurvePreview(QWidget *parent) : QWidget(parent) { setFixedSize(220, 150); }
++    void setCurve(const QString &curve) { m_curve = curve; update(); }
++protected:
++    void paintEvent(QPaintEvent *) override
++    {
++        QPainter g(this);
++        g.setRenderHint(QPainter::Antialiasing);
++        const QRectF r = QRectF(rect()).adjusted(1, 1, -1, -1);
++        g.setPen(QPen(QColor(0x26, 0x26, 0x2c), 1));
++        g.setBrush(QColor(0x17, 0x17, 0x1a));
++        g.drawRoundedRect(r, 12, 12);
++        for (int i = 1; i < 4; i++) {
++            g.drawLine(QPointF(r.left() + r.width() * i / 4, r.top() + 6), QPointF(r.left() + r.width() * i / 4, r.bottom() - 6));
++            g.drawLine(QPointF(r.left() + 6, r.top() + r.height() * i / 4), QPointF(r.right() - 6, r.top() + r.height() * i / 4));
++        }
++        const KisCubicCurve curve(m_curve.isEmpty() ? QStringLiteral("0,0;1,1;") : m_curve);
++        const QRectF a = r.adjusted(14, 14, -14, -14);
++        QPainterPath path;
++        for (int i = 0; i <= 48; i++) {
++            const qreal x = i / 48.0;
++            const QPointF p(a.left() + x * a.width(), a.bottom() - qBound(0.0, curve.value(x), 1.0) * a.height());
++            if (i == 0) path.moveTo(p); else path.lineTo(p);
++        }
++        g.setPen(QPen(QColor(0x22, 0xd3, 0xee), 2.6, Qt::SolidLine, Qt::RoundCap));
++        g.setBrush(Qt::NoBrush);
++        g.drawPath(path);
++    }
++private:
++    QString m_curve;
++};
++
++void showBrushSettings(KisMainWindow *mw)
++{
++    KisViewManager *vm = mw->viewManager();
++    if (!vm || !vm->canvasResourceProvider()) return;
++    KisPaintOpPresetSP preset = vm->canvasResourceProvider()->currentPreset();
++    if (!preset) return;
++    KoCanvasResourceProvider *res = resources(mw);
++
++    QDialog *d = makeSheet(mw, 980, 620);
++    QHBoxLayout *root = new QHBoxLayout(d);
++    root->setContentsMargins(0, 0, 0, 0);
++    root->setSpacing(0);
++
++    // --- coluna da esquerda: nome e miniatura do pincel ------------------------
++    QWidget *left = new QWidget(d);
++    left->setFixedWidth(340);
++    left->setAttribute(Qt::WA_StyledBackground);
++    left->setStyleSheet(QStringLiteral("background: #17171a; border-top-left-radius: 18px; border-bottom-left-radius: 18px;"));
++    QVBoxLayout *ll = new QVBoxLayout(left);
++    ll->setContentsMargins(24, 24, 24, 24);
++    ll->setSpacing(10);
++    ll->addWidget(nqLabel(i18n("AJUSTES DO PINCEL"), "nqSection", left));
++    QString name = preset->name();
++    name.replace(QLatin1Char('_'), QLatin1Char(' '));
++    ll->addWidget(nqLabel(name, "nqTitle", left, true));
++    ll->addWidget(nqLabel(preset->paintOp().name(), "nqSmall", left));
++    QLabel *thumb = new QLabel(left);
++    thumb->setAlignment(Qt::AlignCenter);
++    thumb->setMinimumHeight(220);
++    thumb->setStyleSheet(QStringLiteral("background: #fafaf7; border-radius: 12px;"));
++    const QImage img = preset->image();
++    if (!img.isNull()) thumb->setPixmap(QPixmap::fromImage(img.scaled(220, 220, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
++    ll->addWidget(thumb, 1);
++    ll->addWidget(nqLabel(i18n("A suavização do traço fica em Opções da ferramenta."), "nqSmall", left, true));
++    root->addWidget(left);
++
++    // --- coluna da direita: controles ------------------------------------------
++    QWidget *right = new QWidget(d);
++    QVBoxLayout *rl = new QVBoxLayout(right);
++    rl->setContentsMargins(26, 22, 22, 22);
++    rl->setSpacing(14);
++    QHBoxLayout *head = new QHBoxLayout();
++    head->addStretch(1);
++    QPushButton *close = nqButton(QStringLiteral("✕"), right, "nqClose");
++    QObject::connect(close, &QPushButton::clicked, d, &QDialog::reject);
++    head->addWidget(close);
++    rl->addLayout(head);
++
++    QGridLayout *grid = new QGridLayout();
++    grid->setHorizontalSpacing(28);
++    grid->setVerticalSpacing(8);
++    auto addSlider = [right, grid](int row, int col, const QString &title, int min, int max, int value,
++                                   std::function<QString(int)> fmt) {
++        QHBoxLayout *t = new QHBoxLayout();
++        t->addWidget(nqLabel(title, "nqItem", right), 1);
++        QLabel *v = nqLabel(fmt(value), "nqSmall", right);
++        t->addWidget(v);
++        QSlider *s = new QSlider(Qt::Horizontal, right);
++        s->setRange(min, max);
++        s->setValue(value);
++        QObject::connect(s, &QSlider::valueChanged, v, [v, fmt](int x) { v->setText(fmt(x)); });
++        QVBoxLayout *box = new QVBoxLayout();
++        box->setSpacing(6);
++        box->addLayout(t);
++        box->addWidget(s);
++        grid->addLayout(box, row, col);
++        return s;
++    };
++    const qreal size = res ? res->resource(KoCanvasResource::Size).toReal() : 10.0;
++    const qreal opacity = res ? res->resource(KoCanvasResource::Opacity).toReal() : 1.0;
++    const qreal flow = res ? res->resource(KoCanvasResource::Flow).toReal() : 1.0;
++    QSlider *sizeS = addSlider(0, 0, i18n("Tamanho"), 0, 1000, sizeToSlider(size),
++                               [](int v) { return QStringLiteral("%1 px").arg(qRound(sliderToSize(v))); });
++    QSlider *opacityS = addSlider(0, 1, i18n("Opacidade"), 1, 100, qRound(opacity * 100),
++                                  [](int v) { return QStringLiteral("%1%").arg(v); });
++    QSlider *flowS = addSlider(1, 0, i18n("Fluxo"), 1, 100, qRound(flow * 100),
++                               [](int v) { return QStringLiteral("%1%").arg(v); });
++    rl->addLayout(grid);
++    QObject::connect(sizeS, &QSlider::valueChanged, mw, [mw](int v) {
++        if (KisViewManager *m = mw->viewManager()) m->canvasResourceProvider()->setSize(sliderToSize(v));
++    });
++    QObject::connect(opacityS, &QSlider::valueChanged, mw, [mw](int v) {
++        if (KisViewManager *m = mw->viewManager()) m->canvasResourceProvider()->setOpacity(v / 100.0);
++    });
++    QObject::connect(flowS, &QSlider::valueChanged, mw, [mw](int v) {
++        if (KisViewManager *m = mw->viewManager()) m->canvasResourceProvider()->setFlow(v / 100.0);
++    });
++
++    rl->addWidget(nqDivider(right));
++    QHBoxLayout *pressure = new QHBoxLayout();
++    pressure->setSpacing(22);
++    CurvePreview *preview = new CurvePreview(right);
++    preview->setCurve(KisConfig(true).pressureTabletCurve());
++    QVBoxLayout *pl = new QVBoxLayout();
++    pl->setSpacing(8);
++    pl->addWidget(nqLabel(i18n("Curva de pressão"), "nqItem", right));
++    pl->addWidget(preview);
++    pressure->addLayout(pl);
++    QVBoxLayout *hand = new QVBoxLayout();
++    hand->setSpacing(10);
++    hand->addWidget(nqLabel(i18n("Sua mão"), "nqSmall", right));
++    QButtonGroup *handGroup = new QButtonGroup(right);
++    hand->addLayout(chipRow(right, handGroup, {i18n("Leve"), i18n("Normal"), i18n("Firme")}, currentPressureCurve()));
++    hand->addWidget(nqLabel(i18n("Vale para todos os pincéis. Leve: traço grosso com pouca força. "
++                                 "Firme: precisa apertar mais para engrossar."), "nqSmall", right, true));
++    hand->addStretch(1);
++    pressure->addLayout(hand, 1);
++    rl->addLayout(pressure);
++    QObject::connect(handGroup, &QButtonGroup::idClicked, preview, [preview](int id) {
++        setPressureCurve(id);
++        preview->setCurve(QLatin1String(PRESSURE_CURVES[id].curve));
++    });
++
++    rl->addStretch(1);
++    rl->addWidget(nqDivider(right));
++    QHBoxLayout *actions = new QHBoxLayout();
++    actions->setSpacing(8);
++    QPushButton *full = nqButton(i18n("Editor completo do Krita"), right, "nqGhost");
++    QPushButton *restore = nqButton(i18n("Restaurar"), right, "nqGhost");
++    QPushButton *saveNew = nqButton(i18n("Salvar como novo"), right);
++    QPushButton *save = nqButton(i18n("Salvar"), right, "nqPrimary");
++    actions->addWidget(full);
++    actions->addStretch(1);
++    actions->addWidget(restore);
++    actions->addWidget(saveNew);
++    actions->addWidget(save);
++    rl->addLayout(actions);
++    root->addWidget(right, 1);
++
++    QObject::connect(full, &QPushButton::clicked, d, [mw, d]() {
++        d->accept();
++        QTimer::singleShot(150, mw, [mw]() { openBrushEditor(mw); });
++    });
++    QObject::connect(restore, &QPushButton::clicked, d, [mw, d]() {
++        if (QAction *a = act(mw, "reload_preset_action")) a->trigger();
++        d->accept();
++    });
++    QObject::connect(saveNew, &QPushButton::clicked, d, [mw, d]() {
++        d->accept();
++        QTimer::singleShot(150, mw, [mw]() {
++            if (saveCurrentAsNewBrush(mw)) showToast(mw, i18n("Pincel novo guardado nos Importados"));
++        });
++    });
++    QObject::connect(save, &QPushButton::clicked, d, [mw, d]() {
++        KisViewManager *m = mw->viewManager();
++        KisPaintOpPresetSP p = m && m->canvasResourceProvider() ? m->canvasResourceProvider()->currentPreset() : KisPaintOpPresetSP();
++        if (p && KisResourceUserOperations::updateResourceWithUserInput(mw, p)) {
++            showToast(mw, i18n("Pincel salvo"));
++        }
++        d->accept();
++    });
++    d->open();
++}
++
++// ---------------------------------------------------------------------------
++// Nova página: formatos de quadrinho, resolução, papel e como começar
++// ---------------------------------------------------------------------------
++struct PageFormat { const char *name; const char *detail; double wmm; double hmm; int wpx; int hpx; };
++const PageFormat PAGE_FORMATS[] = {
++    {"Mangá B4", "257 × 364 mm", 257, 364, 0, 0},
++    {"Mangá A4", "210 × 297 mm", 210, 297, 0, 0},
++    {"Mangá B5", "182 × 257 mm · tankobon", 182, 257, 0, 0},
++    {"Comic americano", "6,63 × 10,25 pol", 168.3, 260.4, 0, 0},
++    {"Webtoon", "800 × 12800 px · rolagem", 0, 0, 800, 12800},
++    {"Quadrado", "2160 × 2160 px · redes", 0, 0, 2160, 2160},
++    {"Personalizado", "você escolhe", 0, 0, 0, 0},
++};
++
++void showComicsSheet(KisMainWindow *mw, int tab);
++
++void showNewPage(KisMainWindow *mw)
++{
++    QDialog *d = makeSheet(mw, 1060, 660);
++    QVBoxLayout *root = new QVBoxLayout(d);
++    root->setContentsMargins(26, 22, 26, 20);
++    root->setSpacing(14);
++    root->addLayout(sheetHeader(d, i18n("Nova página"), i18n("Escolha o formato")));
++
++    QHBoxLayout *mid = new QHBoxLayout();
++    mid->setSpacing(22);
++    QGridLayout *grid = new QGridLayout();
++    grid->setSpacing(12);
++    QButtonGroup *formats = new QButtonGroup(d);
++    const int nFormats = int(sizeof(PAGE_FORMATS) / sizeof(PAGE_FORMATS[0]));
++    for (int i = 0; i < nFormats; i++) {
++        const PageFormat &f = PAGE_FORMATS[i];
++        QPushButton *card = nqButton(QString(), d);
++        card->setProperty("class", QStringLiteral("nqCard"));
++        card->setCheckable(true);
++        card->setMinimumSize(180, 150);
++        QVBoxLayout *cl = new QVBoxLayout(card);
++        cl->setContentsMargins(10, 12, 10, 10);
++        cl->setSpacing(6);
++        // papel em miniatura, na proporção do formato
++        const double ratio = f.wmm > 0 ? f.wmm / f.hmm : (f.wpx > 0 ? double(f.wpx) / f.hpx : 1.3);
++        const int ph = 76;
++        const int pw = qBound(18, int(ph * ratio), 96);
++        QLabel *paper = new QLabel(card);
++        paper->setFixedSize(pw, ratio > 1.2 ? int(pw / ratio) : ph);
++        paper->setStyleSheet(QStringLiteral("background: #fafaf7; border-radius: 3px;"));
++        paper->setAttribute(Qt::WA_TransparentForMouseEvents);
++        QLabel *n = nqLabel(i18n(f.name), "nqItem", card);
++        QLabel *det = nqLabel(i18n(f.detail), "nqSmall", card);
++        n->setAlignment(Qt::AlignCenter);
++        det->setAlignment(Qt::AlignCenter);
++        n->setAttribute(Qt::WA_TransparentForMouseEvents);
++        det->setAttribute(Qt::WA_TransparentForMouseEvents);
++        cl->addStretch(1);
++        cl->addWidget(paper, 0, Qt::AlignHCenter);
++        cl->addStretch(1);
++        cl->addWidget(n);
++        cl->addWidget(det);
++        formats->addButton(card, i);
++        grid->addWidget(card, i / 4, i % 4);
++    }
++    mid->addLayout(grid, 1);
++
++    QFrame *side = new QFrame(d);
++    side->setObjectName(QStringLiteral("nqPanel"));
++    side->setFixedWidth(340);
++    QVBoxLayout *sl = new QVBoxLayout(side);
++    sl->setContentsMargins(18, 16, 18, 16);
++    sl->setSpacing(10);
++    QHBoxLayout *sizeRow = new QHBoxLayout();
++    QSpinBox *wBox = new QSpinBox(side);
++    QSpinBox *hBox = new QSpinBox(side);
++    for (QSpinBox *s : {wBox, hBox}) {
++        s->setRange(64, 30000);
++        s->setSuffix(QStringLiteral(" px"));
++        s->setButtonSymbols(QAbstractSpinBox::NoButtons);
++    }
++    QVBoxLayout *wl = new QVBoxLayout();
++    wl->addWidget(nqLabel(i18n("Largura"), "nqSmall", side));
++    wl->addWidget(wBox);
++    QVBoxLayout *hl = new QVBoxLayout();
++    hl->addWidget(nqLabel(i18n("Altura"), "nqSmall", side));
++    hl->addWidget(hBox);
++    sizeRow->addLayout(wl);
++    sizeRow->addLayout(hl);
++    sl->addLayout(sizeRow);
++
++    sl->addWidget(nqLabel(i18n("Resolução"), "nqSmall", side));
++    QButtonGroup *dpiGroup = new QButtonGroup(side);
++    sl->addLayout(chipRow(side, dpiGroup, {QStringLiteral("300 dpi"), QStringLiteral("600 dpi"), i18n("Tela")}, 1));
++
++    sl->addWidget(nqLabel(i18n("Papel"), "nqSmall", side));
++    QHBoxLayout *paperRow = new QHBoxLayout();
++    paperRow->setSpacing(8);
++    QButtonGroup *paperGroup = new QButtonGroup(side);
++    const QList<QPair<QColor, QString>> papers = {
++        {QColor(Qt::white), i18n("Branco")}, {QColor(0xf3, 0xec, 0xdc), i18n("Creme")}, {QColor(0xdd, 0xdd, 0xdd), i18n("Transparente")}};
++    for (int i = 0; i < papers.size(); i++) {
++        QPushButton *b = swatchButton(side, papers[i].first, papers[i].second);
++        b->setCheckable(true);
++        b->setChecked(i == 0);
++        if (i == 2) {
++            b->setStyleSheet(QStringLiteral("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ffffff, stop:0.49 #ffffff,"
++                                            " stop:0.5 #b8b8b8, stop:1 #b8b8b8);"));
++        }
++        paperGroup->addButton(b, i);
++        paperRow->addWidget(b);
++    }
++    paperRow->addStretch(1);
++    sl->addLayout(paperRow);
++
++    sl->addWidget(nqLabel(i18n("Começar com"), "nqSmall", side));
++    QCheckBox *draft = new QCheckBox(i18n("Camada de rascunho"), side);
++    draft->setChecked(true);
++    QCheckBox *guides = new QCheckBox(i18n("Guias de sangria e área segura"), side);
++    guides->setChecked(true);
++    QCheckBox *panels = new QCheckBox(i18n("Escolher requadros depois"), side);
++    sl->addWidget(draft);
++    sl->addWidget(guides);
++    sl->addWidget(panels);
++
++    sl->addWidget(nqLabel(i18n("Capítulo"), "nqSmall", side));
++    QComboBox *chapter = new QComboBox(side);
++    chapter->addItem(i18n("Nenhum"), QString());
++    Q_FOREACH (const ChapterStore::Chapter &c, ChapterStore::instance()->chapters()) {
++        chapter->addItem(i18n("%1 · página %2", c.name, c.pages.size() + 1), c.id);
++        if (c.id == s_pendingChapter) chapter->setCurrentIndex(chapter->count() - 1);
++    }
++    sl->addWidget(chapter);
++    sl->addStretch(1);
++    mid->addWidget(side);
++    root->addLayout(mid, 1);
++
++    QHBoxLayout *foot = new QHBoxLayout();
++    QLabel *estimate = nqLabel(QString(), "nqSmall", d, true);
++    foot->addWidget(estimate, 1);
++    QPushButton *cancel = nqButton(i18n("Cancelar"), d, "nqGhost");
++    QPushButton *create = nqButton(i18n("Criar página"), d, "nqPrimary");
++    foot->addWidget(cancel);
++    foot->addWidget(create);
++    root->addLayout(foot);
++
++    auto dpiValue = [dpiGroup]() { const int id = dpiGroup->checkedId(); return id == 0 ? 300 : id == 1 ? 600 : 72; };
++    auto updating = std::make_shared<bool>(false);
++    auto applyFormat = [formats, wBox, hBox, dpiValue, updating]() {
++        const int i = formats->checkedId();
++        if (i < 0) return;
++        const PageFormat &f = PAGE_FORMATS[i];
++        *updating = true;
++        if (f.wmm > 0) {
++            wBox->setValue(qRound(f.wmm / 25.4 * dpiValue()));
++            hBox->setValue(qRound(f.hmm / 25.4 * dpiValue()));
++        } else if (f.wpx > 0) {
++            wBox->setValue(f.wpx);
++            hBox->setValue(f.hpx);
++        }
++        *updating = false;
++    };
++    auto updateEstimate = [wBox, hBox, draft, estimate]() {
++        const qint64 layers = draft->isChecked() ? 3 : 2;
++        const double mb = double(wBox->value()) * hBox->value() * 4 * (layers + 1) / (1024.0 * 1024.0);
++        estimate->setText(mb > 900
++            ? i18n("Cerca de %1 MB abertos. É pesado para o tablet: prefira 300 dpi ou um formato menor.", qRound(mb))
++            : i18n("Cerca de %1 MB abertos na memória.", qRound(mb)));
++    };
++    QObject::connect(formats, &QButtonGroup::idClicked, d, [applyFormat, updateEstimate](int) { applyFormat(); updateEstimate(); });
++    QObject::connect(dpiGroup, &QButtonGroup::idClicked, d, [applyFormat, updateEstimate](int) { applyFormat(); updateEstimate(); });
++    for (QSpinBox *s : {wBox, hBox}) {
++        QObject::connect(s, QOverload<int>::of(&QSpinBox::valueChanged), d, [formats, updating, updateEstimate, nFormats](int) {
++            if (!*updating) {
++                if (QAbstractButton *custom = formats->button(nFormats - 1)) custom->setChecked(true);
++            }
++            updateEstimate();
++        });
++    }
++    QObject::connect(draft, &QCheckBox::toggled, d, [updateEstimate](bool) { updateEstimate(); });
++    formats->button(0)->setChecked(true);
++    applyFormat();
++    updateEstimate();
++
++    QObject::connect(cancel, &QPushButton::clicked, d, &QDialog::reject);
++    QObject::connect(create, &QPushButton::clicked, d, [=]() {
++        const int w = wBox->value(), h = hBox->value();
++        const int dpi = dpiValue();
++        const int paper = paperGroup->checkedId();
++        const QString chapterId = chapter->currentData().toString();
++        const int fmt = qMax(0, formats->checkedId());
++        const bool wantDraft = draft->isChecked();
++        const bool wantGuides = guides->isChecked();
++        const bool wantPanels = panels->isChecked();
++        d->accept();
++
++        const KoColorSpace *cs = KoColorSpaceRegistry::instance()->rgb8();
++        QColor bgColor = paper == 1 ? QColor(0xf3, 0xec, 0xdc) : QColor(Qt::white);
++        KoColor bg(bgColor, cs);
++        if (paper == 2) bg.setOpacity(OPACITY_TRANSPARENT_U8);
++        KisDocument *doc = KisPart::instance()->createDocument();
++        if (!doc->newImage(i18n(PAGE_FORMATS[fmt].name), w, h, cs, bg, KisConfig::RASTER_LAYER, 2, QString(), dpi / 72.0)) {
++            delete doc;
++            return;
++        }
++        KisImageSP image = doc->image();
++        if (wantDraft && image) {
++            KisPaintLayerSP layer = new KisPaintLayer(image, i18n("Rascunho"), OPACITY_OPAQUE_U8);
++            image->addNode(layer, image->root());
++        }
++        if (wantGuides && image) {
++            // sangria de 3 mm e área segura de 10 mm, em pontos (unidade do documento)
++            const qreal ptW = w / qreal(dpi) * 72.0, ptH = h / qreal(dpi) * 72.0;
++            const qreal bleed = 3.0 / 25.4 * 72.0, safe = 10.0 / 25.4 * 72.0;
++            KisGuidesConfig g = doc->guidesConfig();
++            g.setVerticalGuideLines({bleed, safe, ptW - safe, ptW - bleed});
++            g.setHorizontalGuideLines({bleed, safe, ptH - safe, ptH - bleed});
++            g.setShowGuides(true);
++            g.setLockGuides(true);
++            doc->setGuidesConfig(g);
++        }
++        doc->setModified(false);
++        attachDocumentToChapter(doc, chapterId);
++        KisPart::instance()->startCustomDocument(doc);
++        if (wantPanels) {
++            QTimer::singleShot(900, mw, [mw]() { if (mw->activeView()) showComicsSheet(mw, 0); });
++        }
++    });
++    d->open();
++}
++
++// ---------------------------------------------------------------------------
++// Exportar: página, capítulo ou time-lapse
++// ---------------------------------------------------------------------------
++QString publishExport(const QString &path, const QString &name, const QString &mime, QString *uriOut)
++{
++#ifdef Q_OS_ANDROID
++    QAndroidJniObject result = QAndroidJniObject::callStaticObjectMethod(
++        "org/krita/android/NanquimMedia", "publish",
++        "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
++        QtAndroid::androidActivity().object(),
++        QAndroidJniObject::fromString(path).object<jstring>(),
++        QAndroidJniObject::fromString(name).object<jstring>(),
++        QAndroidJniObject::fromString(mime).object<jstring>());
++    const QString r = result.isValid() ? result.toString() : QString();
++    if (r.isEmpty()) return QString();
++    const int nl = r.indexOf(QLatin1Char('\n'));
++    if (uriOut) *uriOut = nl > 0 ? r.left(nl) : QString();
++    return nl >= 0 ? r.mid(nl + 1) : r;
++#else
++    Q_UNUSED(mime);
++    if (uriOut) uriOut->clear();
++    QDir dir(QStandardPaths::writableLocation(QStandardPaths::PicturesLocation));
++    dir.mkpath(QStringLiteral("Nanquim"));
++    const QString dst = dir.filePath(QStringLiteral("Nanquim/") + name);
++    QFile::remove(dst);
++    return QFile::copy(path, dst) ? dst : QString();
++#endif
++}
++
++void shareExport(const QString &uri, const QString &mime)
++{
++#ifdef Q_OS_ANDROID
++    if (uri.isEmpty()) return;
++    QAndroidJniObject::callStaticMethod<void>(
++        "org/krita/android/NanquimMedia", "share",
++        "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)V",
++        QtAndroid::androidActivity().object(),
++        QAndroidJniObject::fromString(uri).object<jstring>(),
++        QAndroidJniObject::fromString(mime).object<jstring>());
++#else
++    Q_UNUSED(uri);
++    Q_UNUSED(mime);
++#endif
++}
++
++bool isDraftLayerName(const QString &name)
++{
++    const QString n = name.toLower();
++    return n.contains(QLatin1String("rascunho")) || n.contains(QLatin1String("sketch")) || n.contains(QLatin1String("esboço"));
++}
++
++// imagem final da página, sem as camadas de rascunho se pedido
++QImage renderPage(KisImageSP image, bool hideDraft)
++{
++    if (!image) return QImage();
++    QList<KisNodeSP> hidden;
++    if (hideDraft) {
++        std::function<void(KisNodeSP)> walk = [&](KisNodeSP node) {
++            for (KisNodeSP child = node->firstChild(); child; child = child->nextSibling()) {
++                if (isDraftLayerName(child->name()) && child->visible()) {
++                    child->setVisible(false);
++                    child->setDirty();
++                    hidden << child;
++                } else {
++                    walk(child);
++                }
++            }
++        };
++        walk(image->root());
++    }
++    image->waitForDone();
++    QImage out = image->convertToQImage(image->bounds(), nullptr);
++    Q_FOREACH (KisNodeSP node, hidden) {
++        node->setVisible(true);
++        node->setDirty();
++    }
++    return out;
++}
++
++QImage finishImage(QImage img, int sizeMode, bool blackWhite, bool opaque)
++{
++    if (img.isNull()) return img;
++    if (sizeMode == 1) {
++        img = img.scaled(img.width() / 2, img.height() / 2, Qt::KeepAspectRatio, Qt::SmoothTransformation);
++    } else if (sizeMode == 2 && qMax(img.width(), img.height()) > 2048) {
++        img = img.scaled(2048, 2048, Qt::KeepAspectRatio, Qt::SmoothTransformation);
++    }
++    if (opaque || blackWhite) {
++        QImage flat(img.size(), QImage::Format_RGB32);
++        flat.fill(Qt::white);
++        {
++            QPainter g(&flat);
++            g.drawImage(0, 0, img);
++        }
++        img = flat;
++    }
++    if (blackWhite) {
++        img = img.convertToFormat(QImage::Format_Grayscale8)
++                 .convertToFormat(QImage::Format_Mono, Qt::ThresholdDither | Qt::MonoOnly);
++    }
++    return img;
++}
++
++QString exportBaseName(KisDocument *doc)
++{
++    QString title = doc ? doc->caption().trimmed() : QString();
++    if (title.endsWith(QLatin1String(".kra"), Qt::CaseInsensitive)) title.chop(4);
++    title.remove(QLatin1Char('*'));
++    title = title.trimmed();
++    if (title.isEmpty() || title.startsWith(QLatin1Char('['))) title = QStringLiteral("nanquim");
++    title.replace(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]")), QStringLiteral("_"));
++    return title;
++}
++
++QString chapterOf(const QString &path)
++{
++    if (path.isEmpty()) return QString();
++    Q_FOREACH (const ChapterStore::Chapter &c, ChapterStore::instance()->chapters()) {
++        if (c.pages.contains(path)) return c.id;
++    }
++    return QString();
++}
++
++void showExport(KisMainWindow *mw)
++{
++    KisView *view = mw->activeView();
++    if (!view || !view->document() || !view->image()) return;
++    KisDocument *doc = view->document();
++    const QString chapterId = chapterOf(doc->path());
++    const ChapterStore::Chapter chapter = ChapterStore::instance()->chapter(chapterId);
++
++    QDialog *d = makeSheet(mw, 620);
++    QVBoxLayout *root = new QVBoxLayout(d);
++    root->setContentsMargins(26, 22, 26, 20);
++    root->setSpacing(14);
++    root->addLayout(sheetHeader(d, i18n("Exportar"), QString()));
++
++    QButtonGroup *what = new QButtonGroup(d);
++    QHBoxLayout *cards = new QHBoxLayout();
++    cards->setSpacing(8);
++    const QStringList titles = {i18n("Esta página"), i18n("Capítulo"), i18n("Time-lapse")};
++    const QStringList details = {exportBaseName(doc),
++                                 chapterId.isEmpty() ? i18n("fora de capítulo") : i18n("%1 páginas", chapter.pages.size()),
++                                 i18n("vídeo MP4")};
++    for (int i = 0; i < 3; i++) {
++        QPushButton *c = nqButton(QString(), d);
++        c->setProperty("class", QStringLiteral("nqCard"));
++        c->setCheckable(true);
++        QVBoxLayout *cl = new QVBoxLayout(c);
++        cl->setContentsMargins(8, 8, 8, 8);
++        cl->setSpacing(2);
++        QLabel *t = nqLabel(titles[i], "nqItem", c);
++        QLabel *s = nqLabel(details[i], "nqSmall", c);
++        t->setAlignment(Qt::AlignCenter);
++        s->setAlignment(Qt::AlignCenter);
++        t->setAttribute(Qt::WA_TransparentForMouseEvents);
++        s->setAttribute(Qt::WA_TransparentForMouseEvents);
++        cl->addWidget(t);
++        cl->addWidget(s);
++        c->setEnabled(i != 1 || !chapterId.isEmpty());
++        what->addButton(c, i);
++        cards->addWidget(c, 1);
++    }
++    what->button(0)->setChecked(true);
++    root->addLayout(cards);
++
++    QStackedWidget *pages = new QStackedWidget(d);
++    // --- página e capítulo -----------------------------------------------------
++    QWidget *imagePage = new QWidget(pages);
++    QVBoxLayout *il = new QVBoxLayout(imagePage);
++    il->setContentsMargins(0, 0, 0, 0);
++    il->setSpacing(10);
++    il->addWidget(nqLabel(i18n("Formato"), "nqSmall", imagePage));
++    QButtonGroup *format = new QButtonGroup(imagePage);
++    il->addLayout(chipRow(imagePage, format, {QStringLiteral("PNG"), QStringLiteral("JPG"), QStringLiteral("PSD"),
++                                              QStringLiteral("PDF"), i18n("Cópia .kra")}, 0));
++    il->addWidget(nqLabel(i18n("Tamanho"), "nqSmall", imagePage));
++    QButtonGroup *size = new QButtonGroup(imagePage);
++    il->addLayout(chipRow(imagePage, size, {i18n("Original"), i18n("Metade"), i18n("Para redes · 2048 px")}, 0));
++    QCheckBox *hideDraft = new QCheckBox(i18n("Esconder camadas de rascunho"), imagePage);
++    hideDraft->setChecked(true);
++    QCheckBox *blackWhite = new QCheckBox(i18n("Só preto e branco (para gráfica)"), imagePage);
++    il->addWidget(hideDraft);
++    il->addWidget(blackWhite);
++    pages->addWidget(imagePage);
++
++    // --- time-lapse --------------------------------------------------------------
++    QWidget *videoPage = new QWidget(pages);
++    QVBoxLayout *vl = new QVBoxLayout(videoPage);
++    vl->setContentsMargins(0, 0, 0, 0);
++    vl->setSpacing(10);
++    NanquimTimelapseRecorder *recorder = s_recorder.data();
++    const int frames = recorder ? recorder->frameCount() : 0;
++    vl->addWidget(nqLabel(frames > 0 ? i18n("%1 quadros gravados neste desenho, sem as pausas.", frames)
++                                     : i18n("Nada gravado ainda neste desenho."), "nqBody", videoPage, true));
++    vl->addWidget(nqLabel(i18n("Duração"), "nqSmall", videoPage));
++    QButtonGroup *duration = new QButtonGroup(videoPage);
++    vl->addLayout(chipRow(videoPage, duration, {i18n("30 segundos"), i18n("1 minuto"), i18n("Completo")}, 0));
++    QCheckBox *autoRecord = new QCheckBox(i18n("Gravar sozinho enquanto desenho"), videoPage);
++    autoRecord->setChecked(NanquimTimelapseRecorder::enabled());
++    QObject::connect(autoRecord, &QCheckBox::toggled, d, [](bool on) { NanquimTimelapseRecorder::setEnabled(on); });
++    vl->addWidget(autoRecord);
++    vl->addStretch(1);
++    pages->addWidget(videoPage);
++    root->addWidget(pages);
++
++    QLabel *where = nqLabel(i18n("Salva em Imagens › Nanquim. PSD, PDF e .kra vão para Downloads › Nanquim."),
++                            "nqSmall", d, true);
++    root->addWidget(where);
++    QHBoxLayout *actions = new QHBoxLayout();
++    actions->setSpacing(10);
++    QPushButton *share = nqButton(i18n("Compartilhar"), d);
++    QPushButton *go = nqButton(i18n("Exportar"), d, "nqPrimary");
++    actions->addStretch(1);
++    actions->addWidget(share);
++    actions->addWidget(go);
++    root->addLayout(actions);
++
++    auto refresh = [what, pages, format, size, hideDraft, blackWhite, where, share, go, frames]() {
++        const int w = what->checkedId();
++        pages->setCurrentIndex(w == 2 ? 1 : 0);
++        const int f = format->checkedId();
++        const bool chapterMode = w == 1;
++        // capítulo: só imagens soltas ou um PDF
++        if (QAbstractButton *psd = format->button(2)) psd->setEnabled(!chapterMode);
++        if (QAbstractButton *kra = format->button(4)) kra->setEnabled(!chapterMode);
++        if (chapterMode && (f == 2 || f == 4)) format->button(3)->setChecked(true);
++        const bool layered = !chapterMode && (format->checkedId() == 2 || format->checkedId() == 4);
++        for (QAbstractButton *b : size->buttons()) b->setEnabled(!layered);
++        hideDraft->setEnabled(!layered);
++        blackWhite->setEnabled(!layered);
++        where->setVisible(w != 2);
++        share->setVisible(w == 0);
++        go->setText(w == 2 ? i18n("Exportar vídeo") : chapterMode ? i18n("Exportar capítulo") : i18n("Exportar"));
++        go->setEnabled(w != 2 || frames > 0);
++    };
++    QObject::connect(what, &QButtonGroup::idClicked, d, [refresh](int) { refresh(); });
++    QObject::connect(format, &QButtonGroup::idClicked, d, [refresh](int) { refresh(); });
++    refresh();
++
++    auto run = [=](bool thenShare) {
++        const int w = what->checkedId();
++        if (w == 2) {
++            const int id = duration->checkedId();
++            d->accept();
++            if (s_recorder) exportTimelapse(mw, s_recorder.data(), id == 0 ? 30 : id == 1 ? 60 : 0);
++            return;
++        }
++        const int f = format->checkedId();
++        const int sizeMode = size->checkedId();
++        const bool hide = hideDraft->isChecked();
++        const bool bw = blackWhite->isChecked();
++        d->accept();
++
++        QDir cache(QStandardPaths::writableLocation(QStandardPaths::CacheLocation));
++        cache.mkpath(QStringLiteral("export"));
++        const QString base = exportBaseName(doc);
++        static const char *exts[] = {"png", "jpg", "psd", "pdf", "kra"};
++        static const char *mimes[] = {"image/png", "image/jpeg", "image/vnd.adobe.photoshop", "application/pdf", "application/x-krita"};
++        QApplication::setOverrideCursor(Qt::WaitCursor);
++        QString location, uri, error;
++
++        if (w == 0 && (f == 2 || f == 4)) {
++            const QString path = cache.filePath(QStringLiteral("export/%1.%2").arg(base, QLatin1String(exts[f])));
++            QFile::remove(path);
++            if (doc->exportDocumentSync(path, QByteArray(mimes[f]))) {
++                location = publishExport(path, QFileInfo(path).fileName(), QLatin1String(mimes[f]), &uri);
++            }
++        } else if (w == 0 && f != 3) {
++            const QImage img = finishImage(renderPage(view->image(), hide), sizeMode, bw, f == 1);
++            const QString path = cache.filePath(QStringLiteral("export/%1.%2").arg(base, QLatin1String(exts[f])));
++            if (!img.isNull() && img.save(path, f == 1 ? "JPG" : "PNG", f == 1 ? 92 : -1)) {
++                location = publishExport(path, QFileInfo(path).fileName(), QLatin1String(mimes[f]), &uri);
++            }
++        } else {
++            // PDF da página, ou o capítulo inteiro (imagens soltas ou PDF)
++            QStringList paths;
++            if (w == 1) paths = ChapterStore::instance()->chapter(chapterId).pages;
++            else paths << doc->path();
++            const QString pdfPath = cache.filePath(QStringLiteral("export/%1.pdf").arg(w == 1 ? chapter.name : base));
++            QScopedPointer<QPdfWriter> pdf;
++            QScopedPointer<QPainter> pdfPainter;
++            if (f == 3) {
++                QFile::remove(pdfPath);
++                pdf.reset(new QPdfWriter(pdfPath));
++                pdf->setCreator(QStringLiteral("Nanquim"));
++                pdf->setPageMargins(QMarginsF(0, 0, 0, 0));
++            }
++            QProgressDialog progress(i18n("Exportando…"), i18n("Cancelar"), 0, paths.size(), mw);
++            progress.setWindowModality(Qt::WindowModal);
++            progress.setMinimumDuration(0);
++            int done = 0;
++            for (int i = 0; i < paths.size() && !progress.wasCanceled(); i++) {
++                progress.setValue(i);
++                progress.setLabelText(i18n("Página %1 de %2", i + 1, paths.size()));
++                QApplication::processEvents();
++                QImage img;
++                qreal dpi = 300;
++                if (paths[i] == doc->path() || paths[i].isEmpty()) {
++                    img = renderPage(view->image(), hide);
++                    dpi = view->image()->xRes() * 72.0;
++                } else {
++                    QScopedPointer<KisDocument> page(KisPart::instance()->createDocument());
++                    page->setFileBatchMode(true);
++                    if (page->openPath(paths[i], KisDocument::DontAddToRecent) && page->image()) {
++                        img = renderPage(page->image(), hide);
++                        dpi = page->image()->xRes() * 72.0;
++                    }
++                }
++                img = finishImage(img, sizeMode, bw, f != 0);
++                if (img.isNull()) continue;
++                if (sizeMode == 1) dpi /= 2;
++                if (f == 3) {
++                    const QSizeF mm(img.width() / dpi * 25.4, img.height() / dpi * 25.4);
++                    if (done == 0) {
++                        pdf->setPageSize(QPageSize(mm, QPageSize::Millimeter));
++                        pdf->setResolution(qRound(dpi));
++                        pdfPainter.reset(new QPainter(pdf.data()));
++                    } else {
++                        pdf->setPageSize(QPageSize(mm, QPageSize::Millimeter));
++                        pdf->newPage();
++                    }
++                    const QRect target = pdfPainter->viewport();
++                    pdfPainter->drawImage(target, img);
++                } else {
++                    const QString path = cache.filePath(QStringLiteral("export/%1_%2.%3")
++                                                        .arg(chapter.name).arg(i + 1, 2, 10, QLatin1Char('0'))
++                                                        .arg(QLatin1String(exts[f])));
++                    if (img.save(path, f == 1 ? "JPG" : "PNG", f == 1 ? 92 : -1)) {
++                        location = publishExport(path, QFileInfo(path).fileName(), QLatin1String(mimes[f]), &uri);
++                    }
++                }
++                done++;
++            }
++            progress.setValue(paths.size());
++            if (f == 3 && pdfPainter) {
++                pdfPainter->end();
++                pdfPainter.reset();
++                pdf.reset();
++                location = publishExport(pdfPath, QFileInfo(pdfPath).fileName(), QStringLiteral("application/pdf"), &uri);
++            }
++            if (done == 0) location.clear();
++        }
++        QApplication::restoreOverrideCursor();
++        if (location.isEmpty()) {
++            QMessageBox::warning(mw, QStringLiteral("Nanquim"), i18n("Não consegui exportar. Veja se há espaço livre no tablet."));
++            return;
++        }
++        showToast(mw, i18n("Exportado · %1", location));
++        if (thenShare) shareExport(uri, QLatin1String(mimes[f]));
++    };
++    QObject::connect(go, &QPushButton::clicked, d, [run]() { run(false); });
++    QObject::connect(share, &QPushButton::clicked, d, [run]() { run(true); });
++    d->open();
++}
++
++// ---------------------------------------------------------------------------
++// Configurações do Nanquim
++// ---------------------------------------------------------------------------
++void switchUiMode(KisMainWindow *mw);
++
++QWidget *settingRow(QWidget *parent, const QString &title, const QString &info, QWidget *control)
++{
++    QWidget *row = new QWidget(parent);
++    row->setMinimumHeight(60);
++    QHBoxLayout *l = new QHBoxLayout(row);
++    l->setContentsMargins(0, 6, 0, 6);
++    l->setSpacing(14);
++    QVBoxLayout *t = new QVBoxLayout();
++    t->setSpacing(2);
++    t->addWidget(nqLabel(title, "nqItem", row));
++    if (!info.isEmpty()) t->addWidget(nqLabel(info, "nqSmall", row, true));
++    l->addLayout(t, 1);
++    if (control) l->addWidget(control);
++    return row;
++}
++
++void showSettings(KisMainWindow *mw)
++{
++    QDialog *d = makeSheet(mw, 1000, 640);
++    QHBoxLayout *root = new QHBoxLayout(d);
++    root->setContentsMargins(0, 0, 0, 0);
++    root->setSpacing(0);
++
++    QWidget *nav = new QWidget(d);
++    nav->setFixedWidth(250);
++    nav->setAttribute(Qt::WA_StyledBackground);
++    nav->setStyleSheet(QStringLiteral(
++        "QWidget { background: #17171a; border-top-left-radius: 18px; border-bottom-left-radius: 18px; }"
++        "QPushButton { text-align: left; border: none; background: transparent; color: #c9c9d1; font-weight: 500; border-radius: 10px; }"
++        "QPushButton:checked { background: rgba(61,139,255,0.16); color: #cfe3ff; }"));
++    QVBoxLayout *nl = new QVBoxLayout(nav);
++    nl->setContentsMargins(14, 22, 14, 18);
++    nl->setSpacing(4);
++    QLabel *navTitle = nqLabel(i18n("Configurações"), "nqItem", nav);
++    navTitle->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: 700; padding: 0 10px 12px 10px;"));
++    nl->addWidget(navTitle);
++    QButtonGroup *sections = new QButtonGroup(nav);
++    const QStringList names = {i18n("Caneta e toque"), i18n("Interface"), i18n("Desempenho"), i18n("Salvamento"), i18n("Mais")};
++    for (int i = 0; i < names.size(); i++) {
++        QPushButton *b = nqButton(names[i], nav);
++        b->setCheckable(true);
++        b->setChecked(i == 0);
++        sections->addButton(b, i);
++        nl->addWidget(b);
++    }
++    nl->addStretch(1);
++    root->addWidget(nav);
++
++    QWidget *right = new QWidget(d);
++    QVBoxLayout *rl = new QVBoxLayout(right);
++    rl->setContentsMargins(30, 22, 24, 22);
++    rl->setSpacing(10);
++    QLabel *sectionLabel = nqLabel(names[0].toUpper(), "nqSection", right);
++    QHBoxLayout *head = new QHBoxLayout();
++    head->addWidget(sectionLabel, 1);
++    QPushButton *close = nqButton(QStringLiteral("✕"), right, "nqClose");
++    QObject::connect(close, &QPushButton::clicked, d, &QDialog::reject);
++    head->addWidget(close);
++    rl->addLayout(head);
++    QStackedWidget *stack = new QStackedWidget(right);
++    rl->addWidget(stack, 1);
++    root->addWidget(right, 1);
++
++    auto page = [stack]() {
++        QWidget *p = new QWidget(stack);
++        QVBoxLayout *l = new QVBoxLayout(p);
++        l->setContentsMargins(0, 0, 0, 0);
++        l->setSpacing(4);
++        stack->addWidget(p);
++        return l;
++    };
++
++    // --- caneta e toque ----------------------------------------------------------
++    {
++        QVBoxLayout *l = page();
++        QWidget *p = l->parentWidget();
++        l->addWidget(nqLabel(i18n("Como o Nanquim entende a sua mão"), "nqTitle", p));
++        l->addSpacing(8);
++        QCheckBox *penOnly = new QCheckBox(p);
++        penOnly->setChecked(KisConfig(true).touchPainting() == KisConfig::TOUCH_PAINTING_DISABLED);
++        l->addWidget(settingRow(p, i18n("Desenhar só com a caneta"), i18n("O dedo move, gira e dá zoom, mas não pinta. Evita marcas da palma da mão."), penOnly));
++        l->addWidget(nqDivider(p));
++        QWidget *curveBox = new QWidget(p);
++        QHBoxLayout *cb = new QHBoxLayout(curveBox);
++        cb->setContentsMargins(0, 0, 0, 0);
++        QButtonGroup *curve = new QButtonGroup(curveBox);
++        cb->addLayout(chipRow(curveBox, curve, {i18n("Leve"), i18n("Normal"), i18n("Firme")}, currentPressureCurve()));
++        l->addWidget(settingRow(p, i18n("Força da caneta"), i18n("Leve: traço grosso com pouca força. Firme: precisa apertar mais."), curveBox));
++        l->addWidget(nqDivider(p));
++        l->addSpacing(8);
++        l->addWidget(nqLabel(i18n("Gestos com os dedos"), "nqSmall", p));
++        struct Gesture { const char *fingers; const char *what; const char *action; };
++        const Gesture gestures[] = {
++            {"2", "Tocar", "Desfazer"}, {"3", "Tocar", "Refazer"}, {"2", "Arrastar, pinçar e girar", "Mover, zoom e rotação"},
++        };
++        for (const Gesture &g : gestures) {
++            QWidget *row = new QWidget(p);
++            QHBoxLayout *rl2 = new QHBoxLayout(row);
++            rl2->setContentsMargins(0, 4, 0, 4);
++            rl2->setSpacing(14);
++            QLabel *f = new QLabel(QString::fromUtf8(g.fingers), row);
++            f->setFixedSize(38, 38);
++            f->setAlignment(Qt::AlignCenter);
++            f->setStyleSheet(QStringLiteral("background: #24242b; border-radius: 10px; color: #22d3ee; font-weight: 700;"));
++            rl2->addWidget(f);
++            rl2->addWidget(nqLabel(i18n(g.what), "nqBody", row), 1);
++            rl2->addWidget(nqLabel(i18n(g.action), "nqBody", row));
++            l->addWidget(row);
++        }
++        l->addWidget(nqLabel(i18n("Os gestos vêm do Krita e podem ser trocados em Mais › Configurações completas › Atalhos de toque."),
++                             "nqSmall", p, true));
++        l->addStretch(1);
++        QObject::connect(penOnly, &QCheckBox::toggled, d, [](bool on) {
++            KisConfig cfg(false);
++            cfg.setTouchPainting(on ? KisConfig::TOUCH_PAINTING_DISABLED : KisConfig::TOUCH_PAINTING_AUTO);
++            KisConfigNotifier::instance()->notifyConfigChanged();
++        });
++        QObject::connect(curve, &QButtonGroup::idClicked, d, [](int id) { setPressureCurve(id); });
++    }
++
++    // --- interface ---------------------------------------------------------------
++    {
++        QVBoxLayout *l = page();
++        QWidget *p = l->parentWidget();
++        l->addWidget(nqLabel(i18n("Jeito da tela"), "nqTitle", p));
++        l->addSpacing(8);
++        QHBoxLayout *modes = new QHBoxLayout();
++        modes->setSpacing(14);
++        const bool classic = isClassicMode();
++        const QStringList modeNames = {i18n("Tablet"), i18n("Clássico")};
++        const QStringList modeInfo = {i18n("Barras do Nanquim e painéis que deslizam"), i18n("Menus e painéis fixos, como no computador")};
++        for (int i = 0; i < 2; i++) {
++            QPushButton *m = nqButton(QString(), p);
++            m->setProperty("class", QStringLiteral("nqCard"));
++            m->setCheckable(true);
++            m->setChecked((i == 1) == classic);
++            m->setMinimumHeight(110);
++            QVBoxLayout *ml = new QVBoxLayout(m);
++            ml->setContentsMargins(14, 12, 14, 12);
++            QLabel *t = nqLabel(modeNames[i], "nqItem", m);
++            QLabel *s = nqLabel(modeInfo[i], "nqSmall", m, true);
++            t->setAttribute(Qt::WA_TransparentForMouseEvents);
++            s->setAttribute(Qt::WA_TransparentForMouseEvents);
++            ml->addStretch(1);
++            ml->addWidget(t);
++            ml->addWidget(s);
++            const bool wantClassic = i == 1;
++            QObject::connect(m, &QPushButton::clicked, d, [mw, d, wantClassic, classic]() {
++                if (wantClassic != classic) {
++                    d->accept();
++                    switchUiMode(mw);
++                }
++            });
++            modes->addWidget(m, 1);
++        }
++        l->addLayout(modes);
++        l->addSpacing(10);
++        QPushButton *guide = nqButton(i18n("Rever boas-vindas e guia"), p);
++        QObject::connect(guide, &QPushButton::clicked, d, [mw, d]() { d->accept(); showWelcome(mw, false); });
++        l->addWidget(settingRow(p, i18n("Primeiros passos"), i18n("A mensagem de boas-vindas e o guia rápido."), guide));
++        l->addStretch(1);
++    }
++
++    // --- desempenho --------------------------------------------------------------
++    {
++        QVBoxLayout *l = page();
++        QWidget *p = l->parentWidget();
++        l->addWidget(nqLabel(i18n("Leve e estável"), "nqTitle", p));
++        l->addSpacing(8);
++        KisImageConfig imageCfg(true);
++        const int percent = qRound(imageCfg.memoryHardLimitPercent());
++        QWidget *memBox = new QWidget(p);
++        memBox->setFixedWidth(300);
++        QVBoxLayout *mb = new QVBoxLayout(memBox);
++        mb->setContentsMargins(0, 0, 0, 0);
++        QLabel *memValue = nqLabel(i18n("%1% da memória do tablet", percent), "nqSmall", memBox);
++        QSlider *mem = new QSlider(Qt::Horizontal, memBox);
++        mem->setRange(30, 60);
++        mem->setValue(qBound(30, percent, 60));
++        mb->addWidget(memValue);
++        mb->addWidget(mem);
++        l->addWidget(settingRow(p, i18n("Memória para o desenho"),
++                                i18n("Mais memória deixa páginas grandes mais rápidas, mas o Android pode fechar o app. "
++                                     "Vale na próxima vez que abrir o Nanquim."), memBox));
++        l->addWidget(nqDivider(p));
++        QCheckBox *lod = new QCheckBox(p);
++        lod->setChecked(KisConfig(true).levelOfDetailEnabled());
++        l->addWidget(settingRow(p, i18n("Prévia rápida ao dar zoom"), i18n("Desenha numa versão reduzida enquanto o zoom está longe."), lod));
++        l->addStretch(1);
++        QObject::connect(mem, &QSlider::valueChanged, d, [memValue](int v) {
++            memValue->setText(i18n("%1% da memória do tablet", v));
++            KisImageConfig cfg(false);
++            cfg.setMemoryHardLimitPercent(v);
++        });
++        QObject::connect(lod, &QCheckBox::toggled, d, [](bool on) {
++            KisConfig cfg(false);
++            cfg.setLevelOfDetailEnabled(on);
++            KisConfigNotifier::instance()->notifyConfigChanged();
++        });
++    }
++
++    // --- salvamento ----------------------------------------------------------------
++    {
++        QVBoxLayout *l = page();
++        QWidget *p = l->parentWidget();
++        l->addWidget(nqLabel(i18n("Para não perder nada"), "nqTitle", p));
++        l->addSpacing(8);
++        const int interval = KisConfig(true).autoSaveInterval();
++        const QList<int> options = {0, 5 * 60, 10 * 60, 15 * 60};
++        int checked = 2;
++        for (int i = 0; i < options.size(); i++) if (options[i] == interval) checked = i;
++        QWidget *box = new QWidget(p);
++        QHBoxLayout *bl = new QHBoxLayout(box);
++        bl->setContentsMargins(0, 0, 0, 0);
++        QButtonGroup *auto_ = new QButtonGroup(box);
++        bl->addLayout(chipRow(box, auto_, {i18n("Desligado"), i18n("5 min"), i18n("10 min"), i18n("15 min")}, checked));
++        l->addWidget(settingRow(p, i18n("Cópia automática"), i18n("Guarda uma cópia de segurança enquanto você desenha."), box));
++        l->addStretch(1);
++        QObject::connect(auto_, &QButtonGroup::idClicked, d, [options](int id) {
++            KisConfig cfg(false);
++            cfg.setAutoSaveInterval(options.value(id, 10 * 60));
++            KisConfigNotifier::instance()->notifyConfigChanged();
++        });
++    }
++
++    // --- mais ----------------------------------------------------------------------
++    {
++        QVBoxLayout *l = page();
++        QWidget *p = l->parentWidget();
++        l->addWidget(nqLabel(i18n("Mais"), "nqTitle", p));
++        l->addSpacing(8);
++        QPushButton *full = nqButton(i18n("Abrir"), p);
++        QObject::connect(full, &QPushButton::clicked, d, [mw, d]() {
++            d->accept();
++            if (QAction *a = act(mw, "options_configure")) a->trigger();
++        });
++        l->addWidget(settingRow(p, i18n("Configurações completas do Krita"), i18n("Todas as opções do motor de pintura, atalhos e cores."), full));
++        l->addWidget(nqDivider(p));
++        QPushButton *about = nqButton(i18n("Ver"), p);
++        QObject::connect(about, &QPushButton::clicked, d, [mw, d]() { d->accept(); showAbout(mw); });
++        l->addWidget(settingRow(p, i18n("Sobre e créditos"), i18n("Krita, Tyson Tan e as licenças."), about));
++        l->addStretch(1);
++    }
++
++    QObject::connect(sections, &QButtonGroup::idClicked, d, [stack, sectionLabel, names](int id) {
++        stack->setCurrentIndex(id);
++        sectionLabel->setText(names.value(id).toUpper());
++    });
++    d->open();
++}
++
++// ---------------------------------------------------------------------------
++// Requadros e balões, numa janela só
++// ---------------------------------------------------------------------------
++QString xmlEscape(const QString &s)
++{
++    QString out = s;
++    out.replace(QLatin1Char('&'), QLatin1String("&amp;"));
++    out.replace(QLatin1Char('<'), QLatin1String("&lt;"));
++    out.replace(QLatin1Char('>'), QLatin1String("&gt;"));
++    out.replace(QLatin1Char('"'), QLatin1String("&quot;"));
++    return out;
++}
++
++// 0 fala, 1 pensamento, 2 grito, 3 narração, 4 sussurro, 5 rádio/TV
++void insertBalloonWithText(KisMainWindow *mw, int kind, const QString &text, int sizeIndex)
++{
++    KisView *view = mw->activeView();
++    if (!view || !view->image()) return;
++    KisImageSP image = view->image();
++    const qreal W = image->width() / image->xRes();
++    const qreal H = image->height() / image->yRes();
++    const qreal fontSize = W * (sizeIndex == 0 ? 0.016 : sizeIndex == 2 ? 0.028 : 0.021);
++    const QStringList lines = text.trimmed().isEmpty() ? QStringList() : text.trimmed().split(QLatin1Char('\n'));
++    int longest = 0;
++    for (const QString &l : lines) longest = qMax(longest, l.size());
++    qreal bw = qMax(W * 0.2, longest * fontSize * 0.62 + fontSize * 3.2);
++    bw = qMin(bw, W * 0.7);
++    const qreal lineH = fontSize * 1.25;
++    qreal bh = qMax(bw * 0.5, lines.size() * lineH + fontSize * 2.6);
++    if (kind == 3) bh = qMax(lines.size() * lineH + fontSize * 1.6, bw * 0.3) / 0.6;   // a caixa usa 60% da altura
++    const QRectF r(W / 2 - bw / 2, H / 2 - bh / 2, bw, bh);
++    const qreal unit = qMax(2.0, image->width() * 0.0011) / image->xRes();
++
++    QString shape;
++    if (kind == 4) {
++        shape = balloonPath(0, r, unit);
++        shape.replace(QLatin1String("stroke-linejoin=\"round\""),
++                      QStringLiteral("stroke-linejoin=\"round\" stroke-dasharray=\"%1 %2\"").arg(unit * 4).arg(unit * 3));
++    } else if (kind == 5) {
++        const qreal x = r.x(), y = r.y() + r.height() * 0.1, w = r.width(), h = r.height() * 0.7;
++        const qreal t = w * 0.12;
++        const QString d = QStringLiteral("M %1 %2 L %3 %2 L %3 %4 L %5 %4 L %6 %7 L %8 %4 L %1 %4 Z")
++                .arg(x).arg(y).arg(x + w).arg(y + h).arg(x + w * 0.42 + t).arg(x + w * 0.3).arg(y + h + t * 1.6).arg(x + w * 0.42);
++        shape = QStringLiteral("<path d=\"%1\" fill=\"#ffffff\" stroke=\"#000000\" stroke-width=\"%2\" stroke-linejoin=\"miter\"/>")
++                .arg(d).arg(unit);
++    } else {
++        shape = balloonPath(kind, r, unit);
++    }
++
++    QString textSvg;
++    if (!lines.isEmpty()) {
++        const qreal cx = r.center().x();
++        const qreal cy = kind == 5 ? r.y() + r.height() * 0.45 : r.center().y();
++        const qreal y0 = cy - (lines.size() - 1) * lineH / 2 + fontSize * 0.35;
++        textSvg = QStringLiteral("<text text-anchor=\"middle\" font-family=\"Montserrat, sans-serif\" font-weight=\"700\" "
++                                 "font-size=\"%1\" fill=\"#000000\">").arg(fontSize);
++        for (int i = 0; i < lines.size(); i++) {
++            textSvg += QStringLiteral("<tspan x=\"%1\" y=\"%2\">%3</tspan>").arg(cx).arg(y0 + i * lineH).arg(xmlEscape(lines[i]));
++        }
++        textSvg += QLatin1String("</text>");
++    }
++    if (!addVectorShapes(mw, i18n("Balões"), shape + textSvg, true)) {
++        QMessageBox::warning(mw, QStringLiteral("Nanquim"), i18n("Não consegui criar o balão."));
++        return;
++    }
++    if (QAction *select = act(mw, "InteractionTool")) select->trigger();
++}
++
++QPixmap balloonKindIcon(int kind)
++{
++    static const char *icons[] = {
++        "<ellipse cx='12' cy='10' rx='9' ry='6'/><path d='M8.5 15.2L6 20l5.5-4'/>",
++        "<path d='M6 12a4 4 0 0 1 2.5-6 4.5 4.5 0 0 1 7.5-.5 4 4 0 0 1 5 4 3.5 3.5 0 0 1-2.5 5.5 4 4 0 0 1-6 .5 4 4 0 0 1-6.5-3.5z'/><circle cx='6' cy='18.5' r='1.3'/><circle cx='3.5' cy='21' r='.8'/>",
++        "<path d='M2.5 11l4-2-1.5-4.5 5 2 2-4 2 4 5-2-1.5 4.5 4 2-4 2 1.5 4.5-5-1.5-2 4.5-2-4.5-5 1.5 1.5-4.5z'/>",
++        "<rect x='3' y='7' width='18' height='10'/>",
++        "<ellipse cx='12' cy='10' rx='9' ry='6' stroke-dasharray='2.4 2'/><path d='M8.5 15.2L6 20l5.5-4' stroke-dasharray='2 2'/>",
++        "<path d='M3 5h18v11h-8l-3 4-1-4H3z'/>",
++    };
++    return svgPixmap(QLatin1String(icons[qBound(0, kind, 5)]), C_TEXT, 30);
++}
++
++void showComicsSheet(KisMainWindow *mw, int tab)
++{
++    KisView *view = mw->activeView();
++    if (!view || !view->image()) return;
++    QDialog *d = makeSheet(mw, 720);
++    QVBoxLayout *root = new QVBoxLayout(d);
++    root->setContentsMargins(26, 20, 26, 20);
++    root->setSpacing(14);
++    root->addLayout(sheetHeader(d, i18n("Requadros e balões"), QString()));
++    QButtonGroup *tabs = new QButtonGroup(d);
++    root->addLayout(chipRow(d, tabs, {i18n("Requadros"), i18n("Balões")}, tab));
++    QStackedWidget *stack = new QStackedWidget(d);
++    root->addWidget(stack);
++
++    // --- requadros -----------------------------------------------------------------
++    QWidget *panelsPage = new QWidget(stack);
++    QVBoxLayout *pl = new QVBoxLayout(panelsPage);
++    pl->setContentsMargins(0, 0, 0, 0);
++    pl->setSpacing(12);
++    pl->addWidget(nqLabel(i18n("Os quadros entram na camada vetorial “Requadros”: dá para mover e redimensionar cada um depois."),
++                          "nqSmall", panelsPage, true));
++    const QList<PanelLayout> layouts = panelLayouts();
++    QGridLayout *grid = new QGridLayout();
++    grid->setSpacing(8);
++    QButtonGroup *layoutGroup = new QButtonGroup(panelsPage);
++    for (int i = 0; i < layouts.size(); i++) {
++        QPushButton *b = nqButton(QString(), panelsPage);
++        b->setProperty("class", QStringLiteral("nqCard"));
++        b->setCheckable(true);
++        b->setFixedSize(116, 128);
++        QVBoxLayout *bl = new QVBoxLayout(b);
++        bl->setContentsMargins(6, 8, 6, 6);
++        bl->setSpacing(4);
++        QLabel *icon = new QLabel(b);
++        icon->setPixmap(layoutIcon(layouts[i]).pixmap(QSize(56, 78)));
++        icon->setAlignment(Qt::AlignCenter);
++        icon->setAttribute(Qt::WA_TransparentForMouseEvents);
++        QLabel *name = nqLabel(i18n(layouts[i].name), "nqSmall", b);
++        name->setAlignment(Qt::AlignCenter);
++        name->setAttribute(Qt::WA_TransparentForMouseEvents);
++        bl->addWidget(icon, 1);
++        bl->addWidget(name);
++        layoutGroup->addButton(b, i);
++        grid->addWidget(b, i / 5, i % 5);
++    }
++    if (QAbstractButton *def = layoutGroup->button(qMin(5, layouts.size() - 1))) def->setChecked(true);
++    pl->addLayout(grid);
++    QHBoxLayout *numbers = new QHBoxLayout();
++    numbers->setSpacing(10);
++    auto spin = [panelsPage, numbers](const QString &title, double min, double max, double value, const QString &suffix) {
++        QDoubleSpinBox *s = new QDoubleSpinBox(panelsPage);
++        s->setRange(min, max);
++        s->setValue(value);
++        s->setSuffix(suffix);
++        s->setButtonSymbols(QAbstractSpinBox::NoButtons);
++        QVBoxLayout *col = new QVBoxLayout();
++        col->setSpacing(4);
++        col->addWidget(nqLabel(title, "nqSmall", panelsPage));
++        col->addWidget(s);
++        numbers->addLayout(col);
++        return s;
++    };
++    QDoubleSpinBox *margin = spin(i18n("Margem"), 0, 25, 7, QStringLiteral(" %"));
++    QDoubleSpinBox *gutterX = spin(i18n("Entre colunas"), 0, 10, 1.5, QStringLiteral(" %"));
++    QDoubleSpinBox *gutterY = spin(i18n("Entre faixas"), 0, 10, 2.5, QStringLiteral(" %"));
++    QDoubleSpinBox *border = spin(i18n("Borda"), 0.5, 40, qMax(2.0, view->image()->width() * 0.0012), QStringLiteral(" px"));
++    pl->addLayout(numbers);
++    stack->addWidget(panelsPage);
++
++    // --- balões --------------------------------------------------------------------
++    QWidget *balloonsPage = new QWidget(stack);
++    QVBoxLayout *bpl = new QVBoxLayout(balloonsPage);
++    bpl->setContentsMargins(0, 0, 0, 0);
++    bpl->setSpacing(12);
++    bpl->addWidget(nqLabel(i18n("Tipo de balão"), "nqSmall", balloonsPage));
++    QGridLayout *kinds = new QGridLayout();
++    kinds->setSpacing(8);
++    QButtonGroup *kindGroup = new QButtonGroup(balloonsPage);
++    const QStringList kindNames = {i18n("Fala"), i18n("Pensamento"), i18n("Grito"), i18n("Narração"), i18n("Sussurro"), i18n("Rádio / TV")};
++    for (int i = 0; i < kindNames.size(); i++) {
++        QPushButton *b = nqButton(QString(), balloonsPage);
++        b->setProperty("class", QStringLiteral("nqCard"));
++        b->setCheckable(true);
++        b->setMinimumHeight(84);
++        QVBoxLayout *kl = new QVBoxLayout(b);
++        kl->setContentsMargins(6, 8, 6, 6);
++        kl->setSpacing(4);
++        QLabel *icon = new QLabel(b);
++        icon->setPixmap(balloonKindIcon(i));
++        icon->setAlignment(Qt::AlignCenter);
++        icon->setAttribute(Qt::WA_TransparentForMouseEvents);
++        QLabel *name = nqLabel(kindNames[i], "nqSmall", b);
++        name->setAlignment(Qt::AlignCenter);
++        name->setAttribute(Qt::WA_TransparentForMouseEvents);
++        kl->addWidget(icon, 1);
++        kl->addWidget(name);
++        kindGroup->addButton(b, i);
++        kinds->addWidget(b, i / 3, i % 3);
++    }
++    kindGroup->button(0)->setChecked(true);
++    bpl->addLayout(kinds);
++    bpl->addWidget(nqLabel(i18n("Texto (cada linha vira uma linha no balão)"), "nqSmall", balloonsPage));
++    QPlainTextEdit *text = new QPlainTextEdit(balloonsPage);
++    text->setFixedHeight(84);
++    text->setPlaceholderText(i18n("Escreva a fala aqui, ou deixe vazio e escreva depois com a ferramenta Texto"));
++    bpl->addWidget(text);
++    bpl->addWidget(nqLabel(i18n("Tamanho da letra"), "nqSmall", balloonsPage));
++    QButtonGroup *sizeGroup = new QButtonGroup(balloonsPage);
++    bpl->addLayout(chipRow(balloonsPage, sizeGroup, {i18n("Pequena"), i18n("Média"), i18n("Grande")}, 1));
++    stack->addWidget(balloonsPage);
++
++    QHBoxLayout *actions = new QHBoxLayout();
++    actions->setSpacing(10);
++    QPushButton *textTool = nqButton(i18n("Ferramenta Texto"), d, "nqGhost");
++    QPushButton *go = nqButton(QString(), d, "nqPrimary");
++    actions->addWidget(textTool);
++    actions->addStretch(1);
++    actions->addWidget(go);
++    root->addLayout(actions);
++
++    auto sync = [stack, tabs, go, textTool]() {
++        const int t = qMax(0, tabs->checkedId());
++        stack->setCurrentIndex(t);
++        go->setText(t == 0 ? i18n("Criar requadros") : i18n("Inserir balão"));
++        textTool->setVisible(t == 1);
++    };
++    QObject::connect(tabs, &QButtonGroup::idClicked, d, [sync](int) { sync(); });
++    sync();
++    QObject::connect(textTool, &QPushButton::clicked, d, [mw, d]() {
++        d->accept();
++        if (QAction *t = act(mw, "SvgTextTool")) t->trigger();
++    });
++    QObject::connect(go, &QPushButton::clicked, d, [=]() {
++        if (tabs->checkedId() == 1) {
++            const int kind = qMax(0, kindGroup->checkedId());
++            const QString t = text->toPlainText();
++            const int sizeIndex = qMax(0, sizeGroup->checkedId());
++            d->accept();
++            insertBalloonWithText(mw, kind, t, sizeIndex);
++            return;
++        }
++        const int chosen = qMax(0, layoutGroup->checkedId());
++        const double m = margin->value(), gx = gutterX->value(), gy = gutterY->value(), bw = border->value();
++        d->accept();
++        KisView *v = mw->activeView();
++        if (!v || !v->image()) return;
++        KisImageSP image = v->image();
++        const qreal xRes = image->xRes();
++        const qreal W = image->width() / xRes;
++        const qreal H = image->height() / image->yRes();
++        const qreal mm = W * m / 100.0;
++        const qreal vm = mm * (H / W > 1.2 ? 1.0 : 0.7);
++        const QRectF area(mm, vm, W - 2 * mm, H - 2 * vm);
++        const QList<QRectF> rects = layoutRects(layouts[chosen], area, W * gx / 100.0, W * gy / 100.0);
++        const qreal stroke = bw / xRes;
++        QString body;
++        for (const QRectF &r : rects) {
++            body += QStringLiteral("<rect x=\"%1\" y=\"%2\" width=\"%3\" height=\"%4\" fill=\"none\" stroke=\"#000000\" "
++                                   "stroke-width=\"%5\" stroke-linejoin=\"miter\"/>")
++                    .arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height()).arg(stroke);
++        }
++        if (!addVectorShapes(mw, i18n("Requadros"), body, false)) {
++            QMessageBox::warning(mw, QStringLiteral("Nanquim"), i18n("Não consegui criar os requadros."));
++        }
++    });
++    d->open();
++}
++
+ } // namespace
+ 
+ void NanquimTabletUi::install(KisMainWindow *mw)
+@@ -4123,6 +5991,7 @@ void NanquimTabletUi::install(KisMainWindow *mw)
+     s_classic = isClassicMode();
+     s_recorder = new NanquimTimelapseRecorder(mw);
+     if (!s_classic) {
++        buildColorDock(mw);   // antes da barra: o botão de cor abre este painel
+         buildTopBar(mw);
+         buildToolNav(mw);
+         buildToolsFlyout(mw);
+@@ -4135,6 +6004,35 @@ void NanquimTabletUi::install(KisMainWindow *mw)
+     installGallery(mw);
+     buildNanquimMenu(mw);
+     qApp->installEventFilter(new PopupAnimator(mw));
++    qApp->installEventFilter(new MessageStyler(mw));
++
++    // a cada desenho aberto: aviso de memória (páginas enormes) e "página salva"
++    QPointer<KisMainWindow> mwGuard(mw);
++    QObject::connect(KisPart::instance(), &KisPart::sigViewAdded, mw, [mwGuard](KisView *view) {
++        if (!mwGuard || !view) return;
++        QPointer<KisView> viewGuard(view);
++        QTimer::singleShot(1500, mwGuard, [mwGuard, viewGuard]() {
++            if (mwGuard && viewGuard && mwGuard->activeView() == viewGuard) showMemoryWarning(mwGuard, viewGuard);
++        });
++        KisDocument *doc = view->document();
++        if (!doc || doc->property("nanquimToast").toBool()) return;
++        doc->setProperty("nanquimToast", true);
++        QObject::connect(doc, &KisDocument::sigSavingFinished, mwGuard, [mwGuard](const QString &path) {
++            if (!mwGuard || path.contains(QLatin1String("autosave")) || path.contains(QLatin1String("krita-backup"))) return;
++            QString name = QFileInfo(path).completeBaseName();
++            showToast(mwGuard, i18n("Página salva · %1", name));
++        });
++    });
++
++    // camadas com miniaturas maiores (uma vez; o tamanho vale ao abrir de novo)
++    {
++        KConfigGroup c = KSharedConfig::openConfig()->group("Nanquim");
++        if (!c.readEntry("layerThumbsV1", false)) {
++            KisConfig cfg(false);
++            if (cfg.layerThumbnailSize() <= 20) cfg.setLayerThumbnailSize(36);
++            c.writeEntry("layerThumbsV1", true);
++        }
++    }
+ 
+     // depois que tudo carregou: etiqueta de pincéis (uma vez) e boas-vindas (primeira abertura)
+     QPointer<KisMainWindow> guard(mw);
+@@ -4274,6 +6172,7 @@ void NanquimTabletUi::applyLayout(KisMainWindow *mw, bool canvasMode)
+     // A primeira tela de desenho da sessão começa limpa (a barra da esquerda
+     // substitui a caixa de ferramentas do Krita). Painel fechado não se redesenha.
+     if (canvasMode && !s_canvasCleaned) {
++        styleClassicDocks(mw);   // painéis do Krita com a cara do Nanquim também no modo Tablet
+         s_canvasCleaned = true;
+         Q_FOREACH (QDockWidget *dw, mw->dockWidgets()) {
+             dw->hide();
+diff --git a/packaging/android/apk/src/org/krita/android/NanquimMedia.java b/packaging/android/apk/src/org/krita/android/NanquimMedia.java
+new file mode 100644
+index 0000000..f4a60f4
+--- /dev/null
++++ b/packaging/android/apk/src/org/krita/android/NanquimMedia.java
+@@ -0,0 +1,101 @@
++/*
++ *  SPDX-FileCopyrightText: 2026 Nanquim
++ *
++ *  SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package org.krita.android;
++
++import android.app.Activity;
++import android.content.ContentValues;
++import android.content.Intent;
++import android.net.Uri;
++import android.os.Build;
++import android.os.Environment;
++import android.provider.MediaStore;
++import android.util.Log;
++
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.FileOutputStream;
++import java.io.InputStream;
++import java.io.OutputStream;
++
++/**
++ * Nanquim: leva o arquivo exportado para a pasta pública do tablet.
++ * Imagens vão para Imagens › Nanquim (aparecem na Galeria); PDF, PSD e .kra
++ * vão para Downloads › Nanquim.
++ */
++public final class NanquimMedia {
++    private static final String TAG = "nanquim.Media";
++
++    private NanquimMedia() {}
++
++    /** Devolve "uri\nonde ficou" ou null se não conseguiu. */
++    public static String publish(Activity a, String path, String name, String mime) {
++        try {
++            File src = new File(path);
++            boolean image = mime != null && mime.startsWith("image/") && !mime.contains("photoshop");
++            if (Build.VERSION.SDK_INT >= 29) {
++                ContentValues values = new ContentValues();
++                values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
++                values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
++                values.put(MediaStore.MediaColumns.RELATIVE_PATH,
++                        (image ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_DOWNLOADS) + "/Nanquim");
++                values.put(MediaStore.MediaColumns.IS_PENDING, 1);
++                Uri collection = image ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI
++                                       : MediaStore.Downloads.EXTERNAL_CONTENT_URI;
++                Uri uri = a.getContentResolver().insert(collection, values);
++                if (uri == null) {
++                    return null;
++                }
++                try (InputStream in = new FileInputStream(src);
++                     OutputStream out = a.getContentResolver().openOutputStream(uri)) {
++                    copy(in, out);
++                }
++                values.clear();
++                values.put(MediaStore.MediaColumns.IS_PENDING, 0);
++                a.getContentResolver().update(uri, values, null, null);
++                return uri.toString() + "\n" + (image ? "Imagens › Nanquim" : "Downloads › Nanquim");
++            }
++            File dir = new File(a.getExternalFilesDir(image ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_DOWNLOADS), "Nanquim");
++            dir.mkdirs();
++            File out = new File(dir, name);
++            try (InputStream in = new FileInputStream(src); OutputStream os = new FileOutputStream(out)) {
++                copy(in, os);
++            }
++            return "\n" + out.getPath();
++        } catch (Throwable t) {
++            Log.e(TAG, "não consegui publicar " + path, t);
++            return null;
++        }
++    }
++
++    /** Abre o "Compartilhar" do Android com o arquivo já publicado. */
++    public static void share(final Activity a, final String uri, final String mime) {
++        a.runOnUiThread(new Runnable() {
++            @Override
++            public void run() {
++                try {
++                    Intent send = new Intent(Intent.ACTION_SEND);
++                    send.setType(mime);
++                    send.putExtra(Intent.EXTRA_STREAM, Uri.parse(uri));
++                    send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
++                    Intent chooser = Intent.createChooser(send, "Compartilhar");
++                    chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
++                    a.startActivity(chooser);
++                } catch (Throwable t) {
++                    Log.e(TAG, "não consegui compartilhar", t);
++                }
++            }
++        });
++    }
++
++    private static void copy(InputStream in, OutputStream out) throws Exception {
++        byte[] buffer = new byte[1 << 16];
++        int read;
++        while ((read = in.read(buffer)) > 0) {
++            out.write(buffer, 0, read);
++        }
++    }
++}
+-- 
+2.43.0
+
