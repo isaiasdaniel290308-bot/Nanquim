@@ -1,0 +1,42 @@
+# Copia a chave de assinatura que está no cache (a mesma que assinou os APKs
+# já instalados) para os segredos do repositório, onde ela não expira.
+#
+# Precisa de um segredo NANQUIM_ADMIN_TOKEN: um token do GitHub com permissão
+# "Secrets: Read and write" neste repositório. Depois de rodar, o token pode
+# ser apagado.
+name: Tornar chave permanente
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  copiar:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Ler a chave do cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/nanquim-key
+          key: nanquim-signing-key-v1
+
+      - name: Guardar nos segredos do repositório
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.NANQUIM_ADMIN_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Falta o segredo NANQUIM_ADMIN_TOKEN (veja as instruções no topo deste arquivo)."
+            exit 1
+          fi
+          if [ ! -f ~/nanquim-key/nanquim.jks ] || [ ! -f ~/nanquim-key/pass ]; then
+            echo "::error::A chave não está no cache. Rode uma compilação antes e tente de novo."
+            exit 1
+          fi
+          base64 -w0 ~/nanquim-key/nanquim.jks | gh secret set NANQUIM_KEYSTORE_B64 -R "$GITHUB_REPOSITORY"
+          gh secret set NANQUIM_KEYSTORE_PASS -R "$GITHUB_REPOSITORY" < ~/nanquim-key/pass
+          echo "Chave guardada nos segredos. Impressão digital (para conferir nas próximas compilações):"
+          keytool -list -keystore ~/nanquim-key/nanquim.jks -storepass "$(cat ~/nanquim-key/pass)" | grep -i "SHA-256\|SHA256" || true
+          echo "Pronto. Já pode apagar o token NANQUIM_ADMIN_TOKEN."
