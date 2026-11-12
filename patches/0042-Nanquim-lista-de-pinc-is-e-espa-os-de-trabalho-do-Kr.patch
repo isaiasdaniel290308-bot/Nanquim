@@ -1,0 +1,163 @@
+From 9263605d88fde5c342287f660c94700ca739a089 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 23:52:54 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20lista=20de=20pinc=C3=A9is=20e=20espa?=
+ =?UTF-8?q?=C3=A7os=20de=20trabalho=20do=20Krita=20montados=20s=C3=B3=20no?=
+ =?UTF-8?q?=20primeiro=20uso=20(abertura=20mais=20r=C3=A1pida)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/kis_paintop_box.cc | 60 +++++++++++++++++++++++++++++---------
+ libs/ui/kis_paintop_box.h  |  9 ++++++
+ 2 files changed, 56 insertions(+), 13 deletions(-)
+
+diff --git a/libs/ui/kis_paintop_box.cc b/libs/ui/kis_paintop_box.cc
+index 770dd03..335bea7 100644
+--- a/libs/ui/kis_paintop_box.cc
++++ b/libs/ui/kis_paintop_box.cc
+@@ -336,15 +336,15 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
+     m_workspaceWidget->setToolTip(i18n("Choose workspace"));
+     m_workspaceWidget->setFixedSize(buttonsize, buttonsize);
+     m_workspaceWidget->setIconSize(QSize(iconsize, iconsize));
+-    KisWorkspaceChooser *workspacePopup = new KisWorkspaceChooser(viewManager);
+-    m_workspaceWidget->setPopupWidget(workspacePopup);
+     m_workspaceWidget->setAutoRaise(true);
+     m_workspaceWidget->setArrowVisible(false);
+ 
+-    m_presetsChooserPopup = new KisPaintOpPresetsChooserPopup();
+-    m_presetsChooserPopup->setMinimumHeight(550);
+-    m_presetsChooserPopup->setMinimumWidth(450);
+-    m_presetSelectorPopupButton->setPopupWidget(m_presetsChooserPopup);
++    // Nanquim: a lista de pincéis do Krita e o seletor de espaços de trabalho só são
++    // montados no primeiro uso. Cada um lê o banco de recursos inteiro ao ser criado,
++    // o que pesava na abertura do app, e o Nanquim tem a sua própria janela de pincéis.
++    // "pressed" vem antes do "released" que abre a janela, então ela já existe a tempo.
++    connect(m_presetSelectorPopupButton, &QAbstractButton::pressed, this, [this]() { ensurePresetsChooserPopup(); });
++    connect(m_workspaceWidget, &QAbstractButton::pressed, this, [this]() { ensureWorkspacePopup(); });
+ 
+     QHBoxLayout* baseLayout = new QHBoxLayout(this);
+     m_paintopWidget = new QWidget(this);
+@@ -440,8 +440,11 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
+     action = new QWidgetAction(this);
+     KisActionRegistry::instance()->propertizeAction("show_brush_presets", action);
+     viewManager->actionCollection()->addAction("show_brush_presets", action);
+-    connect(action, SIGNAL(triggered()), m_presetSelectorPopupButton, SLOT(showPopupWidget()));
+-    m_presetsChooserPopup->addAction(action);
++    m_showBrushPresetsAction = action;
++    connect(action, &QAction::triggered, this, [this]() {
++        ensurePresetsChooserPopup();
++        m_presetSelectorPopupButton->showPopupWidget();
++    });
+ 
+     QWidget* mirrorActions = new QWidget(this);
+     QHBoxLayout* mirrorLayout = new QHBoxLayout(mirrorActions);
+@@ -461,8 +464,11 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
+     KisActionRegistry::instance()->propertizeAction(ResourceType::Workspaces, action);
+     viewManager->actionCollection()->addAction(ResourceType::Workspaces, action);
+     action->setDefaultWidget(m_workspaceWidget);
+-    connect(action, SIGNAL(triggered()), m_workspaceWidget, SLOT(showPopupWidget()));
+-    workspacePopup->addAction(action);
++    m_workspaceAction = action;
++    connect(action, &QAction::triggered, this, [this]() {
++        ensureWorkspacePopup();
++        m_workspaceWidget->showPopupWidget();
++    });
+ 
+     if (!cfg.toolOptionsInDocker()) {
+         m_toolOptionsPopup = new KisToolOptionsPopup();
+@@ -509,8 +515,6 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
+ 
+     connect(m_presetsEditor, SIGNAL(createPresetFromScratch(QString)), this, SLOT(slotCreatePresetFromScratch(QString)));
+ 
+-    connect(m_presetsChooserPopup, SIGNAL(resourceSelected(KoResourceSP ))      , SLOT(resourceSelected(KoResourceSP )));
+-    connect(m_presetsChooserPopup, SIGNAL(resourceClicked(KoResourceSP ))      , SLOT(resourceSelected(KoResourceSP )));
+ 
+     connect(m_resourceProvider   , SIGNAL(sigNodeChanged(KisNodeSP))    , SLOT(slotNodeChanged(KisNodeSP)));
+     connect(m_cmbCompositeOp     , SIGNAL(currentIndexChanged(int))           , SLOT(slotSetCompositeMode(int)));
+@@ -582,6 +586,34 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
+ }
+ 
+ 
++void KisPaintopBox::ensurePresetsChooserPopup()
++{
++    if (m_presetsChooserPopup) return;
++    m_presetsChooserPopup = new KisPaintOpPresetsChooserPopup();
++    m_presetsChooserPopup->setMinimumHeight(550);
++    m_presetsChooserPopup->setMinimumWidth(450);
++    m_presetSelectorPopupButton->setPopupWidget(m_presetsChooserPopup);
++    if (m_showBrushPresetsAction) {
++        m_presetsChooserPopup->addAction(m_showBrushPresetsAction);
++    }
++    connect(m_presetsChooserPopup, SIGNAL(resourceSelected(KoResourceSP ))      , SLOT(resourceSelected(KoResourceSP )));
++    connect(m_presetsChooserPopup, SIGNAL(resourceClicked(KoResourceSP ))      , SLOT(resourceSelected(KoResourceSP )));
++    if (m_resourceProvider && m_resourceProvider->currentPreset()) {
++        m_presetsChooserPopup->canvasResourceChanged(m_resourceProvider->currentPreset());
++    }
++}
++
++void KisPaintopBox::ensureWorkspacePopup()
++{
++    if (m_workspacePopupCreated) return;
++    m_workspacePopupCreated = true;
++    KisWorkspaceChooser *workspacePopup = new KisWorkspaceChooser(m_viewManager);
++    m_workspaceWidget->setPopupWidget(workspacePopup);
++    if (m_workspaceAction) {
++        workspacePopup->addAction(m_workspaceAction);
++    }
++}
++
+ KisPaintopBox::~KisPaintopBox()
+ {
+     updatePresetConfig();
+@@ -1036,7 +1068,9 @@ void KisPaintopBox::slotCanvasResourceChanged(int key, const QVariant &value)
+             /**
+              * Update currently selected preset in both the popup widgets
+              */
+-            m_presetsChooserPopup->canvasResourceChanged(preset);
++            if (m_presetsChooserPopup) {
++                m_presetsChooserPopup->canvasResourceChanged(preset);
++            }
+             m_presetsEditor->currentPresetChanged(preset);
+         }
+ 
+diff --git a/libs/ui/kis_paintop_box.h b/libs/ui/kis_paintop_box.h
+index 0017446..216bd51 100644
+--- a/libs/ui/kis_paintop_box.h
++++ b/libs/ui/kis_paintop_box.h
+@@ -27,6 +27,7 @@
+ #include "kis_signal_auto_connection.h"
+ #include "kis_signal_compressor.h"
+ 
++class QAction;
+ class QMenu;
+ class QToolButton;
+ class QString;
+@@ -136,6 +137,11 @@ private:
+     void sliderChanged(int n);
+     void findDefaultPresets();
+ 
++private:
++    // Nanquim: janelas montadas só no primeiro uso (abertura mais rápida)
++    void ensurePresetsChooserPopup();
++    void ensureWorkspacePopup();
++
+ private Q_SLOTS:
+ 
+     void slotSetupDefaultPreset();
+@@ -200,6 +206,9 @@ private:
+     KisPaintOpPresetsChooserPopup*      m_presetsChooserPopup {0};
+     KisViewManager*                     m_viewManager {0};
+     KisPopupButton*                     m_workspaceWidget {0};
++    QAction*                            m_showBrushPresetsAction {0};
++    QAction*                            m_workspaceAction {0};
++    bool                                m_workspacePopupCreated {false};
+     KisWidgetChooser*                   m_sliderChooser[5];
+     QMap<KoID, KisPaintOpConfigWidget*> m_paintopOptionWidgets;
+     KisFavoriteResourceManager*         m_favoriteResourceManager {0};
+-- 
+2.43.0
+
