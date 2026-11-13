@@ -1,0 +1,253 @@
+From 9c7c419b6fa9035a1de22696ffea37c4c60f96dc Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 08:32:36 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20mar=20e=20jato=20d'=C3=A1gua=20ondul?=
+ =?UTF-8?q?ando=20em=20loop=20na=20abertura?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+O fundo da abertura passa a ser desenhado por uma malha (drawBitmapMesh)
+que só se mexe onde há água, guiada por um mapa (nq_map_sea): o mar
+ondula com ondas menores perto do horizonte e o jato d'água balança.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ .../apk/res/drawable-nodpi/nq_map_sea.png     | Bin 0 -> 7965 bytes
+ .../src/org/krita/android/NanquimSplash.java  |  45 +++++++++++++++++-
+ 2 files changed, 43 insertions(+), 2 deletions(-)
+ create mode 100644 packaging/android/apk/res/drawable-nodpi/nq_map_sea.png
+
+diff --git a/packaging/android/apk/res/drawable-nodpi/nq_map_sea.png b/packaging/android/apk/res/drawable-nodpi/nq_map_sea.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..600be75294a36fd9073e945656bfbdd9012dcd1d
+GIT binary patch
+literal 7965
+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
+Q002PyDMX`8%>nU$0PnIsjQ{`u
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/android/apk/src/org/krita/android/NanquimSplash.java b/packaging/android/apk/src/org/krita/android/NanquimSplash.java
+index 3d89e0d..b31e1e8 100644
+--- a/packaging/android/apk/src/org/krita/android/NanquimSplash.java
++++ b/packaging/android/apk/src/org/krita/android/NanquimSplash.java
+@@ -183,6 +183,9 @@ public final class NanquimSplash {
+         final Resources res;
+         Bitmap bg, kiki, kikiBlink, impA, impB;
+         float[] meshBase, meshHead, meshTail, mesh;
++        // malha do fundo: o mar e o jato d'água ondulam em loop
++        static final int BW = 96, BH = 48;
++        float[] bgBase, bgSea, bgSpl, bgMesh;
+         final AtomicReferenceArray<Bitmap> wave = new AtomicReferenceArray<>(WAVE_N);
+         volatile boolean finishing;
+         Thread decoder;
+@@ -300,6 +303,27 @@ public final class NanquimSplash {
+             }
+             mh.recycle();
+             mt.recycle();
++
++            // onde a água fica no fundo (R = mar, com ondas menores perto do horizonte; G = jato d'água)
++            Bitmap ms = decode(R.drawable.nq_map_sea, Bitmap.Config.ARGB_8888);
++            int nb = (BW + 1) * (BH + 1) * 2;
++            bgBase = new float[nb]; bgSea = new float[nb / 2]; bgSpl = new float[nb / 2]; bgMesh = new float[nb];
++            int j = 0;
++            for (int y = 0; y <= BH; y++) {
++                for (int x = 0; x <= BW; x++) {
++                    bgBase[j * 2] = -20 + 1960f * x / BW;
++                    bgBase[j * 2 + 1] = -10 + 980f * y / BH;
++                    int px = Math.min(ms.getWidth() - 1, (int) ((float) x / BW * ms.getWidth()));
++                    int py = Math.min(ms.getHeight() - 1, (int) ((float) y / BH * ms.getHeight()));
++                    int cc = ms.getPixel(px, py);
++                    // a borda da imagem não se mexe, para não abrir buraco
++                    boolean edge = x == 0 || y == 0 || x == BW || y == BH;
++                    bgSea[j] = edge ? 0 : Color.red(cc) / 255f;
++                    bgSpl[j] = edge ? 0 : Color.green(cc) / 255f;
++                    j++;
++                }
++            }
++            ms.recycle();
+         }
+ 
+         private static Path sector(float r0, float r1, float startDeg, float sweep) {
+@@ -622,9 +646,26 @@ public final class NanquimSplash {
+             c.save();
+             c.translate(osc(t, 9000, 0, -16), osc(t, 9000, 0, 5));
+             if (bg != null) {
+-                rect.set(-20, -10, 1940, 970);
++                final float ts = t / 1000f;
++                for (int j = 0, n = bgSea.length; j < n; j++) {
++                    final float bx = bgBase[j * 2], by = bgBase[j * 2 + 1];
++                    final float w = bgSea[j], sp = bgSpl[j];
++                    float dx = 0, dy = 0;
++                    if (w > 0.01f) {
++                        dx += w * (10f * (float) Math.sin(by * 0.055f + ts * 1.4f + bx * 0.004f)
++                                + 5f * (float) Math.sin(by * 0.12f - ts * 2.1f + bx * 0.012f));
++                        dy += w * (4.5f * (float) Math.sin(bx * 0.016f - ts * 1.25f)
++                                + 2f * (float) Math.sin(bx * 0.045f + ts * 1.8f));
++                    }
++                    if (sp > 0.01f) {
++                        dx += sp * 7f * (float) Math.sin(ts * 2.8f + by * 0.03f);
++                        dy += sp * 6f * (float) Math.sin(ts * 2.2f + bx * 0.025f);
++                    }
++                    bgMesh[j * 2] = bx + dx;
++                    bgMesh[j * 2 + 1] = by + dy;
++                }
+                 pBmp.setAlpha(255);
+-                c.drawBitmap(bg, null, rect, pBmp);
++                c.drawBitmapMesh(bg, BW, BH, bgMesh, 0, null, 0, pBmp);
+             }
+             pFill.setColor(Color.WHITE);
+             for (float[] sp : SPARKS) {
+-- 
+2.43.0
+
