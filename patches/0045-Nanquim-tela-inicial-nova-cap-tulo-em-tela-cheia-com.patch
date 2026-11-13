@@ -1,0 +1,2106 @@
+From 3923843f20fbb5b30144166e573590fcca341fcf Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 22:01:09 -0300
+Subject: [PATCH] =?UTF-8?q?Nanquim:=20tela=20inicial=20nova,=20cap=C3=ADtu?=
+ =?UTF-8?q?lo=20em=20tela=20cheia=20com=20transi=C3=A7=C3=A3o,=20janela=20?=
+ =?UTF-8?q?de=20cap=C3=ADtulo,=20avisos=20no=20estilo=20do=20Nanquim?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Tela inicial: cartão "Nova página" em gradiente no começo, formatos com o papel
+  desenhado, capítulos com progresso, recentes sem faixas pretas, com data e capítulo,
+  filtro "Sem capítulo".
+- Capítulo abre em tela própria, com as páginas saindo da capa até a grade (e o
+  caminho inverso ao voltar, também pelo botão voltar do Android).
+- Janela de novo capítulo e de renomear, com o formato das páginas novas.
+- Nova página: cartões de formato desenhados (não se sobrepõem mais).
+- Perguntas e avisos desenhados pelo Qt no estilo do Nanquim, com botões em
+  português (Salvar / Não salvar / Cancelar); o seletor de arquivos continua o do Android.
+- Dicas (quadro de memória) no escuro.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp       | 1697 +++++++++++++++++++++--------
+ libs/widgetutils/KoFileDialog.cpp |   22 +
+ 2 files changed, 1287 insertions(+), 432 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index 7b42009..e982dc6 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -81,6 +81,12 @@
+ #include "kis_guides_config.h"
+ #include <kis_paint_layer.h>
+ #include <QPalette>
++#include <QToolTip>
++#include <QKeyEvent>
++#include <QAbstractButton>
++#include <QHash>
++#include <QLocale>
++#include <QStyle>
+ #include <QFile>
+ #include <QPainterPath>
+ #include <QRandomGenerator>
+@@ -225,7 +231,11 @@ const char *TRANSFORM = "<rect x='6' y='6' width='12' height='12' rx='1'/><rect
+ const char *TEXT = "<path d='M12 4c5 0 9 2.9 9 6.5S17 17 12 17c-.9 0-1.8-.1-2.6-.3L5 19.5l1.2-3.6C4.2 14.7 3 12.7 3 10.5 3 6.9 7 4 12 4z'/><path d='M9 9h6M12 9v5'/>";
+ const char *PICKER = "<path d='M16.5 3.5a2.1 2.1 0 0 1 3 3l-2 2-3-3z'/><path d='M14.5 7.5L6 16v3h3l8.5-8.5'/>";
+ const char *EXPORT = "<path d='M12 15V4M7.5 8.5L12 4l4.5 4.5'/><path d='M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5'/>";
+-const char *SETTINGS = "<circle cx='12' cy='12' r='3'/><path d='M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7'/>";
++const char *SETTINGS = "<path d='M18.86 10.61 L21.13 10.90 L21.13 13.10 L18.86 13.39 L17.83 15.87 L19.24 17.68 L17.68 19.24 L15.87 17.83 L13.39 18.86 L13.10 21.13 L10.90 21.13 L10.61 18.86 L8.13 17.83 L6.32 19.24 L4.76 17.68 L6.17 15.87 L5.14 13.39 L2.87 13.10 L2.87 10.90 L5.14 10.61 L6.17 8.13 L4.76 6.32 L6.32 4.76 L8.13 6.17 L10.61 5.14 L10.90 2.87 L13.10 2.87 L13.39 5.14 L15.87 6.17 L17.68 4.76 L19.24 6.32 L17.83 8.13z'/><circle cx='12' cy='12' r='3'/>";
++const char *SEARCH = "<circle cx='11' cy='11' r='6.5'/><path d='M16 16l4 4'/>";
++const char *FOLDER = "<path d='M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z'/>";
++const char *BOOK = "<path d='M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z'/><path d='M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z'/>";
++const char *RETURN = "<path d='M9 6l-5 6 5 6'/><path d='M4 12h11a5 5 0 0 1 5 5'/>";
+ const char *ALL_TOOLS = "<circle cx='6' cy='6' r='1.6'/><circle cx='12' cy='6' r='1.6'/><circle cx='18' cy='6' r='1.6'/><circle cx='6' cy='12' r='1.6'/><circle cx='12' cy='12' r='1.6'/><circle cx='18' cy='12' r='1.6'/><circle cx='6' cy='18' r='1.6'/><circle cx='12' cy='18' r='1.6'/><circle cx='18' cy='18' r='1.6'/>";
+ }
+ 
+@@ -2771,36 +2781,163 @@ const char *DROP_SVG =
+     "<circle cx='32' cy='27' r='4.2' fill='#0d1420'/></svg>";
+ 
+ const char *GALLERY_STYLE =
+-    "QWidget#nanquimGallery { background: #141417; }"
++    "QWidget#nanquimGallery, QWidget#nanquimHomePage, QWidget#nanquimChapterPage { background: #141417; }"
+     "QWidget#nanquimGallery QLabel { color: #ececf1; }"
+-    "QWidget#nanquimGalleryHeader { background: #141417; border-bottom: 1px solid #26262c; }"
+-    "QLabel#nanquimBrand { font-size: 23px; font-weight: 700; }"
++    "QWidget#nanquimGalleryHeader { background: #141417; border-bottom: 1px solid #24242a; }"
++    "QLabel#nanquimBrand { font-size: 22px; font-weight: 800; }"
+     "QLabel#nanquimSection { color: #a3a3ae; font-size: 13px; font-weight: 700; letter-spacing: 2px; }"
+     "QLabel#nanquimFooter { color: #6f6f7a; font-size: 12px; }"
+-    "QLabel#nanquimEmpty { color: #8a8a96; font-size: 15px; }"
+-    "QLineEdit#nanquimSearch { min-height: 42px; padding: 0 14px; border-radius: 12px; background: #1f1f24;"
+-    "  border: 1px solid #2c2c33; color: #ececf1; font-size: 15px; }"
+-    "QPushButton.nanquimGhost, QToolButton.nanquimGhost { min-height: 42px; padding: 0 16px; border-radius: 12px;"
+-    "  border: 1px solid #2c2c33; background: #1f1f24; color: #ececf1; font-size: 15px; font-weight: 500; }"
++    "QLabel#nanquimHint { color: #9a9aa6; font-size: 13px; }"
++    "QLabel#nanquimEmpty { color: #9a9aa6; font-size: 14px; border: 2px dashed #2e2e36; border-radius: 16px; }"
++    "QLabel#nanquimKicker { color: #22d3ee; font-size: 12px; font-weight: 700; letter-spacing: 2px; }"
++    "QLabel#nanquimChapterTitle { font-size: 26px; font-weight: 800; }"
++    "QLabel#nanquimChapterInfo { color: #a3a3ae; font-size: 13px; }"
++    "QLineEdit#nanquimSearch { min-height: 44px; padding: 0 12px; border-radius: 12px; background: #1c1c21;"
++    "  border: 1px solid #2a2a31; color: #ececf1; font-size: 14px; }"
++    "QPushButton.nanquimGhost, QToolButton.nanquimGhost { min-height: 44px; padding: 0 16px; border-radius: 12px;"
++    "  border: 1px solid #2e2e36; background: #1f1f25; color: #ececf1; font-size: 14px; font-weight: 600; }"
+     "QToolButton.nanquimGhost::menu-indicator { image: none; width: 0px; }"
+     "QPushButton.nanquimGhost:pressed, QToolButton.nanquimGhost:pressed { background: #26262c; }"
+-    "QPushButton#nanquimBackToDrawing { border: none; color: #04131f; font-weight: 600;"
+-    "  background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3d8bff, stop:1 #22d3ee); }"
+-    "QPushButton.nanquimPreset { min-height: 112px; border-radius: 16px; border: 1px solid #2c2c33;"
+-    "  background: #1c1c21; text-align: left; }"
+-    "QPushButton.nanquimPreset:pressed { background: #24242b; border-color: #3d8bff; }"
+-    "QPushButton.nanquimPreset QLabel { background: transparent; }"
+-    "QLabel#nanquimPresetName { font-size: 17px; font-weight: 600; }"
+-    "QLabel#nanquimPresetDetail { color: #a3a3ae; font-size: 13px; }"
++    "QPushButton.nanquimGhost:checked { background: rgba(61, 139, 255, 40); border-color: #3d8bff; color: #cfe3ff; }"
++    "QPushButton#nanquimIconButton, QToolButton#nanquimIconButton { min-width: 44px; max-width: 44px; padding: 0; }"
++    "QPushButton#nanquimFlatIcon { border: none; background: transparent; min-width: 44px; max-width: 44px; padding: 0; }"
++    "QPushButton#nanquimBackToDrawing { min-height: 44px; padding: 0 16px; border-radius: 12px;"
++    "  border: 1px solid rgba(61, 139, 255, 115); background: rgba(61, 139, 255, 30); color: #9cc6ff;"
++    "  font-size: 14px; font-weight: 600; }"
++    "QPushButton#nanquimBackToDrawing:pressed { background: rgba(61, 139, 255, 60); }"
++    "QPushButton#nanquimPrimary { min-height: 44px; padding: 0 20px; border-radius: 12px; border: none; color: #06121f;"
++    "  font-size: 14px; font-weight: 700; background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3d8bff, stop:1 #22d3ee); }"
++    "QPushButton.nanquimChip { min-height: 34px; padding: 0 14px; border-radius: 17px; border: 1px solid #2a2a31;"
++    "  background: #1b1b20; color: #c9c9d1; font-size: 13px; font-weight: 600; }"
++    "QPushButton.nanquimChip:checked { background: rgba(61, 139, 255, 40); color: #cfe3ff; border-color: rgba(61, 139, 255, 128); }"
+     "QListView#nanquimRecents { background: transparent; border: none; }";
+ 
+ // miniatura de papel com sombra e o nome embaixo
++QString chapterOf(const QString &path);
++QString chapterNameOf(const QString &path);
++
++// as miniaturas dos recentes são quadradas, com faixas escuras dos lados;
++// aqui as faixas são cortadas para a página preencher o cartão inteiro
++QPixmap trimmedThumb(const QIcon &icon)
++{
++    if (icon.isNull()) return QPixmap();
++    static QHash<qint64, QPixmap> cache;
++    const qint64 key = icon.cacheKey();
++    auto it = cache.constFind(key);
++    if (it != cache.constEnd()) return it.value();
++    const QPixmap pm = icon.pixmap(QSize(512, 512));
++    if (pm.isNull()) return QPixmap();
++    const QImage img = pm.toImage().convertToFormat(QImage::Format_ARGB32);
++    const int w = img.width();
++    const int h = img.height();
++    const QColor text = qApp->palette().color(QPalette::Text);
++    const QColor window = qApp->palette().color(QPalette::Window);
++    const QColor blended = QColor::fromRgbF(text.redF() * 0.1 + window.redF() * 0.9,
++                                            text.greenF() * 0.1 + window.greenF() * 0.9,
++                                            text.blueF() * 0.1 + window.blueF() * 0.9);
++    auto same = [](QRgb a, QRgb b) {
++        return qAbs(qRed(a) - qRed(b)) < 5 && qAbs(qGreen(a) - qGreen(b)) < 5
++                && qAbs(qBlue(a) - qBlue(b)) < 5 && qAbs(qAlpha(a) - qAlpha(b)) < 5;
++    };
++    auto isBar = [&](QRgb c) {
++        return same(c, blended.rgb()) || (qAlpha(c) == 255 && QColor(c).lightness() < 80);
++    };
++    QRect keep(0, 0, w, h);
++    const QRgb side = img.pixel(0, h / 2);
++    if (isBar(side) && same(side, img.pixel(w - 1, h / 2))) {
++        auto uniformCol = [&](int x) { for (int y = 0; y < h; y += 3) if (!same(img.pixel(x, y), side)) return false; return true; };
++        int l = 0, r = w - 1;
++        while (l < w / 2 && uniformCol(l)) l++;
++        while (r > w / 2 && uniformCol(r)) r--;
++        keep.setLeft(l);
++        keep.setRight(r);
++    }
++    const QRgb top = img.pixel(w / 2, 0);
++    if (isBar(top) && same(top, img.pixel(w / 2, h - 1))) {
++        auto uniformRow = [&](int y) { for (int x = 0; x < w; x += 3) if (!same(img.pixel(x, y), top)) return false; return true; };
++        int t = 0, b = h - 1;
++        while (t < h / 2 && uniformRow(t)) t++;
++        while (b > h / 2 && uniformRow(b)) b--;
++        keep.setTop(t);
++        keep.setBottom(b);
++    }
++    QPixmap out = (keep.width() > w / 8 && keep.height() > h / 8) ? QPixmap::fromImage(img.copy(keep)) : pm;
++    if (cache.size() > 300) cache.clear();
++    cache.insert(key, out);
++    return out;
++}
++
++// onde a página cabe dentro de 'box', centralizada e encostada embaixo
++QRect fitPage(const QSize &content, const QRect &box)
++{
++    QSize sz = content.isEmpty() ? QSize(707, 1000) : content;
++    sz.scale(box.size(), Qt::KeepAspectRatio);
++    sz = sz.expandedTo(QSize(8, 8));
++    return QRect(box.left() + (box.width() - sz.width()) / 2, box.bottom() - sz.height() + 1, sz.width(), sz.height());
++}
++
++// papel com sombra e a miniatura por cima
++QRect paintPage(QPainter *g, const QRect &box, const QIcon &icon, int radius)
++{
++    const QPixmap pm = trimmedThumb(icon);
++    const QRect paper = fitPage(pm.isNull() ? QSize() : pm.size(), box);
++    g->setPen(Qt::NoPen);
++    for (int i = 5; i >= 1; --i) {
++        g->setBrush(QColor(0, 0, 0, 12 + 6 * (5 - i)));
++        g->drawRoundedRect(paper.adjusted(-i / 2, i, i / 2, i + 1), radius + i, radius + i);
++    }
++    g->setBrush(QColor(0xfa, 0xfa, 0xf7));
++    g->drawRoundedRect(paper, radius, radius);
++    if (!pm.isNull()) {
++        QPainterPath clip;
++        clip.addRoundedRect(paper, radius, radius);
++        g->save();
++        g->setClipPath(clip);
++        g->drawPixmap(paper, pm);
++        g->restore();
++    }
++    return paper;
++}
++
++QString relativeWhen(const QDateTime &t)
++{
++    if (!t.isValid()) return QString();
++    const qint64 s = t.secsTo(QDateTime::currentDateTime());
++    if (s < 60) return i18n("agora");
++    if (s < 3600) return i18n("há %1 min", s / 60);
++    if (s < 86400) return i18n("há %1 h", s / 3600);
++    const qint64 days = s / 86400;
++    if (days == 1) return i18n("ontem");
++    if (days < 7) return i18n("há %1 dias", days);
++    if (days < 14) return i18n("há 1 semana");
++    if (days < 31) return i18n("há %1 semanas", days / 7);
++    return QLocale().toString(t.date(), QLocale::ShortFormat);
++}
++
++// "há 2 h · Capítulo 2", guardado para não ler o disco a cada desenho da tela
++QHash<QString, QString> s_subtitleCache;
++QString recentSubtitle(const QString &path)
++{
++    auto it = s_subtitleCache.constFind(path);
++    if (it != s_subtitleCache.constEnd()) return it.value();
++    QString s = relativeWhen(QFileInfo(path).lastModified());
++    const QString chapter = chapterNameOf(path);
++    if (!chapter.isEmpty()) s = s.isEmpty() ? chapter : s + QStringLiteral(" · ") + chapter;
++    s_subtitleCache.insert(path, s);
++    return s;
++}
++
+ class RecentDelegate : public QStyledItemDelegate
+ {
+ public:
+     using QStyledItemDelegate::QStyledItemDelegate;
+ 
+-    static QSize cell() { return QSize(186, 300); }
++    static QSize cell() { return QSize(176, 292); }
++    static QRect paperBox(const QRect &cellRect)
++    {
++        const QRect r = cellRect.adjusted(10, 6, -10, -6);
++        return QRect(r.left(), r.top(), r.width(), r.height() - 52);
++    }
+ 
+     QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override { return cell(); }
+ 
+@@ -2809,37 +2946,16 @@ public:
+         g->save();
+         g->setRenderHint(QPainter::Antialiasing);
+         g->setRenderHint(QPainter::SmoothPixmapTransform);
+-        const QRect r = option.rect.adjusted(9, 6, -9, -6);
+-        const int paperW = r.width();
+-        const int paperH = qMin(qRound(paperW / 0.707), r.height() - 46);
+-        const QRect paper(r.left(), r.top(), paperW, paperH);
+-
+-        // sombra suave e papel
+-        for (int i = 6; i >= 1; --i) {
+-            g->setPen(Qt::NoPen);
+-            g->setBrush(QColor(0, 0, 0, 10 + 4 * (6 - i)));
+-            g->drawRoundedRect(paper.adjusted(-i / 2, i / 2, i / 2, i), 10 + i, 10 + i);
+-        }
+-        g->setBrush(QColor(0xfa, 0xfa, 0xf7));
+-        g->drawRoundedRect(paper, 10, 10);
++        const QRect r = option.rect.adjusted(10, 6, -10, -6);
++        const QRect box = paperBox(option.rect);
++        const QRect paper = paintPage(g, box, index.data(Qt::DecorationRole).value<QIcon>(), 8);
+ 
+-        const QIcon icon = index.data(Qt::DecorationRole).value<QIcon>();
+-        if (!icon.isNull()) {
+-            const QRect inner = paper.adjusted(8, 8, -8, -8);
+-            const QPixmap pm = icon.pixmap(inner.size());
+-            if (!pm.isNull()) {
+-                QSize sz = pm.size() / pm.devicePixelRatio();
+-                sz.scale(inner.size(), Qt::KeepAspectRatio);
+-                const QRect target(QPoint(inner.center().x() - sz.width() / 2, inner.center().y() - sz.height() / 2), sz);
+-                g->drawPixmap(target, pm);
+-            }
+-        }
+-        if (option.state & QStyle::State_MouseOver || option.state & QStyle::State_Selected) {
++        if (option.state & QStyle::State_Selected) {
+             g->setPen(QPen(C_ACCENT, 2));
+             g->setBrush(Qt::NoBrush);
+-            g->drawRoundedRect(paper, 10, 10);
++            g->drawRoundedRect(paper, 8, 8);
+         }
+-
++        const bool chapterView = option.widget && option.widget->property("nanquimChapterView").toBool();
+         if (option.widget && option.widget->property("nanquimAddMode").toBool()) {
+             const QRectF badge(paper.right() - 34, paper.top() + 8, 26, 26);
+             g->setPen(Qt::NoPen);
+@@ -2861,19 +2977,23 @@ public:
+             g->setPen(QPen(C_ACCENT, 2.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+             g->drawPolyline(QPolygonF() << left.center() + QPointF(4, -7) << left.center() + QPointF(-4, 0) << left.center() + QPointF(4, 7));
+             g->drawPolyline(QPolygonF() << right.center() + QPointF(-4, -7) << right.center() + QPointF(4, 0) << right.center() + QPointF(-4, 7));
+-            const QRectF num(paper.center().x() - 20, paper.top() + 8, 40, 26);
+-            g->setPen(Qt::NoPen);
+-            g->setBrush(C_ACCENT);
+-            g->drawRoundedRect(num, 13, 13);
++        }
++        if (chapterView) {
++            // número da página no canto, como no protótipo
+             QFont nf = option.font;
+-            nf.setPixelSize(13);
++            nf.setPixelSize(11);
+             nf.setWeight(QFont::Bold);
++            const QString num = QString::number(index.row() + 1).rightJustified(2, QLatin1Char('0'));
++            const QRectF pill(paper.left() + 6, paper.top() + 6, QFontMetrics(nf).horizontalAdvance(num) + 14, 22);
++            g->setPen(Qt::NoPen);
++            g->setBrush(QColor(23, 23, 26, 230));
++            g->drawRoundedRect(pill, 11, 11);
+             g->setFont(nf);
+-            g->setPen(Qt::white);
+-            g->drawText(num, Qt::AlignCenter, QString::number(index.row() + 1));
++            g->setPen(C_TEXT);
++            g->drawText(pill, Qt::AlignCenter, num);
+         }
+         const QVariant stage = index.data(Qt::UserRole + 60);
+-        if (stage.isValid() && option.widget && option.widget->property("nanquimChapterView").toBool()) {
++        if (stage.isValid() && chapterView) {
+             const int s = stage.toInt();
+             const QColor dot = s == 2 ? QColor(0x22, 0xd3, 0xee) : s == 1 ? QColor(0x6f, 0x86, 0xb8) : QColor(0x8a, 0x8a, 0x96);
+             const QString label = s == 2 ? i18n("Pronta") : s == 1 ? i18n("Arte-final") : i18n("Rascunho");
+@@ -2902,87 +3022,337 @@ public:
+         }
+ 
+         QString name = index.data(Qt::DisplayRole).toString();
+-        if (name.endsWith(QLatin1String(".kra"), Qt::CaseInsensitive)) {
+-            name.chop(4);
+-        }
++        if (name.endsWith(QLatin1String(".kra"), Qt::CaseInsensitive)) name.chop(4);
+         QFont f = option.font;
+-        f.setPixelSize(14);
++        f.setPixelSize(13);
+         f.setWeight(QFont::DemiBold);
+         g->setFont(f);
+         g->setPen(C_TEXT);
+-        const QRect textRect(r.left(), paper.bottom() + 10, r.width(), 20);
+-        g->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
+-                    QFontMetrics(f).elidedText(name, Qt::ElideRight, textRect.width()));
++        const QRect nameRect(r.left(), box.bottom() + 10, r.width(), 20);
++        g->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
++                    QFontMetrics(f).elidedText(name, Qt::ElideRight, nameRect.width()));
++        if (!chapterView) {
++            const QString sub = recentSubtitle(index.data(Qt::ToolTipRole).toString());
++            if (!sub.isEmpty()) {
++                f.setPixelSize(11);
++                f.setWeight(QFont::Normal);
++                g->setFont(f);
++                g->setPen(QColor(0x9a, 0x9a, 0xa6));
++                const QRect subRect(r.left(), nameRect.bottom() + 2, r.width(), 16);
++                g->drawText(subRect, Qt::AlignLeft | Qt::AlignVCenter,
++                            QFontMetrics(f).elidedText(sub, Qt::ElideRight, subRect.width()));
++            }
++        }
+         g->restore();
+     }
+ };
+ 
+-// capítulo: pilha de páginas com a capa, nome e número de páginas
++// capítulo: pilha de páginas com a capa, nome, quantas páginas e o progresso
+ class ChapterDelegate : public QStyledItemDelegate
+ {
+ public:
+     using QStyledItemDelegate::QStyledItemDelegate;
+-    static QSize cell() { return QSize(170, 236); }
++    static QSize cell() { return QSize(156, 252); }
++    static QRect coverBox(const QRect &cellRect)
++    {
++        const QRect r = cellRect.adjusted(8, 4, -8, -4);
++        return QRect(r.left(), r.top() + 12, 112, 158);
++    }
+     QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override { return cell(); }
+     void paint(QPainter *g, const QStyleOptionViewItem &option, const QModelIndex &index) const override
+     {
+         g->save();
+         g->setRenderHint(QPainter::Antialiasing);
+         g->setRenderHint(QPainter::SmoothPixmapTransform);
+-        const QRect r = option.rect.adjusted(12, 8, -12, -8);
+-        const int pw = r.width() - 10;
+-        const int ph = qRound(pw / 0.707);
+-        const QRect paper(r.left(), r.top() + 8, pw, ph);
++        const QRect r = option.rect.adjusted(8, 4, -8, -4);
++        const QRect box = coverBox(option.rect);
+         const bool isNew = index.data(Qt::UserRole + 1).toString().isEmpty();
++        QFont f = option.font;
+         if (isNew) {
+-            QPen dash(QColor(0x4a, 0x4a, 0x55), 2, Qt::DashLine);
++            QPen dash(QColor(0x3a, 0x3a, 0x44), 1.5, Qt::DashLine);
+             g->setPen(dash);
+-            g->setBrush(QColor(0x1c, 0x1c, 0x21));
+-            g->drawRoundedRect(paper, 10, 10);
+-            g->setPen(QPen(C_ACCENT, 3, Qt::SolidLine, Qt::RoundCap));
+-            const QPointF c = paper.center();
+-            g->drawLine(c + QPointF(-14, 0), c + QPointF(14, 0));
+-            g->drawLine(c + QPointF(0, -14), c + QPointF(0, 14));
+-        } else {
+-            // duas folhas atrás, dando ideia de capítulo
+-            for (int k = 2; k >= 1; --k) {
+-                g->setPen(QPen(QColor(0x2c, 0x2c, 0x33), 1));
+-                g->setBrush(QColor(0xd8 - 20 * k, 0xd8 - 20 * k, 0xd4 - 20 * k));
+-                g->drawRoundedRect(paper.translated(5 * k, -4 * k), 9, 9);
+-            }
++            g->setBrush(Qt::NoBrush);
++            g->drawRoundedRect(QRectF(box).adjusted(0.5, 0.5, -0.5, -0.5), 10, 10);
++            const QPointF c = QPointF(box.center()) + QPointF(0, -14);
+             g->setPen(Qt::NoPen);
+-            g->setBrush(QColor(0xfa, 0xfa, 0xf7));
+-            g->drawRoundedRect(paper, 9, 9);
+-            const QIcon icon = index.data(Qt::DecorationRole).value<QIcon>();
+-            if (!icon.isNull()) {
+-                const QRect inner = paper.adjusted(6, 6, -6, -6);
+-                const QPixmap pm = icon.pixmap(inner.size());
+-                QSize sz = pm.size() / pm.devicePixelRatio();
+-                sz.scale(inner.size(), Qt::KeepAspectRatio);
+-                g->drawPixmap(QRect(QPoint(inner.center().x() - sz.width() / 2, inner.center().y() - sz.height() / 2), sz), pm);
+-            }
++            g->setBrush(QColor(61, 139, 255, 36));
++            g->drawEllipse(c, 20, 20);
++            g->setPen(QPen(QColor(0x9c, 0xc6, 0xff), 2.2, Qt::SolidLine, Qt::RoundCap));
++            g->drawLine(c + QPointF(-8, 0), c + QPointF(8, 0));
++            g->drawLine(c + QPointF(0, -8), c + QPointF(0, 8));
++            f.setPixelSize(13);
++            f.setWeight(QFont::Bold);
++            g->setFont(f);
++            g->setPen(C_TEXT);
++            g->drawText(QRect(box.left(), int(c.y()) + 28, box.width(), 20), Qt::AlignCenter, index.data(Qt::DisplayRole).toString());
++            g->restore();
++            return;
+         }
+-        QFont f = option.font;
++        // duas folhas atrás, dando ideia de capítulo
++        const QIcon icon = index.data(Qt::DecorationRole).value<QIcon>();
++        const QPixmap pm = trimmedThumb(icon);
++        const QRect paper = fitPage(pm.isNull() ? QSize() : pm.size(), box);
++        g->setPen(Qt::NoPen);
++        g->setBrush(QColor(0xbd, 0xbd, 0xb6));
++        g->drawRoundedRect(paper.translated(12, -12), 6, 6);
++        g->setBrush(QColor(0xda, 0xda, 0xd3));
++        g->drawRoundedRect(paper.translated(6, -6), 6, 6);
++        paintPage(g, box, icon, 6);
++
+         f.setPixelSize(14);
+-        f.setWeight(QFont::DemiBold);
++        f.setWeight(QFont::Bold);
+         g->setFont(f);
+         g->setPen(C_TEXT);
+-        const QRect t1(r.left(), paper.bottom() + 8, r.width(), 18);
++        const QRect t1(r.left(), box.bottom() + 10, r.width(), 18);
+         g->drawText(t1, Qt::AlignLeft | Qt::AlignVCenter,
+                     QFontMetrics(f).elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideRight, t1.width()));
+-        if (!isNew) {
+-            f.setPixelSize(12);
+-            f.setWeight(QFont::Normal);
+-            g->setFont(f);
+-            g->setPen(C_MUTED);
+-            const int n = index.data(Qt::UserRole + 2).toInt();
+-            g->drawText(QRect(r.left(), t1.bottom() + 2, r.width(), 16), Qt::AlignLeft | Qt::AlignVCenter,
+-                        n == 1 ? i18n("1 página") : i18n("%1 páginas", n));
++        const int n = index.data(Qt::UserRole + 2).toInt();
++        const int ready = index.data(Qt::UserRole + 3).toInt();
++        const int ink = index.data(Qt::UserRole + 4).toInt();
++        f.setPixelSize(12);
++        f.setWeight(QFont::Normal);
++        g->setFont(f);
++        g->setPen(QColor(0x9a, 0x9a, 0xa6));
++        const QString info = n == 0 ? i18n("vazio")
++                : n == 1 ? (ready == 1 ? i18n("1 página · pronta") : i18n("1 página"))
++                : i18n("%1 páginas · %2 prontas", n, ready);
++        const QRect t2(r.left(), t1.bottom() + 2, r.width(), 16);
++        g->drawText(t2, Qt::AlignLeft | Qt::AlignVCenter, QFontMetrics(f).elidedText(info, Qt::ElideRight, t2.width()));
++        // barra de progresso: prontas (gradiente) e arte-final (azul acinzentado)
++        const QRectF bar(r.left(), t2.bottom() + 8, r.width(), 5);
++        g->setPen(Qt::NoPen);
++        g->setBrush(QColor(0x2a, 0x2a, 0x31));
++        g->drawRoundedRect(bar, 2.5, 2.5);
++        if (n > 0) {
++            g->save();
++            QPainterPath clip;
++            clip.addRoundedRect(bar, 2.5, 2.5);
++            g->setClipPath(clip);
++            const qreal rw = bar.width() * ready / n;
++            QLinearGradient grad(bar.topLeft(), bar.topRight());
++            grad.setColorAt(0, C_ACCENT);
++            grad.setColorAt(1, QColor(0x22, 0xd3, 0xee));
++            g->setBrush(grad);
++            g->drawRect(QRectF(bar.left(), bar.top(), rw, bar.height()));
++            g->setBrush(QColor(0x6f, 0x86, 0xb8));
++            g->drawRect(QRectF(bar.left() + rw, bar.top(), bar.width() * ink / n, bar.height()));
++            g->restore();
+         }
+         g->restore();
+     }
+ };
+ 
++// ---------------------------------------------------------------------------
++// Cartões da tela inicial: "Nova página" em gradiente e formatos com o papel
++// desenhado na proporção (também usados na janela de Nova página)
++// ---------------------------------------------------------------------------
++class PaperTile : public QAbstractButton
++{
++public:
++    PaperTile(const QString &name, const QString &detail, qreal ratio, bool centered, QWidget *parent)
++        : QAbstractButton(parent), m_name(name), m_detail(detail), m_ratio(ratio), m_centered(centered)
++    {
++        setFocusPolicy(Qt::NoFocus);
++        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
++        setFixedHeight(150);
++        setMinimumWidth(130);
++    }
++    QSize sizeHint() const override { return QSize(m_centered ? 170 : 180, 150); }
++protected:
++    void paintEvent(QPaintEvent *) override
++    {
++        QPainter g(this);
++        g.setRenderHint(QPainter::Antialiasing);
++        const QRectF r = QRectF(rect()).adjusted(1, 1, -1, -1);
++        const bool on = isChecked();
++        const bool down = isDown();
++        g.setPen(QPen(on || down ? C_ACCENT : QColor(0x2a, 0x2a, 0x31), on ? 2 : 1));
++        g.setBrush(on ? QColor(0x1e, 0x2a, 0x44) : down ? QColor(0x24, 0x24, 0x2b) : QColor(0x1b, 0x1b, 0x20));
++        g.drawRoundedRect(r, 15, 15);
++
++        QFont nf = font();
++        nf.setPixelSize(m_centered ? 14 : 15);
++        nf.setWeight(QFont::Bold);
++        QFont df = font();
++        df.setPixelSize(12);
++        const qreal maxW = m_centered ? 96 : 64;
++        QRectF box;
++        if (m_centered) box = QRectF(r.left() + 12, r.top() + 14, r.width() - 24, r.height() - 14 - 62);
++        else box = QRectF(r.left() + 16, r.top() + 16, r.width() - 32, 56);
++        qreal pw, ph;
++        if (m_ratio >= 1.0) { pw = qMin(maxW, box.width()); ph = pw / m_ratio; }
++        else { ph = box.height(); pw = qMax(10.0, ph * m_ratio); }
++        const QRectF paper(m_centered ? box.center().x() - pw / 2 : box.left(),
++                           m_centered ? box.center().y() - ph / 2 : box.bottom() - ph, pw, ph);
++        g.setPen(Qt::NoPen);
++        g.setBrush(QColor(0, 0, 0, 90));
++        g.drawRoundedRect(paper.translated(0, 3), 3, 3);
++        g.setBrush(QColor(0xfa, 0xfa, 0xf7));
++        g.drawRoundedRect(paper, 3, 3);
++
++        const Qt::Alignment al = m_centered ? Qt::AlignHCenter : Qt::AlignLeft;
++        const QRectF nameRect(r.left() + 14, r.bottom() - 52, r.width() - 28, 22);
++        const QRectF detRect(r.left() + 14, r.bottom() - 30, r.width() - 28, 18);
++        g.setFont(nf);
++        g.setPen(C_TEXT);
++        g.drawText(nameRect, al | Qt::AlignVCenter, QFontMetrics(nf).elidedText(m_name, Qt::ElideRight, int(nameRect.width())));
++        g.setFont(df);
++        g.setPen(QColor(0x9a, 0x9a, 0xa6));
++        g.drawText(detRect, al | Qt::AlignVCenter, QFontMetrics(df).elidedText(m_detail, Qt::ElideRight, int(detRect.width())));
++    }
++private:
++    QString m_name, m_detail;
++    qreal m_ratio;
++    bool m_centered;
++};
++
++class NewPageTile : public QAbstractButton
++{
++public:
++    explicit NewPageTile(QWidget *parent) : QAbstractButton(parent)
++    {
++        setFocusPolicy(Qt::NoFocus);
++        setFixedSize(236, 150);
++        setToolTip(i18n("Nova página"));
++    }
++protected:
++    void paintEvent(QPaintEvent *) override
++    {
++        QPainter g(this);
++        g.setRenderHint(QPainter::Antialiasing);
++        const QRectF r = QRectF(rect()).adjusted(1, 1, -1, -1);
++        QLinearGradient grad(r.topLeft(), r.bottomRight());
++        grad.setColorAt(0, isDown() ? QColor(0x35, 0x7c, 0xe6) : C_ACCENT);
++        grad.setColorAt(1, isDown() ? QColor(0x1e, 0xbd, 0xd6) : QColor(0x22, 0xd3, 0xee));
++        g.setPen(Qt::NoPen);
++        g.setBrush(grad);
++        g.drawRoundedRect(r, 16, 16);
++        const QPointF c(r.left() + 18 + 26, r.top() + 18 + 26);
++        g.setBrush(QColor(255, 255, 255, 235));
++        g.drawEllipse(c, 26, 26);
++        g.setPen(QPen(QColor(0x1f, 0x6f, 0xe0), 3, Qt::SolidLine, Qt::RoundCap));
++        g.drawLine(c + QPointF(-10, 0), c + QPointF(10, 0));
++        g.drawLine(c + QPointF(0, -10), c + QPointF(0, 10));
++        QFont f = font();
++        f.setPixelSize(19);
++        f.setWeight(QFont::ExtraBold);
++        g.setFont(f);
++        g.setPen(QColor(0x06, 0x12, 0x1f));
++        g.drawText(QRectF(r.left() + 18, r.bottom() - 58, r.width() - 36, 26), Qt::AlignLeft | Qt::AlignVCenter, i18n("Nova página"));
++        f.setPixelSize(12);
++        f.setWeight(QFont::DemiBold);
++        g.setFont(f);
++        g.setPen(QColor(0x06, 0x12, 0x1f, 200));
++        g.drawText(QRectF(r.left() + 18, r.bottom() - 32, r.width() - 36, 18), Qt::AlignLeft | Qt::AlignVCenter,
++                   i18n("Escolher formato e tamanho"));
++    }
++};
++
++// barra de progresso do capítulo, com a legenda ao lado
++class ChapterProgress : public QWidget
++{
++public:
++    explicit ChapterProgress(QWidget *parent) : QWidget(parent) { setFixedHeight(26); }
++    void setCounts(int ready, int ink, int draft) { m_ready = ready; m_ink = ink; m_draft = draft; update(); }
++protected:
++    void paintEvent(QPaintEvent *) override
++    {
++        QPainter g(this);
++        g.setRenderHint(QPainter::Antialiasing);
++        QFont f = font();
++        f.setPixelSize(12);
++        g.setFont(f);
++        const QFontMetrics fm(f);
++        struct Item { QColor c; QString t; };
++        const QList<Item> items = {{QColor(0x22, 0xd3, 0xee), i18n("%1 prontas", m_ready)},
++                                   {QColor(0x6f, 0x86, 0xb8), i18n("%1 arte-final", m_ink)},
++                                   {QColor(0x4a, 0x4a, 0x54), i18n("%1 rascunho", m_draft)}};
++        int legendW = 0;
++        for (const Item &it : items) legendW += 18 + fm.horizontalAdvance(it.t) + 16;
++        const QRectF bar(0, height() / 2 - 4, qMax(80, width() - legendW - 8), 8);
++        g.setPen(Qt::NoPen);
++        g.setBrush(QColor(0x24, 0x24, 0x2b));
++        g.drawRoundedRect(bar, 4, 4);
++        const int total = m_ready + m_ink + m_draft;
++        if (total > 0) {
++            g.save();
++            QPainterPath clip;
++            clip.addRoundedRect(bar, 4, 4);
++            g.setClipPath(clip);
++            const qreal rw = bar.width() * m_ready / total;
++            QLinearGradient grad(bar.topLeft(), bar.topRight());
++            grad.setColorAt(0, C_ACCENT);
++            grad.setColorAt(1, QColor(0x22, 0xd3, 0xee));
++            g.setBrush(grad);
++            g.drawRect(QRectF(bar.left(), bar.top(), rw, bar.height()));
++            g.setBrush(QColor(0x6f, 0x86, 0xb8));
++            g.drawRect(QRectF(bar.left() + rw, bar.top(), bar.width() * m_ink / total, bar.height()));
++            g.restore();
++        }
++        qreal x = bar.right() + 16;
++        for (const Item &it : items) {
++            g.setPen(Qt::NoPen);
++            g.setBrush(it.c);
++            g.drawEllipse(QPointF(x + 5, height() / 2.0), 5, 5);
++            g.setPen(QColor(0xc9, 0xc9, 0xd1));
++            g.drawText(QRectF(x + 16, 0, fm.horizontalAdvance(it.t) + 4, height()), Qt::AlignVCenter | Qt::AlignLeft, it.t);
++            x += 18 + fm.horizontalAdvance(it.t) + 16;
++        }
++    }
++private:
++    int m_ready = 0, m_ink = 0, m_draft = 0;
++};
++
++// ---------------------------------------------------------------------------
++// Transição da tela inicial para o capítulo: o resto da tela escurece e as
++// páginas saem da capa até os lugares da grade (e o caminho inverso ao voltar)
++// ---------------------------------------------------------------------------
++class ChapterTransition : public QWidget
++{
++public:
++    ChapterTransition(QWidget *host, const QPixmap &home, const QPixmap &chapter, const QRect &cover,
++                      const QRect &grid, const QList<QRect> &cells)
++        : QWidget(host), m_home(home), m_chapter(chapter), m_cover(cover), m_grid(grid), m_cells(cells)
++    {
++        setAttribute(Qt::WA_OpaquePaintEvent);
++        setGeometry(host->rect());
++    }
++    void setProgress(qreal t) { m_t = t; update(); }
++protected:
++    void paintEvent(QPaintEvent *) override
++    {
++        QPainter g(this);
++        g.setRenderHint(QPainter::SmoothPixmapTransform);
++        g.fillRect(rect(), QColor(0x14, 0x14, 0x17));
++        g.drawPixmap(0, 0, m_home);
++        const qreal veil = qBound(0.0, m_t * 1.5, 1.0);
++        g.setOpacity(veil);
++        g.setClipRegion(QRegion(rect()) - QRegion(m_grid));
++        g.drawPixmap(0, 0, m_chapter);
++        g.setClipping(false);
++        g.fillRect(m_grid, QColor(0x14, 0x14, 0x17));
++        const qreal dpr = m_chapter.devicePixelRatio();
++        const QEasingCurve ease(QEasingCurve::OutCubic);
++        for (int i = m_cells.size() - 1; i >= 0; --i) {
++            const qreal delay = qMin(i, 10) * 0.03;
++            const qreal local = qBound(0.0, (m_t - delay) / 0.7, 1.0);
++            if (local <= 0.0) continue;
++            const qreal e = ease.valueForProgress(local);
++            const QRectF from(m_cover);
++            const QRectF to(m_cells[i]);
++            const QRectF cur(from.left() + (to.left() - from.left()) * e, from.top() + (to.top() - from.top()) * e,
++                             from.width() + (to.width() - from.width()) * e, from.height() + (to.height() - from.height()) * e);
++            g.setOpacity(qMin(1.0, local * 3));
++            g.drawPixmap(cur, m_chapter, QRectF(to.left() * dpr, to.top() * dpr, to.width() * dpr, to.height() * dpr));
++        }
++    }
++private:
++    QPixmap m_home, m_chapter;
++    QRect m_cover, m_grid;
++    QList<QRect> m_cells;
++    qreal m_t = 0;
++};
++
+ 
+ struct PagePreset {
+     const char *name;
+@@ -3091,6 +3461,16 @@ public:
+         c.writeEntry("status", list);
+         changed();
+     }
++    // formato das páginas novas (índice em CHAPTER_FORMATS)
++    int format(const QString &id) const
++    {
++        return qBound(0, KSharedConfig::openConfig()->group(QStringLiteral("NanquimChapter-") + id).readEntry("format", 0), 3);
++    }
++    void setFormat(const QString &id, int value)
++    {
++        KSharedConfig::openConfig()->group(QStringLiteral("NanquimChapter-") + id).writeEntry("format", value);
++        changed();
++    }
+     void movePage(const QString &id, const QString &path, int delta)
+     {
+         KConfigGroup c = KSharedConfig::openConfig()->group(QStringLiteral("NanquimChapter-") + id);
+@@ -3111,6 +3491,15 @@ private:
+     }
+ };
+ 
++QString chapterNameOf(const QString &path)
++{
++    if (path.isEmpty()) return QString();
++    Q_FOREACH (const ChapterStore::Chapter &c, ChapterStore::instance()->chapters()) {
++        if (c.pages.contains(path)) return c.name;
++    }
++    return QString();
++}
++
+ // ícone (miniatura) de um desenho, pelo mesmo cache dos recentes
+ QUrl urlForPath(const QString &path)
+ {
+@@ -3189,6 +3578,135 @@ QLabel *sectionLabel(const QString &text, QWidget *parent)
+ }
+ 
+ void showWelcome(KisMainWindow *mw, bool startAtGuide);
++void showChapterSheet(KisMainWindow *mw, const QString &chapterId, std::function<void(const QString &)> done);
++
++// formatos rápidos da tela inicial
++const PagePreset HOME_PRESETS[] = {
++    {"Página de mangá", "B4 · 600 dpi", 6071, 8598, 600},
++    {"Comic americano", "6,6 × 10,2 pol · 400 dpi", 2650, 4100, 400},
++    {"Tirinha", "4 quadros · 300 dpi", 4000, 1250, 300},
++    {"Ilustração", "A4 · 300 dpi", 2480, 3508, 300},
++    {"Webtoon", "800 px · rolagem", 800, 12800, 72},
++};
++
++// formato das páginas novas de um capítulo (o "+ Nova página" de dentro dele)
++const PagePreset CHAPTER_FORMATS[] = {
++    {"Mangá B4", "B4 · 600 dpi", 6071, 8598, 600},
++    {"Comic americano", "400 dpi", 2650, 4100, 400},
++    {"A4", "300 dpi", 2480, 3508, 300},
++    {"Webtoon", "800 px", 800, 12800, 72},
++};
++const int CHAPTER_FORMAT_COUNT = int(sizeof(CHAPTER_FORMATS) / sizeof(CHAPTER_FORMATS[0]));
++
++// recentes com filtro "sem capítulo" além da busca
++class RecentsFilter : public QSortFilterProxyModel
++{
++public:
++    using QSortFilterProxyModel::QSortFilterProxyModel;
++    void setLooseOnly(bool on) { m_looseOnly = on; invalidateFilter(); }
++    void refilter() { invalidateFilter(); }
++protected:
++    bool filterAcceptsRow(int row, const QModelIndex &parent) const override
++    {
++        if (!QSortFilterProxyModel::filterAcceptsRow(row, parent)) return false;
++        if (!m_looseOnly) return true;
++        const QString path = sourceModel()->index(row, 0, parent).data(Qt::ToolTipRole).toString();
++        return chapterOf(path).isEmpty();
++    }
++private:
++    bool m_looseOnly = false;
++};
++
++// botão "voltar" do Android (e Esc) fecha o capítulo aberto
++class BackKeyFilter : public QObject
++{
++public:
++    BackKeyFilter(QObject *parent, std::function<bool()> handler) : QObject(parent), m_handler(handler) {}
++protected:
++    bool eventFilter(QObject *, QEvent *e) override
++    {
++        if (e->type() != QEvent::KeyPress) return false;
++        const int key = static_cast<QKeyEvent*>(e)->key();
++        if (key != Qt::Key_Back && key != Qt::Key_Escape) return false;
++        return m_handler();
++    }
++private:
++    std::function<bool()> m_handler;
++};
++
++QPushButton *galleryButton(const QString &text, const char *svg, QWidget *parent)
++{
++    QPushButton *b = new QPushButton(text, parent);
++    b->setProperty("class", QStringLiteral("nanquimGhost"));
++    b->setFocusPolicy(Qt::NoFocus);
++    if (svg) {
++        b->setIcon(designIcon(svg, 18));
++        b->setIconSize(QSize(18, 18));
++    }
++    return b;
++}
++
++// faz a troca entre tela inicial e capítulo com a animação das páginas
++void runChapterTransition(QStackedWidget *stack, QWidget *homePage, QWidget *chapterPage,
++                          QListView *chaptersView, const QString &chapterId, QListView *grid, bool opening)
++{
++    auto collectCells = [chapterPage, grid]() {
++        QList<QRect> cells;
++        QAbstractItemModel *m = grid->model();
++        const QRect vp = grid->viewport()->rect();
++        for (int i = 0; m && i < qMin(m->rowCount(), 40); i++) {
++            const QRect vr = grid->visualRect(m->index(i, 0));
++            if (!vr.isValid() || !vr.intersects(vp)) continue;
++            cells << QRect(grid->viewport()->mapTo(chapterPage, vr.topLeft()), vr.size());
++        }
++        return cells;
++    };
++    auto coverRect = [homePage, chaptersView, chapterId]() {
++        QAbstractItemModel *m = chaptersView->model();
++        for (int i = 0; m && i < m->rowCount(); i++) {
++            const QModelIndex idx = m->index(i, 0);
++            if (idx.data(Qt::UserRole + 1).toString() != chapterId) continue;
++            const QRect vr = chaptersView->visualRect(idx);
++            if (!vr.isValid()) break;
++            const QRect box = ChapterDelegate::coverBox(vr);
++            return QRect(chaptersView->viewport()->mapTo(homePage, box.topLeft()), box.size());
++        }
++        const QPoint c = homePage->rect().center();
++        return QRect(c.x() - 50, c.y() - 70, 100, 140);
++    };
++    QPixmap homeShot, chapterShot;
++    QList<QRect> cells;
++    QRect gridArea;
++    if (opening) {
++        homeShot = homePage->grab();
++        stack->setCurrentWidget(chapterPage);
++        if (chapterPage->layout()) chapterPage->layout()->activate();
++        grid->doItemsLayout();
++        chapterShot = chapterPage->grab();
++    } else {
++        chapterShot = chapterPage->grab();
++    }
++    cells = collectCells();
++    gridArea = QRect(grid->viewport()->mapTo(chapterPage, QPoint(0, 0)), grid->viewport()->size());
++    if (!opening) {
++        stack->setCurrentWidget(homePage);
++        if (homePage->layout()) homePage->layout()->activate();
++        homeShot = homePage->grab();
++    }
++    const QRect cover = coverRect();
++
++    ChapterTransition *overlay = new ChapterTransition(stack, homeShot, chapterShot, cover, gridArea, cells);
++    overlay->setProgress(opening ? 0.0 : 1.0);
++    overlay->show();
++    overlay->raise();
++    QVariantAnimation *anim = new QVariantAnimation(overlay);
++    anim->setDuration(opening ? 420 : 340);
++    anim->setStartValue(opening ? 0.0 : 1.0);
++    anim->setEndValue(opening ? 1.0 : 0.0);
++    QObject::connect(anim, &QVariantAnimation::valueChanged, overlay, [overlay](const QVariant &v) { overlay->setProgress(v.toReal()); });
++    QObject::connect(anim, &QVariantAnimation::finished, overlay, [overlay]() { overlay->deleteLater(); });
++    anim->start();
++}
+ 
+ QWidget *buildGallery(KisMainWindow *mw)
+ {
+@@ -3199,17 +3717,26 @@ QWidget *buildGallery(KisMainWindow *mw)
+     QVBoxLayout *root = new QVBoxLayout(gallery);
+     root->setContentsMargins(0, 0, 0, 0);
+     root->setSpacing(0);
++    QStackedWidget *pages = new QStackedWidget(gallery);
++    root->addWidget(pages);
+ 
+-    // --- cabeçalho -------------------------------------------------------
+-    QWidget *header = new QWidget(gallery);
++    // ===================== tela inicial =====================
++    QWidget *home = new QWidget(pages);
++    home->setObjectName(QStringLiteral("nanquimHomePage"));
++    home->setAttribute(Qt::WA_StyledBackground);
++    QVBoxLayout *homeLayout = new QVBoxLayout(home);
++    homeLayout->setContentsMargins(0, 0, 0, 0);
++    homeLayout->setSpacing(0);
++
++    QWidget *header = new QWidget(home);
+     header->setObjectName(QStringLiteral("nanquimGalleryHeader"));
+     header->setAttribute(Qt::WA_StyledBackground);
+-    header->setFixedHeight(64);
++    header->setFixedHeight(72);
+     QHBoxLayout *hl = new QHBoxLayout(header);
+-    hl->setContentsMargins(28, 0, 20, 0);
+-    hl->setSpacing(12);
++    hl->setContentsMargins(28, 0, 24, 0);
++    hl->setSpacing(10);
+     QLabel *logo = new QLabel(header);
+-    logo->setPixmap(renderSvg(QLatin1String(DROP_SVG), QSize(34, 34)));
++    logo->setPixmap(renderSvg(QLatin1String(DROP_SVG), QSize(32, 32)));
+     QLabel *brand = new QLabel(QStringLiteral("Nanquim"), header);
+     brand->setObjectName(QStringLiteral("nanquimBrand"));
+     hl->addWidget(logo);
+@@ -3220,95 +3747,68 @@ QWidget *buildGallery(KisMainWindow *mw)
+     search->setObjectName(QStringLiteral("nanquimSearch"));
+     search->setPlaceholderText(i18n("Buscar desenhos"));
+     search->setClearButtonEnabled(true);
+-    search->setFixedWidth(280);
++    search->addAction(designIcon(Svg::SEARCH, 18), QLineEdit::LeadingPosition);
++    search->setFixedWidth(300);
+     hl->addWidget(search);
+ 
+-    QPushButton *back = new QPushButton(i18n("Voltar ao desenho"), header);
+-    back->setObjectName(QStringLiteral("nanquimBackToDrawing"));
+-    back->setProperty("class", QStringLiteral("nanquimGhost"));
+-    back->setFocusPolicy(Qt::NoFocus);
+-    QObject::connect(back, &QPushButton::clicked, mw, [mw]() { mw->showWelcomeScreen(false); });
+-    hl->addWidget(back);
+-
+-    QPushButton *guide = new QPushButton(i18n("Guia"), header);
+-    guide->setProperty("class", QStringLiteral("nanquimGhost"));
+-    guide->setFocusPolicy(Qt::NoFocus);
++    QPushButton *open = galleryButton(i18n("Abrir"), Svg::FOLDER, header);
++    QObject::connect(open, &QPushButton::clicked, mw, [mw]() {
++        if (QAction *a = act(mw, "file_open")) a->trigger();
++    });
++    hl->addWidget(open);
++    QPushButton *guide = galleryButton(i18n("Guia"), Svg::BOOK, header);
+     QObject::connect(guide, &QPushButton::clicked, mw, [mw]() { showWelcome(mw, false); });
+     hl->addWidget(guide);
+-
+-    QPushButton *settingsButton = new QPushButton(header);
+-    settingsButton->setIcon(designIcon(Svg::SETTINGS));
++    QPushButton *settingsButton = galleryButton(QString(), Svg::SETTINGS, header);
+     settingsButton->setToolTip(i18n("Configurações"));
+-    settingsButton->setProperty("class", QStringLiteral("nanquimGhost"));
+-    settingsButton->setFocusPolicy(Qt::NoFocus);
++    settingsButton->setObjectName(QStringLiteral("nanquimIconButton"));
+     QObject::connect(settingsButton, &QPushButton::clicked, mw, [mw]() { showSettings(mw); });
+     hl->addWidget(settingsButton);
+-
+-    QPushButton *open = new QPushButton(i18n("Abrir"), header);
+-    open->setProperty("class", QStringLiteral("nanquimGhost"));
+-    open->setFocusPolicy(Qt::NoFocus);
+-    QObject::connect(open, &QPushButton::clicked, mw, [mw]() {
+-        if (QAction *a = act(mw, "file_open")) {
+-            a->trigger();
+-        }
+-    });
+-    hl->addWidget(open);
+-
++    QPushButton *back = new QPushButton(i18n("Voltar ao desenho"), header);
++    back->setObjectName(QStringLiteral("nanquimBackToDrawing"));
++    back->setFocusPolicy(Qt::NoFocus);
++    back->setIcon(QIcon(svgPixmap(QString::fromUtf8(Svg::RETURN), QColor(0x9c, 0xc6, 0xff), 18)));
++    back->setIconSize(QSize(18, 18));
++    QObject::connect(back, &QPushButton::clicked, mw, [mw]() { mw->showWelcomeScreen(false); });
++    hl->addWidget(back);
+     QToolButton *more = makeMoreButton(mw, header);
+     more->setProperty("class", QStringLiteral("nanquimGhost"));
++    more->setObjectName(QStringLiteral("nanquimIconButton"));
+     hl->addWidget(more);
+-    root->addWidget(header);
++    homeLayout->addWidget(header);
+ 
+-    // --- corpo -------------------------------------------------------------
+-    QWidget *body = new QWidget(gallery);
++    QWidget *body = new QWidget(home);
+     QVBoxLayout *bl = new QVBoxLayout(body);
+-    bl->setContentsMargins(28, 24, 28, 12);
+-    bl->setSpacing(14);
++    bl->setContentsMargins(28, 20, 28, 10);
++    bl->setSpacing(12);
+ 
+-    bl->addWidget(sectionLabel(i18n("Nova página"), body));
++    bl->addWidget(sectionLabel(i18n("Começar"), body));
+     QHBoxLayout *presetsRow = new QHBoxLayout();
+-    presetsRow->setSpacing(14);
+-    const QList<PagePreset> presets = {
+-        {"Página de mangá", "B4 · 600 dpi · 6071 × 8598", 6071, 8598, 600},
+-        {"Comic americano", "6,625 × 10,25 pol · 400 dpi", 2650, 4100, 400},
+-        {"Tirinha", "4 quadros na horizontal · 300 dpi", 4000, 1250, 300},
+-        {"Ilustração", "A4 · 300 dpi · 2480 × 3508", 2480, 3508, 300},
+-        {"Mais formatos", "Webtoon, A4, B5, papel creme…", 0, 0, 0},
+-    };
+-    Q_FOREACH (const PagePreset &p, presets) {
+-        QPushButton *card = new QPushButton(body);
+-        card->setProperty("class", QStringLiteral("nanquimPreset"));
+-        card->setFocusPolicy(Qt::NoFocus);
+-        card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+-        QVBoxLayout *cl = new QVBoxLayout(card);
+-        cl->setContentsMargins(16, 16, 16, 16);
+-        QLabel *n = new QLabel(i18n(p.name), card);
+-        n->setObjectName(QStringLiteral("nanquimPresetName"));
+-        QLabel *d = new QLabel(i18n(p.detail), card);
+-        d->setObjectName(QStringLiteral("nanquimPresetDetail"));
+-        d->setWordWrap(true);
+-        n->setAttribute(Qt::WA_TransparentForMouseEvents);
+-        d->setAttribute(Qt::WA_TransparentForMouseEvents);
+-        cl->addWidget(n);
+-        cl->addStretch(1);
+-        cl->addWidget(d);
+-        QObject::connect(card, &QPushButton::clicked, mw, [mw, p]() {
+-            if (p.width == 0) {
+-                showNewPage(mw);
+-            } else {
+-                createPage(p);
+-            }
++    presetsRow->setSpacing(12);
++    NewPageTile *newPage = new NewPageTile(body);
++    QObject::connect(newPage, &QAbstractButton::clicked, mw, [mw]() {
++        s_pendingChapter.clear();
++        showNewPage(mw);
++    });
++    presetsRow->addWidget(newPage);
++    for (const PagePreset &p : HOME_PRESETS) {
++        PaperTile *card = new PaperTile(i18n(p.name), i18n(p.detail), qreal(p.width) / p.height, false, body);
++        QObject::connect(card, &QAbstractButton::clicked, mw, [p]() {
++            s_pendingChapter.clear();
++            createPage(p);
+         });
+         presetsRow->addWidget(card);
+     }
+     bl->addLayout(presetsRow);
+-    bl->addSpacing(14);
++    bl->addSpacing(8);
+ 
+     // --- capítulos ----------------------------------------------------------
+-    struct GalleryState { QString chapter; bool addMode = false; };
++    struct GalleryState { QString chapter; bool addMode = false; bool animating = false; };
+     auto state = std::make_shared<GalleryState>();
+ 
+     bl->addWidget(sectionLabel(i18n("Capítulos"), body));
++    QHBoxLayout *chaptersRow = new QHBoxLayout();
++    chaptersRow->setSpacing(16);
+     QStandardItemModel *chaptersModel = new QStandardItemModel(gallery);
+     QListView *chaptersView = new QListView(body);
+     chaptersView->setObjectName(QStringLiteral("nanquimRecents"));
+@@ -3319,90 +3819,178 @@ QWidget *buildGallery(KisMainWindow *mw)
+     chaptersView->setWrapping(false);
+     chaptersView->setMovement(QListView::Static);
+     chaptersView->setGridSize(ChapterDelegate::cell());
+-    chaptersView->setFixedHeight(ChapterDelegate::cell().height() + 8);
++    chaptersView->setFixedHeight(ChapterDelegate::cell().height() + 6);
+     chaptersView->setSelectionMode(QAbstractItemView::NoSelection);
+     chaptersView->setEditTriggers(QAbstractItemView::NoEditTriggers);
+     chaptersView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++    chaptersView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+     chaptersView->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+     chaptersView->setFocusPolicy(Qt::NoFocus);
+     KisKineticScroller::createPreconfiguredScroller(chaptersView);
+-    bl->addWidget(chaptersView);
+-    bl->addSpacing(10);
+-
++    chaptersRow->addWidget(chaptersView, 1);
++    QLabel *chaptersHint = new QLabel(i18n("<b style='color:#ececf1'>Junte páginas em capítulos</b><br>"
++                                           "Um capítulo guarda as páginas em ordem, mostra o progresso "
++                                           "e exporta tudo de uma vez."), body);
++    chaptersHint->setObjectName(QStringLiteral("nanquimHint"));
++    chaptersHint->setWordWrap(true);
++    chaptersHint->setFixedWidth(380);
++    chaptersRow->addWidget(chaptersHint, 0, Qt::AlignVCenter);
++    chaptersRow->addStretch(0);
++    bl->addLayout(chaptersRow);
++    bl->addSpacing(4);
++
++    // --- recentes -----------------------------------------------------------
+     QHBoxLayout *recentsHead = new QHBoxLayout();
+-    QLabel *recentsTitle = sectionLabel(i18n("Recentes"), body);
+-    recentsHead->addWidget(recentsTitle);
++    recentsHead->setSpacing(8);
++    recentsHead->addWidget(sectionLabel(i18n("Recentes"), body));
+     recentsHead->addStretch(1);
+     QLabel *hint = new QLabel(body);
+     hint->setObjectName(QStringLiteral("nanquimFooter"));
+     hint->hide();
+     recentsHead->addWidget(hint);
+-    auto ghost = [body](const QString &text) {
+-        QPushButton *b = new QPushButton(text, body);
+-        b->setProperty("class", QStringLiteral("nanquimGhost"));
+-        b->setFocusPolicy(Qt::NoFocus);
+-        return b;
+-    };
+-    QPushButton *addPages = ghost(i18n("Adicionar páginas"));
+-    addPages->setCheckable(true);
+-    QPushButton *renameChapter = ghost(i18n("Renomear"));
+-    QPushButton *deleteChapter = ghost(i18n("Excluir capítulo"));
+-    QPushButton *closeChapter = ghost(i18n("Todos os desenhos"));
+-    QPushButton *removeMode = ghost(i18n("Remover desenhos"));
+-    removeMode->setCheckable(true);
+-    QPushButton *orderMode = ghost(i18n("Organizar páginas"));
+-    orderMode->setCheckable(true);
+-    QPushButton *stageMode = ghost(i18n("Marcar etapas"));
+-    stageMode->setCheckable(true);
+-    for (QPushButton *b : {stageMode, orderMode, addPages, renameChapter, deleteChapter, closeChapter}) {
+-        b->hide();
+-        recentsHead->addWidget(b);
++    QButtonGroup *filterGroup = new QButtonGroup(body);
++    const QStringList filters = {i18n("Todos"), i18n("Sem capítulo")};
++    for (int i = 0; i < filters.size(); i++) {
++        QPushButton *chip = new QPushButton(filters[i], body);
++        chip->setProperty("class", QStringLiteral("nanquimChip"));
++        chip->setCheckable(true);
++        chip->setChecked(i == 0);
++        chip->setFocusPolicy(Qt::NoFocus);
++        filterGroup->addButton(chip, i);
++        recentsHead->addWidget(chip);
+     }
++    QPushButton *removeMode = galleryButton(i18n("Remover desenhos"), nullptr, body);
++    removeMode->setCheckable(true);
+     recentsHead->addWidget(removeMode);
+     bl->addLayout(recentsHead);
+ 
+-    QLabel *chapterProgress = new QLabel(body);
+-    chapterProgress->setFixedHeight(30);
+-    chapterProgress->hide();
+-    bl->addWidget(chapterProgress);
+-
+-    QSortFilterProxyModel *proxy = new QSortFilterProxyModel(gallery);
++    RecentsFilter *proxy = new RecentsFilter(gallery);
+     proxy->setSourceModel(&KisRecentDocumentsModelWrapper::instance()->model());
+     proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
+     QObject::connect(search, &QLineEdit::textChanged, proxy, &QSortFilterProxyModel::setFilterFixedString);
+-
+-    QStandardItemModel *pagesModel = new QStandardItemModel(gallery);
+-
+-    QListView *recents = new QListView(body);
+-    recents->setObjectName(QStringLiteral("nanquimRecents"));
++    QObject::connect(filterGroup, &QButtonGroup::idClicked, proxy, [proxy](int id) { proxy->setLooseOnly(id == 1); });
++
++    auto makeGrid = [](QWidget *parent) {
++        QListView *v = new QListView(parent);
++        v->setObjectName(QStringLiteral("nanquimRecents"));
++        v->setItemDelegate(new RecentDelegate(v));
++        v->setViewMode(QListView::IconMode);
++        v->setResizeMode(QListView::Adjust);
++        v->setMovement(QListView::Static);
++        v->setUniformItemSizes(true);
++        v->setGridSize(RecentDelegate::cell());
++        v->setSelectionMode(QAbstractItemView::NoSelection);
++        v->setEditTriggers(QAbstractItemView::NoEditTriggers);
++        v->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++        v->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
++        v->setFocusPolicy(Qt::NoFocus);
++        v->setMouseTracking(false);
++        KisKineticScroller::createPreconfiguredScroller(v);
++        return v;
++    };
++    QListView *recents = makeGrid(body);
+     recents->setModel(proxy);
+-    recents->setItemDelegate(new RecentDelegate(recents));
+-    recents->setViewMode(QListView::IconMode);
+-    recents->setResizeMode(QListView::Adjust);
+-    recents->setMovement(QListView::Static);
+-    recents->setUniformItemSizes(true);
+-    recents->setGridSize(RecentDelegate::cell());
+-    recents->setSelectionMode(QAbstractItemView::NoSelection);
+-    recents->setEditTriggers(QAbstractItemView::NoEditTriggers);
+-    recents->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+-    recents->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+-    recents->setFocusPolicy(Qt::NoFocus);
+-    recents->setMouseTracking(false);
+-    KisKineticScroller::createPreconfiguredScroller(recents);
+-
+     QLabel *empty = new QLabel(body);
+     empty->setObjectName(QStringLiteral("nanquimEmpty"));
+     empty->setAlignment(Qt::AlignCenter);
+     empty->setWordWrap(true);
+-
+-    // monta a lista de páginas do capítulo aberto
++    empty->setText(i18n("<b style='color:#ececf1; font-size:16px'>Nenhum desenho ainda</b><br><br>"
++                        "Toque em <b style='color:#9cc6ff'>Nova página</b> ou em um formato acima para começar."));
++    bl->addWidget(recents, 1);
++    bl->addWidget(empty, 1);
++    QLabel *footer = new QLabel(i18n("O Nanquim é feito sobre o Krita, software livre da comunidade KDE. "
++                                     "Arte da abertura: Tyson Tan (CC BY-SA)."), body);
++    footer->setObjectName(QStringLiteral("nanquimFooter"));
++    footer->setAlignment(Qt::AlignCenter);
++    bl->addWidget(footer);
++    homeLayout->addWidget(body, 1);
++
++    // ===================== capítulo aberto =====================
++    QWidget *chapterPage = new QWidget(pages);
++    chapterPage->setObjectName(QStringLiteral("nanquimChapterPage"));
++    chapterPage->setAttribute(Qt::WA_StyledBackground);
++    QVBoxLayout *cv = new QVBoxLayout(chapterPage);
++    cv->setContentsMargins(0, 0, 0, 0);
++    cv->setSpacing(0);
++    QWidget *chHeader = new QWidget(chapterPage);
++    chHeader->setObjectName(QStringLiteral("nanquimGalleryHeader"));
++    chHeader->setAttribute(Qt::WA_StyledBackground);
++    chHeader->setFixedHeight(100);
++    QHBoxLayout *chl = new QHBoxLayout(chHeader);
++    chl->setContentsMargins(20, 0, 24, 0);
++    chl->setSpacing(10);
++    QPushButton *chBack = galleryButton(QString(), Svg::BACK, chHeader);
++    chBack->setObjectName(QStringLiteral("nanquimFlatIcon"));
++    chBack->setToolTip(i18n("Voltar para a tela inicial"));
++    chl->addWidget(chBack);
++    QVBoxLayout *titles = new QVBoxLayout();
++    titles->setSpacing(2);
++    QLabel *kicker = new QLabel(i18n("CAPÍTULO"), chHeader);
++    kicker->setObjectName(QStringLiteral("nanquimKicker"));
++    QLabel *chTitle = new QLabel(chHeader);
++    chTitle->setObjectName(QStringLiteral("nanquimChapterTitle"));
++    QLabel *chInfo = new QLabel(chHeader);
++    chInfo->setObjectName(QStringLiteral("nanquimChapterInfo"));
++    titles->addWidget(kicker);
++    titles->addWidget(chTitle);
++    titles->addWidget(chInfo);
++    chl->addLayout(titles, 1);
++    QPushButton *stageMode = galleryButton(i18n("Marcar etapas"), nullptr, chHeader);
++    stageMode->setCheckable(true);
++    QPushButton *orderMode = galleryButton(i18n("Organizar páginas"), nullptr, chHeader);
++    orderMode->setCheckable(true);
++    QPushButton *addPages = galleryButton(i18n("Adicionar páginas"), nullptr, chHeader);
++    addPages->setCheckable(true);
++    QPushButton *chapterRemove = galleryButton(i18n("Concluir"), nullptr, chHeader);
++    chapterRemove->setCheckable(true);
++    QPushButton *chMore = galleryButton(QString(), Svg::MORE, chHeader);
++    chMore->setObjectName(QStringLiteral("nanquimIconButton"));
++    chMore->setToolTip(i18n("Mais opções do capítulo"));
++    QPushButton *chNewPage = new QPushButton(i18n("+ Nova página"), chHeader);
++    chNewPage->setObjectName(QStringLiteral("nanquimPrimary"));
++    chNewPage->setFocusPolicy(Qt::NoFocus);
++    for (QWidget *w : {static_cast<QWidget*>(stageMode), static_cast<QWidget*>(orderMode), static_cast<QWidget*>(addPages),
++                       static_cast<QWidget*>(chapterRemove), static_cast<QWidget*>(chMore), static_cast<QWidget*>(chNewPage)}) {
++        chl->addWidget(w);
++    }
++    cv->addWidget(chHeader);
++
++    QWidget *chBody = new QWidget(chapterPage);
++    QVBoxLayout *cbl = new QVBoxLayout(chBody);
++    cbl->setContentsMargins(32, 16, 32, 10);
++    cbl->setSpacing(10);
++    ChapterProgress *progress = new ChapterProgress(chBody);
++    cbl->addWidget(progress);
++    QLabel *chHint = new QLabel(chBody);
++    chHint->setObjectName(QStringLiteral("nanquimHint"));
++    chHint->hide();
++    cbl->addWidget(chHint);
++    QStandardItemModel *pagesModel = new QStandardItemModel(gallery);
++    QListView *pagesView = makeGrid(chBody);
++    pagesView->setProperty("nanquimChapterView", true);
++    pagesView->setModel(pagesModel);
++    QLabel *chEmpty = new QLabel(chBody);
++    chEmpty->setObjectName(QStringLiteral("nanquimEmpty"));
++    chEmpty->setAlignment(Qt::AlignCenter);
++    chEmpty->setWordWrap(true);
++    chEmpty->setText(i18n("<b style='color:#ececf1; font-size:16px'>Capítulo vazio</b><br><br>"
++                          "Toque em <b style='color:#9cc6ff'>+ Nova página</b> ou em \"Adicionar páginas\" "
++                          "para trazer desenhos que você já tem."));
++    cbl->addWidget(pagesView, 1);
++    cbl->addWidget(chEmpty, 1);
++    cv->addWidget(chBody, 1);
++
++    pages->addWidget(home);
++    pages->addWidget(chapterPage);
++    pages->setCurrentWidget(home);
++
++    // --- dados -----------------------------------------------------------------
+     auto rebuildPages = [state, pagesModel]() {
+         pagesModel->clear();
+         const ChapterStore::Chapter c = ChapterStore::instance()->chapter(state->chapter);
+         for (int i = 0; i < c.pages.size(); i++) {
+             const QString path = c.pages[i];
+-            QStandardItem *item = new QStandardItem(QStringLiteral("%1. %2").arg(i + 1, 2, 10, QLatin1Char('0'))
+-                                                    .arg(displayNameFor(path)));
++            QStandardItem *item = new QStandardItem(displayNameFor(path));
+             item->setData(path, Qt::ToolTipRole);
+             item->setData(ChapterStore::instance()->status(state->chapter, path), Qt::UserRole + 60);
+             const QIcon icon = KisRecentFileIconCache::instance()->getOrQueueFileIcon(urlForPath(path));
+@@ -3411,190 +3999,226 @@ QWidget *buildGallery(KisMainWindow *mw)
+         }
+     };
+     QObject::connect(KisRecentFileIconCache::instance(), &KisRecentFileIconCache::fileIconChanged, pagesModel,
+-                     [pagesModel](const QUrl &url, const QIcon &icon) {
++                     [pagesModel, chaptersModel](const QUrl &url, const QIcon &icon) {
+         for (int i = 0; i < pagesModel->rowCount(); i++) {
+             QStandardItem *item = pagesModel->item(i);
+             if (urlForPath(item->data(Qt::ToolTipRole).toString()) == url) item->setData(icon, Qt::DecorationRole);
+         }
++        for (int i = 0; i < chaptersModel->rowCount(); i++) {
++            QStandardItem *item = chaptersModel->item(i);
++            const QString first = item->data(Qt::UserRole + 5).toString();
++            if (!first.isEmpty() && urlForPath(first) == url) item->setData(icon, Qt::DecorationRole);
++        }
+     });
+ 
+-    auto rebuildChapters = [chaptersModel]() {
++    auto rebuildChapters = [chaptersModel, chaptersView, chaptersHint]() {
+         chaptersModel->clear();
+-        QStandardItem *add = new QStandardItem(i18n("Novo capítulo"));
+-        add->setData(QString(), Qt::UserRole + 1);
+-        chaptersModel->appendRow(add);
+-        Q_FOREACH (const ChapterStore::Chapter &c, ChapterStore::instance()->chapters()) {
++        const QList<ChapterStore::Chapter> list = ChapterStore::instance()->chapters();
++        Q_FOREACH (const ChapterStore::Chapter &c, list) {
+             QStandardItem *item = new QStandardItem(c.name);
+             item->setData(c.id, Qt::UserRole + 1);
+             item->setData(c.pages.size(), Qt::UserRole + 2);
++            int counts[3] = {0, 0, 0};
++            Q_FOREACH (const QString &p, c.pages) counts[ChapterStore::instance()->status(c.id, p)]++;
++            item->setData(counts[2], Qt::UserRole + 3);
++            item->setData(counts[1], Qt::UserRole + 4);
+             if (!c.pages.isEmpty()) {
++                item->setData(c.pages.first(), Qt::UserRole + 5);
+                 const QIcon icon = KisRecentFileIconCache::instance()->getOrQueueFileIcon(urlForPath(c.pages.first()));
+                 if (!icon.isNull()) item->setData(icon, Qt::DecorationRole);
+             }
+             chaptersModel->appendRow(item);
+         }
++        QStandardItem *add = new QStandardItem(i18n("Novo capítulo"));
++        add->setData(QString(), Qt::UserRole + 1);
++        chaptersModel->appendRow(add);
++        const bool none = list.isEmpty();
++        chaptersHint->setVisible(none);
++        if (none) chaptersView->setFixedWidth(ChapterDelegate::cell().width() + 4);
++        else { chaptersView->setMinimumWidth(0); chaptersView->setMaximumWidth(QWIDGETSIZE_MAX); }
++    };
++
++    auto refreshHome = [=]() {
++        s_subtitleCache.clear();
++        removeMode->setText(removeMode->isChecked() ? i18n("Concluir") : i18n("Remover desenhos"));
++        recents->setProperty("nanquimRemoveMode", removeMode->isChecked());
++        recents->viewport()->update();
++        hint->setVisible(removeMode->isChecked());
++        hint->setText(i18n("Toque nos desenhos que quer tirar da lista (os arquivos não são apagados)"));
++        const int rows = proxy->rowCount();
++        const bool filtered = !search->text().isEmpty() || filterGroup->checkedId() == 1;
++        empty->setText(filtered ? i18n("Nenhum desenho encontrado.")
++                                : i18n("<b style='color:#ececf1; font-size:16px'>Nenhum desenho ainda</b><br><br>"
++                                       "Toque em <b style='color:#9cc6ff'>Nova página</b> ou em um formato acima para começar."));
++        empty->setVisible(rows == 0);
++        recents->setVisible(rows > 0);
++        back->setVisible(KisPart::instance()->viewCount(nullptr) > 0);
+     };
+ 
+-    // atualiza títulos, botões, lista e aviso conforme o estado
+-    auto refresh = std::make_shared<std::function<void()>>();
+     auto refreshing = std::make_shared<bool>(false);
+-    *refresh = [=]() {
+-        // rebuildPages() mexe no modelo, que avisa de volta: sem esta trava o
+-        // refresh chamava a si mesmo sem parar e o app fechava
++    auto refreshChapter = [=]() {
+         if (*refreshing) return;
+         *refreshing = true;
+         struct Unlock { std::shared_ptr<bool> f; ~Unlock() { *f = false; } } unlock{refreshing};
+-        const bool inChapter = !state->chapter.isEmpty();
+         const ChapterStore::Chapter c = ChapterStore::instance()->chapter(state->chapter);
+-        if (inChapter && c.id.isEmpty()) {   // capítulo apagado
++        if (c.id.isEmpty()) {   // capítulo apagado
+             state->chapter.clear();
+             state->addMode = false;
++            pages->setCurrentWidget(home);
++            return;
+         }
+-        s_pendingChapter = state->chapter;
++        s_pendingChapter = c.id;
+         rebuildPages();
+-        const bool showChapter = !state->chapter.isEmpty() && !state->addMode;
+-        recentsTitle->setText((state->chapter.isEmpty() ? i18n("Recentes")
+-                               : state->addMode ? i18n("Toque para adicionar a \"%1\"", c.name)
+-                               : i18n("Capítulo: %1", c.name)).toUpper());
+-        if (!showChapter && orderMode->isChecked()) {
+-            QSignalBlocker block(orderMode);
+-            orderMode->setChecked(false);
+-        }
+-        if (!showChapter && stageMode->isChecked()) {
+-            QSignalBlocker block(stageMode);
+-            stageMode->setChecked(false);
+-        }
++        int counts[3] = {0, 0, 0};
++        Q_FOREACH (const QString &p, c.pages) counts[ChapterStore::instance()->status(c.id, p)]++;
++        chTitle->setText(c.name);
++        chInfo->setText(c.pages.size() == 1 ? i18n("1 página · %1", i18n(CHAPTER_FORMATS[ChapterStore::instance()->format(c.id)].name))
++                                            : i18n("%1 páginas · %2 prontas · %3", c.pages.size(), counts[2],
++                                                   i18n(CHAPTER_FORMATS[ChapterStore::instance()->format(c.id)].name)));
++        progress->setCounts(counts[2], counts[1], counts[0]);
++        progress->setVisible(!c.pages.isEmpty() && !state->addMode);
++
+         const bool marking = stageMode->isChecked();
+-        const bool ordering = orderMode->isChecked() || marking;
+-        for (QPushButton *b : {addPages, renameChapter, deleteChapter, closeChapter}) {
+-            b->setVisible(!state->chapter.isEmpty() && !ordering);
+-        }
+-        orderMode->setVisible(showChapter && !removeMode->isChecked() && !marking);
+-        stageMode->setVisible(showChapter && !removeMode->isChecked() && !orderMode->isChecked());
++        const bool ordering = orderMode->isChecked();
++        const bool removing = chapterRemove->isChecked();
++        const bool adding = state->addMode;
++        const bool busy = marking || ordering || removing || adding;
++        stageMode->setVisible(!busy || marking);
++        orderMode->setVisible(!busy || ordering);
++        addPages->setVisible(!busy || adding);
++        chapterRemove->setVisible(removing);
++        chMore->setVisible(!busy);
++        chNewPage->setVisible(!busy);
+         stageMode->setText(marking ? i18n("Concluir") : i18n("Marcar etapas"));
+-        // progresso do capítulo: prontas, arte-final e rascunho
+-        if (showChapter && !c.pages.isEmpty()) {
+-            int counts[3] = {0, 0, 0};
+-            Q_FOREACH (const QString &p, c.pages) counts[ChapterStore::instance()->status(c.id, p)]++;
+-            const qreal dpr = chapterProgress->devicePixelRatioF();
+-            const int w = qMax(200, body->width() - 56);
+-            QPixmap pm(QSize(w, 30) * dpr);
+-            pm.setDevicePixelRatio(dpr);
+-            pm.fill(Qt::transparent);
+-            {
+-                QPainter g(&pm);
+-                g.setRenderHint(QPainter::Antialiasing);
+-                const QString legend = i18n("%1 prontas · %2 arte-final · %3 rascunho", counts[2], counts[1], counts[0]);
+-                QFont f = chapterProgress->font();
+-                f.setPixelSize(12);
+-                g.setFont(f);
+-                const int lw = QFontMetrics(f).horizontalAdvance(legend) + 16;
+-                const QRectF bar(0, 11, w - lw, 8);
+-                g.setPen(Qt::NoPen);
+-                g.setBrush(QColor(0x24, 0x24, 0x2b));
+-                g.drawRoundedRect(bar, 4, 4);
+-                const int total = c.pages.size();
+-                const qreal readyW = bar.width() * counts[2] / total;
+-                const qreal inkW = bar.width() * counts[1] / total;
+-                QLinearGradient grad(bar.topLeft(), bar.topRight());
+-                grad.setColorAt(0, C_ACCENT);
+-                grad.setColorAt(1, QColor(0x22, 0xd3, 0xee));
+-                g.setClipRect(bar);
+-                g.setBrush(grad);
+-                g.drawRoundedRect(QRectF(bar.left(), bar.top(), readyW, bar.height()), 4, 4);
+-                g.setBrush(QColor(0x6f, 0x86, 0xb8));
+-                g.drawRect(QRectF(bar.left() + readyW, bar.top(), inkW, bar.height()));
+-                g.setClipping(false);
+-                g.setPen(QColor(0xc9, 0xc9, 0xd1));
+-                g.drawText(QRectF(w - lw + 16, 0, lw, 30), Qt::AlignVCenter | Qt::AlignLeft, legend);
+-            }
+-            chapterProgress->setPixmap(pm);
+-            chapterProgress->show();
+-        } else {
+-            chapterProgress->hide();
+-        }
+         orderMode->setText(ordering ? i18n("Concluir") : i18n("Organizar páginas"));
+-        renameChapter->setVisible(showChapter && !ordering);
+-        deleteChapter->setVisible(showChapter && !ordering);
+-        removeMode->setVisible(!state->addMode && !ordering);
+-        removeMode->setText(removeMode->isChecked() ? i18n("Concluir")
+-                            : state->chapter.isEmpty() ? i18n("Remover desenhos") : i18n("Tirar páginas"));
+-        addPages->setText(state->addMode ? i18n("Concluir") : i18n("Adicionar páginas"));
+-        addPages->setChecked(state->addMode);
+-        recents->setModel(showChapter ? static_cast<QAbstractItemModel*>(pagesModel) : static_cast<QAbstractItemModel*>(proxy));
+-        recents->setProperty("nanquimRemoveMode", removeMode->isChecked() && !state->addMode);
+-        recents->setProperty("nanquimAddMode", state->addMode);
+-        recents->setProperty("nanquimOrderMode", orderMode->isChecked() && showChapter);
+-        recents->setProperty("nanquimChapterView", showChapter);
+-        recents->viewport()->update();
+-        hint->setVisible(removeMode->isChecked() || state->addMode || ordering);
+-        hint->setText(marking ? i18n("Toque numa página para passar de rascunho para arte-final e para pronta")
+-                      : ordering ? i18n("Toque na seta da esquerda ou da direita para mudar a página de lugar")
+-                      : state->addMode ? i18n("Toque nos desenhos para pôr neste capítulo")
+-                      : state->chapter.isEmpty() ? i18n("Toque nos desenhos que quer tirar da galeria (os arquivos não são apagados)")
+-                                                 : i18n("Toque nas páginas que quer tirar do capítulo (os arquivos não são apagados)"));
+-        const int rows = recents->model()->rowCount();
+-        empty->setText(showChapter ? i18n("Capítulo vazio. Toque em \"Adicionar páginas\" ou crie uma página nova acima: "
+-                                          "ela entra neste capítulo quando for salva.")
+-                                   : i18n("Seus desenhos aparecem aqui. Comece com uma nova página acima."));
+-        empty->setVisible(rows == 0);
+-        recents->setVisible(rows > 0);
++        addPages->setText(adding ? i18n("Concluir") : i18n("Adicionar páginas"));
++        addPages->setChecked(adding);
++
++        pagesView->setModel(adding ? static_cast<QAbstractItemModel*>(proxy) : static_cast<QAbstractItemModel*>(pagesModel));
++        pagesView->setProperty("nanquimChapterView", !adding);
++        pagesView->setProperty("nanquimAddMode", adding);
++        pagesView->setProperty("nanquimOrderMode", ordering);
++        pagesView->setProperty("nanquimRemoveMode", removing);
++        pagesView->viewport()->update();
++        chHint->setVisible(busy);
++        chHint->setText(marking ? i18n("Toque numa página para passar de rascunho para arte-final e para pronta")
++                        : ordering ? i18n("Toque na seta da esquerda ou da direita para mudar a página de lugar")
++                        : adding ? i18n("Toque nos desenhos para pôr neste capítulo")
++                        : i18n("Toque nas páginas que quer tirar do capítulo (os arquivos não são apagados)"));
++        const int rows = pagesView->model()->rowCount();
++        chEmpty->setVisible(rows == 0);
++        pagesView->setVisible(rows > 0);
++    };
++
++    auto resetChapterModes = [state, stageMode, orderMode, chapterRemove]() {
++        state->addMode = false;
++        for (QPushButton *b : {stageMode, orderMode, chapterRemove}) {
++            QSignalBlocker block(b);
++            b->setChecked(false);
++        }
++    };
++
++    auto openChapter = [=](const QString &id) {
++        if (state->animating) return;
++        state->chapter = id;
++        resetChapterModes();
++        refreshChapter();
++        state->animating = true;
++        runChapterTransition(pages, home, chapterPage, chaptersView, id, pagesView, true);
++        QTimer::singleShot(450, gallery, [state]() { state->animating = false; });
++    };
++    auto closeChapter = [=]() {
++        if (state->animating || pages->currentWidget() != chapterPage) return;
++        const QString id = state->chapter;
++        resetChapterModes();
++        refreshChapter();
++        refreshHome();
++        state->animating = true;
++        runChapterTransition(pages, home, chapterPage, chaptersView, id, pagesView, false);
++        state->chapter.clear();
++        s_pendingChapter.clear();
++        QTimer::singleShot(370, gallery, [state]() { state->animating = false; });
+     };
+ 
+     QPointer<QWidget> galleryGuard(gallery);
+-    ChapterStore::instance()->listeners << [rebuildChapters, refresh, galleryGuard]() {
++    ChapterStore::instance()->listeners << [rebuildChapters, refreshHome, refreshChapter, pages, chapterPage, proxy, galleryGuard]() {
+         if (!galleryGuard) return;
+-        QTimer::singleShot(0, galleryGuard, [rebuildChapters, refresh]() {
++        QTimer::singleShot(0, galleryGuard, [rebuildChapters, refreshHome, refreshChapter, pages, chapterPage, proxy]() {
+             rebuildChapters();
+-            (*refresh)();
++            proxy->refilter();   // "Sem capítulo" muda quando páginas entram ou saem
++            refreshHome();
++            if (pages->currentWidget() == chapterPage) refreshChapter();
+         });
+     };
+     rebuildChapters();
+ 
+-    QObject::connect(chaptersView, &QListView::clicked, mw, [mw, state, refresh, removeMode](const QModelIndex &index) {
++    // --- ações -----------------------------------------------------------------
++    QObject::connect(chaptersView, &QListView::clicked, mw, [mw, openChapter, galleryGuard](const QModelIndex &index) {
+         const QString id = index.data(Qt::UserRole + 1).toString();
+-        if (id.isEmpty()) {
+-            bool ok = false;
+-            const QString name = QInputDialog::getText(mw, i18n("Novo capítulo"), i18n("Nome do capítulo:"),
+-                                                       QLineEdit::Normal, i18n("Capítulo %1", ChapterStore::instance()->chapters().size() + 1), &ok);
+-            if (!ok || name.trimmed().isEmpty()) return;
+-            state->chapter = ChapterStore::instance()->create(name.trimmed());
+-        } else {
+-            state->chapter = (state->chapter == id) ? QString() : id;
++        if (!id.isEmpty()) {
++            openChapter(id);
++            return;
+         }
+-        state->addMode = false;
+-        removeMode->setChecked(false);
+-        QTimer::singleShot(0, mw, [refresh]() { (*refresh)(); });
++        showChapterSheet(mw, QString(), [openChapter, galleryGuard](const QString &newId) {
++            if (!galleryGuard) return;
++            // espera a lista de capítulos se refazer para a capa nova existir
++            QTimer::singleShot(30, galleryGuard, [openChapter, newId]() { openChapter(newId); });
++        });
+     });
+-    QObject::connect(addPages, &QPushButton::clicked, mw, [state, refresh, removeMode]() {
++    QObject::connect(chBack, &QPushButton::clicked, mw, [closeChapter]() { closeChapter(); });
++    qApp->installEventFilter(new BackKeyFilter(gallery, [galleryGuard, pages, chapterPage, closeChapter]() {
++        if (!galleryGuard || !galleryGuard->isVisible() || pages->currentWidget() != chapterPage) return false;
++        if (QApplication::activeModalWidget()) return false;
++        closeChapter();
++        return true;
++    }));
++
++    QObject::connect(removeMode, &QPushButton::toggled, mw, [refreshHome](bool) { refreshHome(); });
++    QObject::connect(stageMode, &QPushButton::toggled, mw, [refreshChapter](bool) { refreshChapter(); });
++    QObject::connect(orderMode, &QPushButton::toggled, mw, [refreshChapter](bool) { refreshChapter(); });
++    QObject::connect(chapterRemove, &QPushButton::toggled, mw, [refreshChapter](bool) { refreshChapter(); });
++    QObject::connect(addPages, &QPushButton::clicked, mw, [state, refreshChapter]() {
+         state->addMode = !state->addMode;
+-        removeMode->setChecked(false);
+-        (*refresh)();
++        refreshChapter();
+     });
+-    QObject::connect(closeChapter, &QPushButton::clicked, mw, [state, refresh, removeMode]() {
+-        state->chapter.clear();
+-        state->addMode = false;
+-        removeMode->setChecked(false);
+-        (*refresh)();
++    QObject::connect(chNewPage, &QPushButton::clicked, mw, [state]() {
++        if (state->chapter.isEmpty()) return;
++        s_pendingChapter = state->chapter;
++        createPage(CHAPTER_FORMATS[ChapterStore::instance()->format(state->chapter)]);
+     });
+-    QObject::connect(renameChapter, &QPushButton::clicked, mw, [mw, state]() {
+-        const ChapterStore::Chapter c = ChapterStore::instance()->chapter(state->chapter);
+-        bool ok = false;
+-        const QString name = QInputDialog::getText(mw, i18n("Renomear capítulo"), i18n("Nome do capítulo:"),
+-                                                   QLineEdit::Normal, c.name, &ok);
+-        if (ok && !name.trimmed().isEmpty()) ChapterStore::instance()->rename(c.id, name.trimmed());
++
++    QMenu *chMenu = new QMenu(chMore);
++    chMenu->setStyleSheet(QStringLiteral(
++        "QMenu { background: #1c1c20; border: 1px solid #33333b; border-radius: 12px; padding: 6px; }"
++        "QMenu::item { color: #ececf1; padding: 12px 22px; border-radius: 8px; font-size: 14px; }"
++        "QMenu::item:selected { background: #26262d; }"
++        "QMenu::separator { height: 1px; background: #2a2a31; margin: 6px 10px; }"));
++    QAction *renameAction = chMenu->addAction(i18n("Renomear e formato…"));
++    QAction *otherFormat = chMenu->addAction(i18n("Nova página em outro formato…"));
++    chMenu->addSeparator();
++    QAction *takeOut = chMenu->addAction(i18n("Tirar páginas do capítulo"));
++    QAction *deleteAction = chMenu->addAction(i18n("Excluir capítulo"));
++    QObject::connect(chMore, &QPushButton::clicked, mw, [chMore, chMenu]() {
++        chMenu->popup(chMore->mapToGlobal(QPoint(chMore->width() - chMenu->sizeHint().width(), chMore->height() + 6)));
++    });
++    QObject::connect(renameAction, &QAction::triggered, mw, [mw, state]() {
++        if (!state->chapter.isEmpty()) showChapterSheet(mw, state->chapter, [](const QString &) {});
+     });
+-    QObject::connect(deleteChapter, &QPushButton::clicked, mw, [mw, state]() {
++    QObject::connect(otherFormat, &QAction::triggered, mw, [mw, state]() {
++        s_pendingChapter = state->chapter;
++        showNewPage(mw);
++    });
++    QObject::connect(takeOut, &QAction::triggered, mw, [chapterRemove]() { chapterRemove->setChecked(true); });
++    QObject::connect(deleteAction, &QAction::triggered, mw, [mw, state, closeChapter]() {
+         const ChapterStore::Chapter c = ChapterStore::instance()->chapter(state->chapter);
+         if (QMessageBox::question(mw, i18n("Excluir capítulo"),
+                                   i18n("Excluir o capítulo \"%1\"? Os desenhos continuam salvos no tablet e nos recentes.", c.name))
+                 == QMessageBox::Yes) {
++            closeChapter();
+             ChapterStore::instance()->remove(c.id);
+         }
+     });
+-    QObject::connect(removeMode, &QPushButton::toggled, mw, [refresh](bool) { (*refresh)(); });
+-    QObject::connect(orderMode, &QPushButton::toggled, mw, [refresh](bool) { (*refresh)(); });
+-    QObject::connect(stageMode, &QPushButton::toggled, mw, [refresh](bool) { (*refresh)(); });
++
+     // lembra onde o dedo tocou no cartão, para saber qual seta foi tocada
+     class PressSpy : public QObject {
+     public:
+@@ -3606,54 +4230,59 @@ QWidget *buildGallery(KisMainWindow *mw)
+             return false;
+         }
+     };
+-    recents->viewport()->installEventFilter(new PressSpy(recents));
++    pagesView->viewport()->installEventFilter(new PressSpy(pagesView));
+ 
+-    QObject::connect(recents, &QListView::clicked, mw, [mw, state, removeMode, orderMode, stageMode, recents](const QModelIndex &index) {
++    QObject::connect(recents, &QListView::clicked, mw, [mw, removeMode](const QModelIndex &index) {
+         const QString path = index.data(Qt::ToolTipRole).toString();
+         if (path.isEmpty()) return;
+-        if (stageMode->isChecked() && !state->chapter.isEmpty()) {
++        if (removeMode->isChecked()) {
++            mw->removeRecentFile(path);   // só tira da lista; o arquivo continua no armazenamento
++            return;
++        }
++        s_pendingChapter.clear();
++        mw->openDocument(path, KisMainWindow::None);
++    });
++    QObject::connect(pagesView, &QListView::clicked, mw, [mw, state, stageMode, orderMode, chapterRemove, pagesView](const QModelIndex &index) {
++        const QString path = index.data(Qt::ToolTipRole).toString();
++        if (path.isEmpty() || state->chapter.isEmpty()) return;
++        if (state->addMode) {
++            ChapterStore::instance()->addPage(state->chapter, path);
++            return;
++        }
++        if (stageMode->isChecked()) {
+             const int s = ChapterStore::instance()->status(state->chapter, path);
+             ChapterStore::instance()->setStatus(state->chapter, path, (s + 1) % 3);
+             return;
+         }
+-        if (orderMode->isChecked() && !state->chapter.isEmpty()) {
+-            const QPoint p = recents->viewport()->property("nanquimLastPos").toPoint();
+-            const QRect r = recents->visualRect(index);
++        if (orderMode->isChecked()) {
++            const QPoint p = pagesView->viewport()->property("nanquimLastPos").toPoint();
++            const QRect r = pagesView->visualRect(index);
+             if (p.x() < r.center().x() - r.width() / 6) ChapterStore::instance()->movePage(state->chapter, path, -1);
+             else if (p.x() > r.center().x() + r.width() / 6) ChapterStore::instance()->movePage(state->chapter, path, +1);
+             return;
+         }
+-        if (state->addMode) {
+-            ChapterStore::instance()->addPage(state->chapter, path);
+-            return;
+-        }
+-        if (removeMode->isChecked()) {
+-            // só tira da lista; o arquivo continua no armazenamento
+-            if (state->chapter.isEmpty()) mw->removeRecentFile(path);
+-            else ChapterStore::instance()->removePage(state->chapter, path);
++        if (chapterRemove->isChecked()) {
++            ChapterStore::instance()->removePage(state->chapter, path);
+             return;
+         }
++        s_pendingChapter = state->chapter;
+         mw->openDocument(path, KisMainWindow::None);
+     });
+ 
+-    auto later = [refresh, galleryGuard]() {
+-        if (galleryGuard) QTimer::singleShot(0, galleryGuard, [refresh]() { (*refresh)(); });
++    auto later = [refreshHome, refreshChapter, pages, chapterPage, state, galleryGuard]() {
++        if (!galleryGuard) return;
++        QTimer::singleShot(0, galleryGuard, [refreshHome, refreshChapter, pages, chapterPage, state]() {
++            refreshHome();
++            if (pages->currentWidget() == chapterPage && state->addMode) refreshChapter();
++        });
+     };
+     QObject::connect(proxy, &QAbstractItemModel::rowsInserted, empty, later);
+     QObject::connect(proxy, &QAbstractItemModel::rowsRemoved, empty, later);
+     QObject::connect(proxy, &QAbstractItemModel::modelReset, empty, later);
+-    (*refresh)();
+-
+-    bl->addWidget(recents, 1);
+-    bl->addWidget(empty, 1);
+-
+-    QLabel *footer = new QLabel(i18n("O Nanquim é feito sobre o Krita, software livre da comunidade KDE. "
+-                                     "Arte da abertura: Tyson Tan (CC BY-SA)."), body);
+-    footer->setObjectName(QStringLiteral("nanquimFooter"));
+-    footer->setAlignment(Qt::AlignCenter);
+-    bl->addWidget(footer);
+-
+-    root->addWidget(body, 1);
++    QObject::connect(proxy, &QAbstractItemModel::layoutChanged, empty, later);
++    QObject::connect(KisPart::instance(), &KisPart::sigViewAdded, gallery, [later](KisView *) { later(); });
++    QObject::connect(KisPart::instance(), &KisPart::sigViewRemoved, gallery, [later](KisView *) { later(); });
++    refreshHome();
+     return gallery;
+ }
+ 
+@@ -3954,12 +4583,7 @@ void fillNanquimMenu(KisMainWindow *mw, QMenu *menu)
+         chapterMenu->addSeparator();
+         QAction *newChapter = chapterMenu->addAction(i18n("Novo capítulo…"));
+         QObject::connect(newChapter, &QAction::triggered, mw, [mw, docPath]() {
+-            bool ok = false;
+-            const QString name = QInputDialog::getText(mw, i18n("Novo capítulo"), i18n("Nome do capítulo:"),
+-                                                       QLineEdit::Normal, QString(), &ok);
+-            if (ok && !name.trimmed().isEmpty()) {
+-                ChapterStore::instance()->addPage(ChapterStore::instance()->create(name.trimmed()), docPath);
+-            }
++            showChapterSheet(mw, QString(), [docPath](const QString &id) { ChapterStore::instance()->addPage(id, docPath); });
+         });
+     }
+     QAction *panelsAction = menu->addAction(i18n("Requadros e balões…"));
+@@ -4308,16 +4932,82 @@ void showToast(KisMainWindow *mw, const QString &text)
+     });
+ }
+ 
+-// perguntas do Krita (salvar, fechar...) com a cara do Nanquim
++// perguntas do Krita (salvar, fechar...) com a cara do Nanquim. No Android o
++// Qt entregava essas perguntas para o próprio sistema desenhar (a caixa cinza
++// com "YES/NO"); o Nanquim pede ao Qt que as desenhe, e aqui elas ganham o estilo.
+ const char *MESSAGE_STYLE =
+-    "QMessageBox, QInputDialog { background: #1c1c20; }"
+-    "QMessageBox QLabel, QInputDialog QLabel { color: #ececf1; font-size: 15px; }"
+-    "QMessageBox QPushButton, QInputDialog QPushButton { min-height: 44px; min-width: 96px; padding: 0 16px; border-radius: 10px;"
++    "QMessageBox, QInputDialog { background: #1c1c20; border: 1px solid #33333b; }"
++    "QMessageBox QLabel, QInputDialog QLabel { color: #ececf1; font-size: 15px; background: transparent; }"
++    "QMessageBox QLabel#qt_msgbox_label { font-size: 16px; font-weight: 600; min-width: 320px; }"
++    "QMessageBox QLabel#qt_msgbox_informativelabel { color: #a3a3ae; font-size: 14px; }"
++    "QMessageBox QPushButton, QInputDialog QPushButton { min-height: 44px; min-width: 104px; padding: 0 18px; border-radius: 12px;"
+     "  border: 1px solid #33333b; background: #24242b; color: #ececf1; font-size: 14px; font-weight: 600; }"
+-    "QMessageBox QPushButton:default, QInputDialog QPushButton:default { border: none; color: #0b1220;"
++    "QMessageBox QPushButton:pressed, QInputDialog QPushButton:pressed { background: #2f2f36; border-color: #3d8bff; }"
++    "QMessageBox QPushButton:default, QInputDialog QPushButton:default { border: none; color: #06121f; font-weight: 700;"
+     "  background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3d8bff, stop:1 #22d3ee); }"
+-    "QInputDialog QLineEdit, QInputDialog QComboBox, QInputDialog QSpinBox { min-height: 40px; padding: 0 10px; border-radius: 10px;"
+-    "  border: 1px solid #33333b; background: #17171a; color: #ececf1; font-size: 14px; }";
++    "QMessageBox QPushButton#nqDanger { color: #ff8585; background: transparent; border: 1px solid #4a2c31; }"
++    "QMessageBox QCheckBox { color: #c9c9d1; font-size: 14px; }"
++    "QMessageBox QTextEdit { background: #17171a; color: #c9c9d1; border: 1px solid #33333b; border-radius: 10px; }"
++    "QInputDialog QLineEdit, QInputDialog QComboBox, QInputDialog QSpinBox, QInputDialog QDoubleSpinBox {"
++    "  min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1.5px solid #3d8bff; background: #141418;"
++    "  color: #ececf1; font-size: 15px; }"
++    "QInputDialog QListView { background: #17171a; color: #ececf1; border: 1px solid #33333b; border-radius: 12px; font-size: 15px; }"
++    "QInputDialog QListView::item { min-height: 44px; padding: 0 12px; }"
++    "QInputDialog QListView::item:selected { background: #1e2a44; color: #ffffff; }";
++
++// botões em português e o ícone do Nanquim no lugar do ícone do sistema
++void dressMessageBox(QMessageBox *mb)
++{
++    struct Name { QMessageBox::StandardButton button; const char *text; };
++    const Name names[] = {
++        {QMessageBox::Ok, "OK"}, {QMessageBox::Save, "Salvar"}, {QMessageBox::SaveAll, "Salvar tudo"},
++        {QMessageBox::Open, "Abrir"}, {QMessageBox::Yes, "Sim"}, {QMessageBox::YesToAll, "Sim para todos"},
++        {QMessageBox::No, "Não"}, {QMessageBox::NoToAll, "Não para todos"}, {QMessageBox::Abort, "Interromper"},
++        {QMessageBox::Retry, "Tentar de novo"}, {QMessageBox::Ignore, "Ignorar"}, {QMessageBox::Close, "Fechar"},
++        {QMessageBox::Cancel, "Cancelar"}, {QMessageBox::Discard, "Não salvar"}, {QMessageBox::Help, "Ajuda"},
++        {QMessageBox::Apply, "Aplicar"}, {QMessageBox::Reset, "Redefinir"}, {QMessageBox::RestoreDefaults, "Restaurar padrões"},
++    };
++    for (const Name &n : names) {
++        if (QAbstractButton *b = mb->button(n.button)) b->setText(i18n(n.text));
++    }
++    auto danger = [](QAbstractButton *b) {
++        if (!b) return;
++        b->setObjectName(QStringLiteral("nqDanger"));
++        b->style()->unpolish(b);
++        b->style()->polish(b);
++    };
++    // "O documento foi modificado. Deseja gravá-lo?": Salvar / Não salvar / Cancelar
++    const QString text = mb->text() + mb->informativeText();
++    if (mb->button(QMessageBox::Yes) && mb->button(QMessageBox::No)
++            && (text.contains(QLatin1String("modific"), Qt::CaseInsensitive) || text.contains(QLatin1String("grav"), Qt::CaseInsensitive))) {
++        mb->button(QMessageBox::Yes)->setText(i18n("Salvar"));
++        mb->button(QMessageBox::No)->setText(i18n("Não salvar"));
++        danger(mb->button(QMessageBox::No));
++    }
++    danger(mb->button(QMessageBox::Discard));
++
++    const char *path = nullptr;
++    QColor color = C_ACCENT;
++    switch (mb->icon()) {
++    case QMessageBox::Warning:
++        path = "<path d='M12 3.5l9.2 16.2H2.8z'/><path d='M12 10v4.6'/><circle cx='12' cy='17.3' r='.7' fill='currentColor'/>";
++        color = QColor(0xf5, 0xb7, 0x4f);
++        break;
++    case QMessageBox::Critical:
++        path = "<circle cx='12' cy='12' r='9'/><path d='M9 9l6 6M15 9l-6 6'/>";
++        color = QColor(0xff, 0x85, 0x85);
++        break;
++    case QMessageBox::Question:
++        path = "<circle cx='12' cy='12' r='9'/><path d='M9.6 9.4a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1.1 1-1.1 1.8v.4'/><circle cx='12' cy='17' r='.7' fill='currentColor'/>";
++        break;
++    case QMessageBox::Information:
++        path = "<circle cx='12' cy='12' r='9'/><path d='M12 11v6'/><circle cx='12' cy='7.8' r='.7' fill='currentColor'/>";
++        break;
++    default:
++        break;
++    }
++    if (path) mb->setIconPixmap(svgPixmap(QString::fromUtf8(path), color, 40));
++}
+ 
+ class MessageStyler : public QObject
+ {
+@@ -4326,12 +5016,31 @@ public:
+ protected:
+     bool eventFilter(QObject *obj, QEvent *e) override
+     {
+-        if (e->type() != QEvent::Polish) return false;
++        if (e->type() != QEvent::Polish && e->type() != QEvent::Show) return false;
+         QWidget *w = qobject_cast<QWidget*>(obj);
+-        if (!w || !w->isWindow() || w->property("nanquimStyled").toBool()) return false;
+-        if (!w->inherits("QMessageBox") && !w->inherits("QInputDialog")) return false;
+-        w->setProperty("nanquimStyled", true);
+-        if (w->styleSheet().isEmpty()) w->setStyleSheet(QLatin1String(MESSAGE_STYLE));
++        if (!w || !w->isWindow()) return false;
++        const bool box = w->inherits("QMessageBox");
++        if (!box && !w->inherits("QInputDialog")) return false;
++        if (e->type() == QEvent::Polish) {
++            if (w->property("nanquimStyled").toBool()) return false;
++            w->setProperty("nanquimStyled", true);
++            // sem a moldura branca do sistema em volta
++            if (!w->testAttribute(Qt::WA_WState_Created) && !(w->windowFlags() & Qt::FramelessWindowHint)) {
++                w->setWindowFlags(w->windowFlags() | Qt::FramelessWindowHint);
++            }
++            w->setAttribute(Qt::WA_StyledBackground);
++            if (w->styleSheet().isEmpty()) w->setStyleSheet(QLatin1String(MESSAGE_STYLE));
++            return false;
++        }
++        if (w->property("nanquimDressed").toBool()) return false;
++        w->setProperty("nanquimDressed", true);
++        if (box) {
++            dressMessageBox(static_cast<QMessageBox*>(w));
++        } else if (QInputDialog *in = qobject_cast<QInputDialog*>(w)) {
++            const QString cancel = in->cancelButtonText().remove(QLatin1Char('&'));
++            if (cancel.compare(QLatin1String("Cancel"), Qt::CaseInsensitive) == 0) in->setCancelButtonText(i18n("Cancelar"));
++            if (in->labelText() == QLatin1String("Save As:")) in->setLabelText(i18n("Salvar como:"));
++        }
+         return false;
+     }
+ };
+@@ -4910,6 +5619,136 @@ const PageFormat PAGE_FORMATS[] = {
+     {"Personalizado", "você escolhe", 0, 0, 0, 0},
+ };
+ 
++// capa de capítulo para a janela de novo capítulo: três folhas com requadros
++QPixmap chapterCoverArt(int w)
++{
++    const int h = qRound(w * 1.414);
++    const qreal dpr = qApp->devicePixelRatio();
++    QPixmap pm(QSize(w + 14, h + 14) * dpr);
++    pm.setDevicePixelRatio(dpr);
++    pm.fill(Qt::transparent);
++    QPainter g(&pm);
++    g.setRenderHint(QPainter::Antialiasing);
++    const QRectF front(0, 14, w, h);
++    g.setPen(Qt::NoPen);
++    g.setBrush(QColor(0xbd, 0xbd, 0xb6));
++    g.drawRoundedRect(front.translated(14, -14), 6, 6);
++    g.setBrush(QColor(0xda, 0xda, 0xd3));
++    g.drawRoundedRect(front.translated(7, -7), 6, 6);
++    g.setBrush(QColor(0, 0, 0, 70));
++    g.drawRoundedRect(front.translated(0, 4), 6, 6);
++    g.setBrush(QColor(0xfa, 0xfa, 0xf7));
++    g.drawRoundedRect(front, 6, 6);
++    g.setPen(QPen(QColor(0x15, 0x15, 0x15), 1.6));
++    g.setBrush(Qt::NoBrush);
++    const qreal m = w * 0.08;
++    const QRectF inner = front.adjusted(m, m, -m, -m);
++    const qreal gap = w * 0.04;
++    const qreal top = inner.height() * 0.42;
++    g.drawRect(QRectF(inner.left(), inner.top(), inner.width(), top));
++    g.drawRect(QRectF(inner.left(), inner.top() + top + gap, inner.width() * 0.45, inner.height() - top - gap));
++    g.drawRect(QRectF(inner.left() + inner.width() * 0.45 + gap, inner.top() + top + gap,
++                      inner.width() * 0.55 - gap, inner.height() - top - gap));
++    return pm;
++}
++
++void showChapterSheet(KisMainWindow *mw, const QString &chapterId, std::function<void(const QString &)> done)
++{
++    const bool editing = !chapterId.isEmpty();
++    const ChapterStore::Chapter existing = ChapterStore::instance()->chapter(chapterId);
++    QDialog *d = makeSheet(mw, 720);
++    d->setStyleSheet(d->styleSheet() + QStringLiteral(
++        "QFrame#nqSideArt { background: #17171a; border: none; border-right: 1px solid #26262c;"
++        "  border-top-left-radius: 18px; border-bottom-left-radius: 18px; }"
++        "QLineEdit#nqNameField { min-height: 46px; font-size: 16px; border: 1.5px solid #3d8bff; background: #141418; }"));
++    QHBoxLayout *root = new QHBoxLayout(d);
++    root->setContentsMargins(1, 1, 1, 1);
++    root->setSpacing(0);
++
++    QFrame *side = new QFrame(d);
++    side->setObjectName(QStringLiteral("nqSideArt"));
++    side->setFixedWidth(220);
++    QVBoxLayout *sl = new QVBoxLayout(side);
++    sl->setContentsMargins(16, 28, 16, 28);
++    sl->setSpacing(10);
++    QLabel *cover = new QLabel(side);
++    cover->setPixmap(chapterCoverArt(120));
++    cover->setAlignment(Qt::AlignCenter);
++    QLabel *coverName = nqLabel(QString(), "nqItem", side);
++    coverName->setAlignment(Qt::AlignCenter);
++    QLabel *coverInfo = nqLabel(QString(), "nqSmall", side);
++    coverInfo->setAlignment(Qt::AlignCenter);
++    sl->addStretch(1);
++    sl->addWidget(cover);
++    sl->addWidget(coverName);
++    sl->addWidget(coverInfo);
++    sl->addStretch(1);
++    root->addWidget(side);
++
++    QWidget *right = new QWidget(d);
++    QVBoxLayout *rl = new QVBoxLayout(right);
++    rl->setContentsMargins(26, 22, 22, 22);
++    rl->setSpacing(12);
++    rl->addLayout(sheetHeader(d, editing ? i18n("Capítulo") : i18n("Novo capítulo"),
++                              editing ? i18n("Renomear e escolher o formato") : i18n("Dê um nome ao capítulo")));
++    rl->addWidget(nqLabel(i18n("Nome"), "nqSmall", right));
++    QLineEdit *name = new QLineEdit(right);
++    name->setObjectName(QStringLiteral("nqNameField"));
++    name->setText(editing ? existing.name : i18n("Capítulo %1", ChapterStore::instance()->chapters().size() + 1));
++    name->selectAll();
++    rl->addWidget(name);
++    rl->addSpacing(4);
++    rl->addWidget(nqLabel(i18n("Formato das páginas novas"), "nqSmall", right));
++    QButtonGroup *formatGroup = new QButtonGroup(right);
++    QStringList labels;
++    for (int i = 0; i < CHAPTER_FORMAT_COUNT; i++) labels << i18n(CHAPTER_FORMATS[i].name);
++    rl->addLayout(chipRow(right, formatGroup, labels, editing ? ChapterStore::instance()->format(chapterId) : 0));
++    rl->addWidget(nqLabel(i18n("Usado pelo botão \"+ Nova página\" de dentro do capítulo. Dá para mudar depois."),
++                          "nqHint", right, true));
++    rl->addStretch(1);
++    QHBoxLayout *foot = new QHBoxLayout();
++    foot->addStretch(1);
++    QPushButton *cancel = nqButton(i18n("Cancelar"), right, "nqGhost");
++    QPushButton *ok = nqButton(editing ? i18n("Salvar") : i18n("Criar capítulo"), right, "nqPrimary");
++    foot->addWidget(cancel);
++    foot->addWidget(ok);
++    rl->addLayout(foot);
++    root->addWidget(right, 1);
++
++    auto updatePreview = [name, coverName, coverInfo, formatGroup, existing, editing]() {
++        coverName->setText(name->text().trimmed().isEmpty() ? i18n("Sem nome") : name->text().trimmed());
++        const int f = qMax(0, formatGroup->checkedId());
++        const int n = editing ? existing.pages.size() : 0;
++        coverInfo->setText(n == 1 ? i18n("1 página · %1", i18n(CHAPTER_FORMATS[f].name))
++                                  : i18n("%1 páginas · %2", n, i18n(CHAPTER_FORMATS[f].name)));
++    };
++    updatePreview();
++    QObject::connect(name, &QLineEdit::textChanged, d, [updatePreview](const QString &) { updatePreview(); });
++    QObject::connect(formatGroup, &QButtonGroup::idClicked, d, [updatePreview](int) { updatePreview(); });
++    QObject::connect(cancel, &QPushButton::clicked, d, &QDialog::reject);
++    auto accept = [d, name, formatGroup, chapterId, editing, done]() {
++        const QString n = name->text().trimmed();
++        if (n.isEmpty()) {
++            name->setFocus();
++            return;
++        }
++        const int f = qMax(0, formatGroup->checkedId());
++        QString id = chapterId;
++        if (editing) {
++            ChapterStore::instance()->rename(id, n);
++        } else {
++            id = ChapterStore::instance()->create(n);
++        }
++        ChapterStore::instance()->setFormat(id, f);
++        d->accept();
++        if (done) done(id);
++    };
++    QObject::connect(ok, &QPushButton::clicked, d, accept);
++    QObject::connect(name, &QLineEdit::returnPressed, d, accept);
++    d->open();
++    name->setFocus();
++}
++
+ void showComicsSheet(KisMainWindow *mw, int tab);
+ 
+ void showNewPage(KisMainWindow *mw)
+@@ -4928,36 +5767,16 @@ void showNewPage(KisMainWindow *mw)
+     const int nFormats = int(sizeof(PAGE_FORMATS) / sizeof(PAGE_FORMATS[0]));
+     for (int i = 0; i < nFormats; i++) {
+         const PageFormat &f = PAGE_FORMATS[i];
+-        QPushButton *card = nqButton(QString(), d);
+-        card->setProperty("class", QStringLiteral("nqCard"));
++        const double ratio = f.wmm > 0 ? f.wmm / f.hmm : (f.wpx > 0 ? double(f.wpx) / f.hpx : 0.8);
++        PaperTile *card = new PaperTile(i18n(f.name), i18n(f.detail), ratio, true, d);
+         card->setCheckable(true);
+-        card->setMinimumSize(180, 150);
+-        QVBoxLayout *cl = new QVBoxLayout(card);
+-        cl->setContentsMargins(10, 12, 10, 10);
+-        cl->setSpacing(6);
+-        // papel em miniatura, na proporção do formato
+-        const double ratio = f.wmm > 0 ? f.wmm / f.hmm : (f.wpx > 0 ? double(f.wpx) / f.hpx : 1.3);
+-        const int ph = 76;
+-        const int pw = qBound(18, int(ph * ratio), 96);
+-        QLabel *paper = new QLabel(card);
+-        paper->setFixedSize(pw, ratio > 1.2 ? int(pw / ratio) : ph);
+-        paper->setStyleSheet(QStringLiteral("background: #fafaf7; border-radius: 3px;"));
+-        paper->setAttribute(Qt::WA_TransparentForMouseEvents);
+-        QLabel *n = nqLabel(i18n(f.name), "nqItem", card);
+-        QLabel *det = nqLabel(i18n(f.detail), "nqSmall", card);
+-        n->setAlignment(Qt::AlignCenter);
+-        det->setAlignment(Qt::AlignCenter);
+-        n->setAttribute(Qt::WA_TransparentForMouseEvents);
+-        det->setAttribute(Qt::WA_TransparentForMouseEvents);
+-        cl->addStretch(1);
+-        cl->addWidget(paper, 0, Qt::AlignHCenter);
+-        cl->addStretch(1);
+-        cl->addWidget(n);
+-        cl->addWidget(det);
+         formats->addButton(card, i);
+-        grid->addWidget(card, i / 4, i % 4);
++        grid->addWidget(card, i / 3, i % 3);
+     }
+-    mid->addLayout(grid, 1);
++    QVBoxLayout *gridWrap = new QVBoxLayout();
++    gridWrap->addLayout(grid);
++    gridWrap->addStretch(1);
++    mid->addLayout(gridWrap, 1);
+ 
+     QFrame *side = new QFrame(d);
+     side->setObjectName(QStringLiteral("nqPanel"));
+@@ -6005,6 +6824,20 @@ void NanquimTabletUi::install(KisMainWindow *mw)
+     buildNanquimMenu(mw);
+     qApp->installEventFilter(new PopupAnimator(mw));
+     qApp->installEventFilter(new MessageStyler(mw));
++#ifdef Q_OS_ANDROID
++    // perguntas e avisos desenhados pelo Qt, com o estilo do Nanquim; os seletores
++    // de arquivo continuam os do Android (o KoFileDialog libera só para eles)
++    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
++#endif
++    {
++        // dicas (o quadro amarelo de memória, por exemplo) no escuro do Nanquim
++        QPalette tip = QToolTip::palette();
++        tip.setColor(QPalette::ToolTipBase, QColor(0x1c, 0x1c, 0x20));
++        tip.setColor(QPalette::ToolTipText, QColor(0xec, 0xec, 0xf1));
++        tip.setColor(QPalette::Window, QColor(0x1c, 0x1c, 0x20));
++        tip.setColor(QPalette::WindowText, QColor(0xec, 0xec, 0xf1));
++        QToolTip::setPalette(tip);
++    }
+ 
+     // a cada desenho aberto: aviso de memória (páginas enormes) e "página salva"
+     QPointer<KisMainWindow> mwGuard(mw);
+diff --git a/libs/widgetutils/KoFileDialog.cpp b/libs/widgetutils/KoFileDialog.cpp
+index d4ad079..4793e4b 100644
+--- a/libs/widgetutils/KoFileDialog.cpp
++++ b/libs/widgetutils/KoFileDialog.cpp
+@@ -258,8 +258,27 @@ void KoFileDialog::createFileDialog()
+     onFilterSelected(d->fileDialog->selectedNameFilter());
+ }
+ 
++#ifdef Q_OS_ANDROID
++// O Nanquim pede ao Qt que desenhe as perguntas e avisos (AA_DontUseNativeDialogs),
++// mas o seletor de arquivos precisa continuar o do Android: é ele que dá acesso
++// à galeria, ao Drive e às pastas do tablet. Liberado só enquanto ele está aberto.
++namespace {
++struct AllowNativeFileDialog {
++    bool previous;
++    AllowNativeFileDialog() : previous(QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs))
++    {
++        QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false);
++    }
++    ~AllowNativeFileDialog() { QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, previous); }
++};
++}
++#endif
++
+ QString KoFileDialog::filename()
+ {
++#ifdef Q_OS_ANDROID
++    AllowNativeFileDialog allowNative;
++#endif
+     QString url;
+     createFileDialog();
+ 
+@@ -371,6 +390,9 @@ QString KoFileDialog::filename()
+ 
+ QStringList KoFileDialog::filenames()
+ {
++#ifdef Q_OS_ANDROID
++    AllowNativeFileDialog allowNative;
++#endif
+     QStringList urls;
+ 
+     createFileDialog();
+-- 
+2.43.0
+
