@@ -1,0 +1,176 @@
+From b5aca7646d114b81bd33f89a27304923d07731af Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 22:51:07 -0300
+Subject: [PATCH 50/50] Nanquim: corrige o fechamento ao salvar, exportar e
+ desenhar
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+O time-lapse automático lia a projeção da imagem numa thread própria, ao
+mesmo tempo que os traços, o salvamento automático e a montagem do desenho
+recém-aberto mexiam nela. Isso fechava o app com sinal 11 ao salvar, ao
+exportar PNG e no meio do desenho.
+
+- a cópia da projeção agora é um job do agendador da imagem (como no
+  Gravador do Krita); a redução e o JPEG usam só essa cópia
+- nada de quadro enquanto o desenho é salvo, nem nos 4 s depois de abrir
+- um quadro que nunca termina não trava a gravação (libera em 30 s)
+
+Requadros e balões: a camada vetorial nova só vira a ativa depois que o
+Krita cria a forma dela (antes dava o aviso "shape" do gerenciador de
+camadas e deixava a seleção num estado errado).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012fwRUW9SkxqcJFLYxLRXTf
+---
+ libs/ui/NanquimTabletUi.cpp | 68 ++++++++++++++++++++++++++++++++++---
+ 1 file changed, 63 insertions(+), 5 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+index 5dbdae9..76b6df2 100644
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -55,6 +55,7 @@
+ #include <ksharedconfig.h>
+ #include <kconfiggroup.h>
+ #include <kis_paint_device.h>
++#include <kis_spontaneous_job.h>
+ #include <QMouseEvent>
+ #include <QTabletEvent>
+ #include <QTouchEvent>
+@@ -523,6 +524,29 @@ QIcon colorSwatchIcon(const QColor &c)
+ // pausas. Os quadros ficam numa pasta do app, por desenho, e o vídeo é montado
+ // pelo codificador do aparelho (NanquimTimelapse.java).
+ // ---------------------------------------------------------------------------
++// Cópia da projeção feita pelo agendador da imagem, como no Gravador do Krita.
++// O agendador não roda este job junto com traços, salvamentos ou a montagem da
++// imagem; ler a projeção direto de outra thread fechava o app (sinal 11).
++class NanquimTimelapseCopyJob : public KisSpontaneousJob
++{
++public:
++    NanquimTimelapseCopyJob(KisPaintDeviceSP device, const QRect &rect, std::function<void(KisPaintDeviceSP)> done)
++        : m_device(device), m_rect(rect), m_done(std::move(done)) {}
++    void run() override
++    {
++        KisPaintDeviceSP copy = new KisPaintDevice(m_device->colorSpace());
++        copy->makeCloneFromRough(m_device, m_rect);
++        m_done(copy);
++    }
++    bool overrides(const KisSpontaneousJob *) override { return false; }
++    int levelOfDetail() const override { return 0; }
++    QString debugName() const override { return QStringLiteral("NanquimTimelapseCopyJob"); }
++private:
++    KisPaintDeviceSP m_device;
++    QRect m_rect;
++    std::function<void(KisPaintDeviceSP)> m_done;
++};
++
+ class NanquimTimelapseRecorder : public QObject
+ {
+ public:
+@@ -531,6 +555,8 @@ public:
+     {
+         m_sinceCapture.start();
+         m_sinceChange.start();
++        m_sinceTracked.start();
++        m_sinceBusy.start();
+         QTimer *timer = new QTimer(this);
+         timer->setInterval(500);
+         QObject::connect(timer, &QTimer::timeout, this, [this]() { tick(); });
+@@ -649,6 +675,7 @@ private:
+             m_tracked = image.data();
+             m_dirty = !image.isNull();   // primeiro quadro: o estado em que o desenho foi aberto
+             m_sinceChange.restart();
++            m_sinceTracked.restart();
+             if (image) {
+                 m_connection = QObject::connect(image.data(), &KisImage::sigImageUpdated, this, [this](const QRect &) {
+                     m_dirty = true;
+@@ -659,7 +686,14 @@ private:
+         if (!image || !view->document() || !m_dirty || !enabled()) return;
+         // espera o traço terminar (0,7 s sem mudanças) e no mínimo 2 s entre quadros
+         if (m_sinceChange.elapsed() < 700 || m_sinceCapture.elapsed() < 2000) return;
+-        if (m_busy->load()) return;
++        // desenho recém-aberto: a imagem ainda está sendo montada
++        if (m_sinceTracked.elapsed() < 4000) return;
++        // nada de quadro enquanto o desenho é salvo (inclusive o salvamento automático)
++        if (view->document()->isSaving()) return;
++        if (m_busy->load()) {
++            if (m_sinceBusy.elapsed() < 30000) return;
++            m_busy->store(false);    // um quadro que nunca terminou não trava a gravação
++        }
+ 
+         KisDocument *doc = view->document();
+         const QString dir = dirFor(doc);
+@@ -681,11 +715,15 @@ private:
+ 
+         m_dirty = false;
+         m_sinceCapture.restart();
++        m_sinceBusy.restart();
+         std::shared_ptr<std::atomic_bool> busy = m_busy;
+         busy->store(true);
+-        // a redução e a gravação do JPEG rodam fora da thread da interface
+-        QtConcurrent::run([projection, bounds, w, h, dir, file, busy, next]() mutable {
+-            QImage thumb = projection->createThumbnailUncached(w, h, bounds, 2);
++        // 1) o agendador da imagem copia a projeção (cópia leve, blocos compartilhados);
++        // 2) a redução e a gravação do JPEG rodam fora da interface, só sobre a cópia
++        image->addSpontaneousJob(new NanquimTimelapseCopyJob(projection, bounds,
++                [bounds, w, h, dir, file, busy, next](KisPaintDeviceSP copy) {
++        QtConcurrent::run([copy, bounds, w, h, dir, file, busy, next]() mutable {
++            QImage thumb = copy->createThumbnailUncached(w, h, bounds, 2);
+             if (!thumb.isNull()) {
+                 QImage frame(w, h, QImage::Format_RGB32);
+                 frame.fill(Qt::white);
+@@ -701,6 +739,7 @@ private:
+             }
+             busy->store(false);
+         });
++        }));
+     }
+ 
+     KisMainWindow *m_mw;
+@@ -709,6 +748,8 @@ private:
+     bool m_dirty = false;
+     QElapsedTimer m_sinceChange;
+     QElapsedTimer m_sinceCapture;
++    QElapsedTimer m_sinceTracked;
++    QElapsedTimer m_sinceBusy;
+     std::shared_ptr<std::atomic_bool> m_busy = std::make_shared<std::atomic_bool>(false);
+ };
+ 
+@@ -852,6 +893,23 @@ QIcon layoutIcon(const PanelLayout &layout)
+     return QIcon(pm);
+ }
+ 
++// A camada nova só pode virar a ativa depois que o Krita cria a forma dela
++// (o acréscimo passa pela fila de comandos). Ativar antes dava o aviso
++// "shape" do gerenciador de camadas e deixava a seleção num estado errado.
++void activateWhenReady(QPointer<KisViewManager> vm, QPointer<KisDocument> doc, KisNodeSP node, int tries)
++{
++    if (!vm || !doc || !node) return;
++    if (doc->shapeForNode(node)) {
++        vm->nodeManager()->slotNonUiActivatedNode(node);
++        return;
++    }
++    if (tries <= 0) {
++        KisUsageLogger::log(QStringLiteral("[Nanquim] camada nova sem forma; não foi ativada"));
++        return;
++    }
++    QTimer::singleShot(50, vm.data(), [vm, doc, node, tries]() { activateWhenReady(vm, doc, node, tries - 1); });
++}
++
+ // adiciona formas vindas de um SVG (em pontos) numa camada vetorial
+ bool addVectorShapes(KisMainWindow *mw, const QString &layerName, const QString &svgBody, bool reuseLayer)
+ {
+@@ -900,7 +958,7 @@ bool addVectorShapes(KisMainWindow *mw, const QString &layerName, const QString
+     }
+     KisNodeCommandsAdapter adapter(vm);
+     adapter.addNode(layer, image->root(), image->root()->lastChild());
+-    vm->nodeManager()->slotNonUiActivatedNode(layer);
++    activateWhenReady(QPointer<KisViewManager>(vm), QPointer<KisDocument>(doc), KisNodeSP(layer.data()), 40);
+     return true;
+ }
+ 
+-- 
+2.43.0
+
