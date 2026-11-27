@@ -48,11 +48,17 @@ jobs:
           else
             REF="${{ inputs.base_estavel || 'v5.3.4' }}"
           fi
-          git clone --filter=blob:none https://github.com/KDE/krita.git krita
+          # o espelho do GitHub não tem a linha 5.3; a base estável vem do servidor do KDE
+          if [ "${{ matrix.base }}" = "atual" ]; then
+            git clone --filter=blob:none https://github.com/KDE/krita.git krita
+          else
+            git clone --filter=blob:none https://invent.kde.org/graphics/krita.git krita
+          fi
           cd krita
           echo "Ramos e versões disponíveis (para escolher a base):"
           git branch -r | grep -E 'master|main|krita/5|release' | head -20 || true
           git tag -l 'v5.3*' | tail -10 || true
+          git branch -r | grep -E 'krita/5\.3|release/5\.3' | head -10 || true
           # sem nome válido, falha com clareza (antes testava em silêncio o ramo padrão)
           if ! git checkout -q "$REF" 2>/dev/null && ! git checkout -q "origin/$REF" 2>/dev/null; then
             echo "::error::Não achei '$REF' no espelho do Krita. Use um dos nomes listados acima."
