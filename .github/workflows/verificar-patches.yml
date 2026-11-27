@@ -10,7 +10,7 @@ on:
       base_estavel:
         description: "Versão estável do Krita para comparar (tag ou ramo)"
         required: false
-        default: "v5.3.4"
+        default: "krita/5.3"
   push:
     paths:
       - "patches/**"
@@ -46,7 +46,7 @@ jobs:
             REF=$(tr -d '[:space:]' < nanquim/KRITA_REF 2>/dev/null || true)
             REF=${REF:-master}
           else
-            REF="${{ inputs.base_estavel || 'v5.3.4' }}"
+            REF="${{ inputs.base_estavel || 'krita/5.3' }}"
           fi
           git clone --filter=blob:none https://github.com/KDE/krita.git krita
           cd krita
@@ -62,6 +62,7 @@ jobs:
       - name: Aplicar a fila inteira de patches
         shell: bash
         run: |
+          set +e
           cd krita
           git config user.name "Nanquim CI"
           git config user.email "ci@nanquim.invalid"
@@ -77,7 +78,7 @@ jobs:
               fail=$((fail + 1)); echo "FALHA  $n" >> ../relatorio.txt
             fi
           done
-          marks=$(grep -l '^<<<<<<<\|^>>>>>>>' ../nanquim/patches/*.patch 2>/dev/null | wc -l)
+          marks=$( { grep -l '^<<<<<<<\|^>>>>>>>' ../nanquim/patches/*.patch 2>/dev/null || true; } | wc -l)
           {
             echo "### Base ${{ matrix.base }}: ${BASE_REF}"
             echo
