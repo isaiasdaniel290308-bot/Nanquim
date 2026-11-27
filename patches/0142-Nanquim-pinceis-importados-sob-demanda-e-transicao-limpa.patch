@@ -1,0 +1,124 @@
+From 69d7cf0f51a14730bf87436bf683b850a6959448 Mon Sep 17 00:00:00 2001
+From: Nanquim <nanquim@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 00:30:00 -0300
+Subject: =?utf-8?q?=5BPATCH=5D_Nanquim=3A_pinc=C3=A9is_importados_sob_demanda_e_trans?=
+ =?utf-8?q?i=C3=A7=C3=A3o_sem_sobrepor_OpeningVeil?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Com vários pacotes .bundle instalados (~480 pincéis na aba Importados), abrir
+qualquer página travava a tela com o canvas coberto de cinza (ou a faixa bege
+do OpeningVeil cortada no topo). O warmUpPopups disparava reload() na categoria
+Importados e importedBrushItems() carregava todos os presets sincronamente na
+thread da interface enquanto animateScreenIn() cobria o OpeningVeil.
+
+- Deixa importedBrushItems() preguiçoso como allBrushItems(): lê apenas Id,
+  Filename e Name das tabelas em memória (weight = -1), deixando cada preset
+  ser carregado sob demanda por resolveLazyBrush() só quando a linha aparece
+- Mantém o subtítulo "Importado · N px" em resolveLazyBrush() para a aba Importados
+- Faz refreshFavoriteIds() ler só os IDs do KisTagResourceModel sem carregar cada .kpp
+- Impede animateScreenIn() de criar um NanquimOverlay escuro por cima quando já
+  existe OpeningVeil ou GalleryReturnFly ativo
+---
+ libs/ui/NanquimTabletUi.cpp                    |  63 +++++++++++++++++++++-------
+ 1 file changed, 47 insertions(+), 16 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -540,6 +540,12 @@
+ // troca de tela (inicial <-> desenho): a nova tela surge de um fundo escuro
+ void animateScreenIn(KisMainWindow *mw)
+ {
++    if (!mw) return;
++    // quando há transição própria (abertura ou volta à galeria), não empilha outro véu por cima
++    if (mw->findChild<QWidget*>(QStringLiteral("nanquimOpeningVeil"))
++            || mw->findChild<QWidget*>(QStringLiteral("nanquimReturnFly"))) {
++        return;
++    }
+     QWidget *central = mw->centralWidget();
+     if (!central) {
+         return;
+@@ -2843,18 +2849,31 @@
+     KisTagModel tagModel(ResourceType::PaintOpPresets);
+     KisTagSP tag = tagModel.tagForUrl(QStringLiteral("Nanquim"));
+     if (!tag) return items;
+-    KisTagResourceModel model(ResourceType::PaintOpPresets);
+-    model.setTagsFilter(QVector<int>() << tag->id());
+-    for (int row = 0; row < model.rowCount(); ++row) {
+-        KisPaintOpPresetSP preset = model.resourceForIndex(model.index(row, 0)).dynamicCast<KisPaintOpPreset>();
+-        if (!preset || isBundledNanquimFile(preset->filename())) continue;
++
++    QSet<int> taggedIds;
++    {
++        KisTagResourceModel tagged(ResourceType::PaintOpPresets);
++        tagged.setTagsFilter(QVector<int>() << tag->id());
++        for (int row = 0; row < tagged.rowCount(); ++row) {
++            const int id = tagged.index(row, KisAbstractResourceModel::Id).data().toInt();
++            if (id >= 0) taggedIds.insert(id);
++        }
++    }
++    if (taggedIds.isEmpty()) return items;
++
++    // só id e nome agora; cada preset é lido sob demanda quando a linha aparece (como em allBrushItems)
++    KisResourceModel *all = allPresetsModel();
++    items.reserve(taggedIds.size());
++    for (int row = 0; row < all->rowCount(); ++row) {
++        const int id = all->index(row, KisAbstractResourceModel::Id).data().toInt();
++        if (!taggedIds.contains(id)) continue;
++        const QString filename = all->index(row, KisAbstractResourceModel::Filename).data().toString();
++        if (isBundledNanquimFile(filename)) continue;
+         BrushItem item;
+-        item.preset = preset;
+-        item.id = preset->resourceId();
+-        item.name = preset->name().replace(QLatin1Char('_'), QLatin1Char(' '));
++        item.id = id;
++        item.name = all->index(row, KisAbstractResourceModel::Name).data().toString().replace(QLatin1Char('_'), QLatin1Char(' '));
+         item.shortName = item.name;
+-        item.weight = weightForPreset(preset);
+-        item.subtitle = QStringLiteral("Importado · %1 px").arg(qRound(preset->settings() ? preset->settings()->paintOpSize() : 0));
++        item.weight = -1;   // ainda não lido
+         items << item;
+     }
+     return items;
+@@ -3033,7 +3052,14 @@
+ void refreshFavoriteIds()
+ {
+     s_favoriteIds.clear();
+-    Q_FOREACH (const KisPaintOpPresetSP &p, favoritePresets()) s_favoriteIds.insert(p->resourceId());
++    KisTagSP tag = favoritesTag();
++    if (!tag) return;
++    KisTagResourceModel model(ResourceType::PaintOpPresets);
++    model.setTagsFilter(QVector<int>() << tag->id());
++    for (int row = 0; row < model.rowCount(); ++row) {
++        const int id = model.index(row, KisAbstractResourceModel::Id).data().toInt();
++        if (id >= 0) s_favoriteIds.insert(id);
++    }
+ }
+ 
+ void notifyFavoritesChanged(KisMainWindow *mw)
+@@ -3113,11 +3139,16 @@
+     KisPaintOpPresetSP preset = presetForId(index.data(BrushIdRole).toInt());
+     const qreal w = weightForPreset(preset);
+     model->setData(index, w, BrushWeightRole);
+-    const QString engine = preset && preset->settings() ? preset->paintOp().name() : QString();
+-    model->setData(index, preset ? QStringLiteral("%1 · %2 px").arg(engine.isEmpty() ? QStringLiteral("Krita") : engine)
+-                                         .arg(qRound(preset->settings() ? preset->settings()->paintOpSize() : 0))
+-                                 : QStringLiteral("Krita"),
+-                   BrushSubtitleRole);
++    const int sizePx = qRound(preset && preset->settings() ? preset->settings()->paintOpSize() : 0);
++    if (index.data(BrushRemovableRole).toBool()) {
++        model->setData(index, QStringLiteral("Importado · %1 px").arg(sizePx), BrushSubtitleRole);
++    } else {
++        const QString engine = preset && preset->settings() ? preset->paintOp().name() : QString();
++        model->setData(index, preset ? QStringLiteral("%1 · %2 px").arg(engine.isEmpty() ? QStringLiteral("Krita") : engine)
++                                             .arg(sizePx)
++                                     : QStringLiteral("Krita"),
++                       BrushSubtitleRole);
++    }
+ }
+ 
+ 
+-- 
+2.43.0
