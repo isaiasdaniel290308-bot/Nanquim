@@ -10,7 +10,7 @@ on:
       base_estavel:
         description: "Versão estável do Krita para comparar (tag ou ramo)"
         required: false
-        default: "krita/5.3"
+        default: "v5.3.4"
   push:
     paths:
       - "patches/**"
@@ -46,15 +46,17 @@ jobs:
             REF=$(tr -d '[:space:]' < nanquim/KRITA_REF 2>/dev/null || true)
             REF=${REF:-master}
           else
-            REF="${{ inputs.base_estavel || 'krita/5.3' }}"
+            REF="${{ inputs.base_estavel || 'v5.3.4' }}"
           fi
           git clone --filter=blob:none https://github.com/KDE/krita.git krita
           cd krita
-          if ! git checkout -q "$REF" 2>/dev/null; then
-            echo "Não achei '$REF'; tentando alternativas da linha 5.3"
-            for alt in v5.3.4 krita/5.3; do
-              if git checkout -q "$alt" 2>/dev/null; then REF="$alt"; break; fi
-            done
+          echo "Ramos e versões disponíveis (para escolher a base):"
+          git branch -r | grep -E 'master|main|krita/5|release' | head -20 || true
+          git tag -l 'v5.3*' | tail -10 || true
+          # sem nome válido, falha com clareza (antes testava em silêncio o ramo padrão)
+          if ! git checkout -q "$REF" 2>/dev/null && ! git checkout -q "origin/$REF" 2>/dev/null; then
+            echo "::error::Não achei '$REF' no espelho do Krita. Use um dos nomes listados acima."
+            exit 1
           fi
           echo "BASE_REF=$REF" >> "$GITHUB_ENV"
           git log -1 --format='Base: %h %s (%ad)' --date=short
