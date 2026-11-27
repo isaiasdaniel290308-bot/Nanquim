@@ -1,0 +1,38 @@
+From 8f9242b4d34c414dccb1e09aab44ae73689908fd Mon Sep 17 00:00:00 2001
+From: Nanquim <nanquim@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 11:42:00 -0300
+Subject: =?utf-8?q?=5BPATCH=5D_Nanquim=3A_transi=C3=A7=C3=A3o_de_abertura_respeita_a_?=
+ =?utf-8?q?propor=C3=A7=C3=A3o_real_de_p=C3=A1ginas_quadradas?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Ao abrir uma imagem quadrada pela grade inicial (ex.: goki2.png 2160x2160), o
+OpeningVeil crescia usando o cartão vertical (cachedPaper), deixando uma faixa
+creme vazia acima da arte antes de dissolver sobre o canvas.
+
+- Passa trimmedThumb() para setOpenOrigin() na grade da galeria (com fallback
+  para cachedPaper se vier nulo), igual ao que a tela de capítulo já faz,
+  preservando a proporção real da imagem na transição
+---
+ libs/ui/NanquimTabletUi.cpp                    |   6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -9554,8 +9554,10 @@
+         s_pendingChapter.clear();
+         {
+             const QRect paperArea = PageTileDelegate::tileRect(grid->visualRect(index)).adjusted(12, 12, -12, -8);
+-            setOpenOrigin(grid->viewport(), paperArea,
+-                          cachedPaper(index.data(Qt::DecorationRole).value<QIcon>(), paperArea.size(), 4));
++            const QIcon deco = index.data(Qt::DecorationRole).value<QIcon>();
++            QPixmap shot = trimmedThumb(deco);
++            if (shot.isNull()) shot = cachedPaper(deco, paperArea.size(), 4);
++            setOpenOrigin(grid->viewport(), paperArea, shot);
+         }
+         openPageWithFeedback(mw, path);
+     });
+-- 
+2.43.0

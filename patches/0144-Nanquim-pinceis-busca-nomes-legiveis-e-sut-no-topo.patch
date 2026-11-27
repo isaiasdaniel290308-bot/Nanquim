@@ -1,0 +1,256 @@
+From ef91567387bc229144f362d5bb76bc8f03aba34a Mon Sep 17 00:00:00 2001
+From: Nanquim <nanquim@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 11:41:00 -0300
+Subject: =?utf-8?q?=5BPATCH=5D_Nanquim=3A_busca_nos_pinc=C3=A9is=2C_nomes_leg=C3=ADve?=
+ =?utf-8?q?is_e_=2Esut_no_topo_de_Importados?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Na gravação da build com 0142, era quase impossível localizar os pincéis .sut
+recém-importados: na aba Importados (~480 pincéis de pacotes .bundle), a placa
+genérica de amostra somada aos 3 ícones da direita espremia o nome para 38 px
+(3 a 5 letras) e não havia busca nem destaque para os .sut.
+
+- syncImportedBundleBrushes() também garante a etiqueta "Nanquim" em qualquer
+  preset sut_*.kpp presente no banco
+- importedBrushItems() ordena pincéis .sut e soltos no topo da aba Importados
+  (mais recentes primeiro), antes dos pacotes .bundle
+- Adiciona campo de busca ao vivo (44 px) no painel de Pincéis filtrando os
+  itens já carregados em memória sem reler o banco
+- Alarga o painel de pincéis para 460 px e libera o espaço da placa genérica na
+  aba Importados (quando NANQUIM_LIVE_STROKES está desligado) para mostrar o
+  nome completo de cada pincel
+---
+ libs/ui/NanquimTabletUi.cpp                    | 131 +++++++++++++++++++++-------
+ 1 file changed, 97 insertions(+), 34 deletions(-)
+
+diff --git a/libs/ui/NanquimTabletUi.cpp b/libs/ui/NanquimTabletUi.cpp
+--- a/libs/ui/NanquimTabletUi.cpp
++++ b/libs/ui/NanquimTabletUi.cpp
+@@ -2775,8 +2775,6 @@
+         if (QFileInfo(location).fileName().contains(QLatin1String("Default_Resources"), Qt::CaseInsensitive)) continue;
+         userStorages.insert(storages->index(r, KisStorageModel::Id).data().toInt());
+     }
+-    if (userStorages.isEmpty()) return 0;
+-
+     QSet<int> already;
+     {
+         KisTagResourceModel tagged(ResourceType::PaintOpPresets);
+@@ -2788,7 +2786,11 @@
+     QVector<int> toTag;
+     KisResourceModel *all = allPresetsModel();
+     for (int r = 0; r < all->rowCount(); ++r) {
+-        if (!userStorages.contains(all->index(r, KisAbstractResourceModel::StorageId).data().toInt())) continue;
++        const int storageId = all->index(r, KisAbstractResourceModel::StorageId).data().toInt();
++        const QString fn = all->index(r, KisAbstractResourceModel::Filename).data().toString();
++        const bool isUserBundle = userStorages.contains(storageId);
++        const bool isSutBrush = fn.startsWith(QLatin1String("sut_"), Qt::CaseInsensitive);
++        if (!isUserBundle && !isSutBrush) continue;
+         const int id = all->index(r, KisAbstractResourceModel::Id).data().toInt();
+         if (id >= 0 && !already.contains(id)) toTag << id;
+     }
+@@ -2861,9 +2863,21 @@
+     }
+     if (taggedIds.isEmpty()) return items;
+ 
++    QSet<int> bundleStorages;
++    KisStorageModel *storages = KisStorageModel::instance();
++    for (int r = 0; r < storages->rowCount(); ++r) {
++        const QString loc = storages->index(r, KisStorageModel::Location).data().toString();
++        if (loc.endsWith(QLatin1String(".bundle"), Qt::CaseInsensitive)) {
++            bundleStorages.insert(storages->index(r, KisStorageModel::Id).data().toInt());
++        }
++    }
++
+     // só id e nome agora; cada preset é lido sob demanda quando a linha aparece (como em allBrushItems)
++    // pincéis .sut e soltos vêm no topo (mais recentes primeiro), antes dos pacotes .bundle
++    QVector<BrushItem> sutItems;
++    QVector<BrushItem> looseItems;
++    QVector<BrushItem> bundleItems;
+     KisResourceModel *all = allPresetsModel();
+-    items.reserve(taggedIds.size());
+     for (int row = 0; row < all->rowCount(); ++row) {
+         const int id = all->index(row, KisAbstractResourceModel::Id).data().toInt();
+         if (!taggedIds.contains(id)) continue;
+@@ -2874,8 +2888,19 @@
+         item.name = all->index(row, KisAbstractResourceModel::Name).data().toString().replace(QLatin1Char('_'), QLatin1Char(' '));
+         item.shortName = item.name;
+         item.weight = -1;   // ainda não lido
+-        items << item;
++        if (filename.startsWith(QLatin1String("sut_"), Qt::CaseInsensitive)) {
++            sutItems << item;
++        } else if (!bundleStorages.contains(all->index(row, KisAbstractResourceModel::StorageId).data().toInt())) {
++            looseItems << item;
++        } else {
++            bundleItems << item;
++        }
+     }
++    auto newestFirst = [](const BrushItem &a, const BrushItem &b) { return a.id > b.id; };
++    std::stable_sort(sutItems.begin(), sutItems.end(), newestFirst);
++    std::stable_sort(looseItems.begin(), looseItems.end(), newestFirst);
++    items.reserve(sutItems.size() + looseItems.size() + bundleItems.size());
++    items << sutItems << looseItems << bundleItems;
+     return items;
+ }
+ 
+@@ -3366,9 +3391,10 @@
+         const qreal textL = card.left() + 8 + thumbS + 10;
+         const bool removable = index.data(BrushRemovableRole).toBool();
+         const qreal rightPad = removable ? 136.0 : 92.0;
+-        const qreal plateW = qMin<qreal>(removable ? 148.0 : 176.0, card.width() * (removable ? 0.32 : 0.4));
++        const bool showSample = !removable || NANQUIM_LIVE_STROKES;
++        const qreal plateW = showSample ? qMin<qreal>(removable ? 116.0 : 176.0, card.width() * (removable ? 0.26 : 0.4)) : 0.0;
+         const QRectF sample(card.right() - rightPad - plateW, card.center().y() - 22, plateW, 44);
+-        const qreal textW = sample.left() - 8 - textL;
++        const qreal textW = qMax<qreal>(60.0, (showSample ? sample.left() : (card.right() - rightPad)) - 8 - textL);
+         QFont nameFont = option.font;
+         nameFont.setPixelSize(15);
+         nameFont.setWeight(QFont::DemiBold);
+@@ -3384,18 +3410,20 @@
+         g->setPen(QColor(145, 140, 130));
+         g->drawText(subRect, Qt::AlignLeft | Qt::AlignVCenter,
+                     QFontMetrics(subFont).elidedText(index.data(BrushSubtitleRole).toString(), Qt::ElideRight, int(subRect.width())));
+-        // o traço sobre um pedaço de papel: desenhado pelo próprio pincel
+-        g->setPen(Qt::NoPen);
+-        g->setBrush(QColor(0xf3, 0xee, 0xe3));
+-        g->drawRoundedRect(sample, 8, 8);
+-        const QListView *listView = qobject_cast<const QListView*>(parent());
+-        const QImage real = strokePreview(presetForId(index.data(BrushIdRole).toInt()), sample.size(),
+-                                          QColor(0x1b, 0x1a, 0x18), listView ? listView->viewport() : nullptr);
+-        if (!real.isNull()) {
+-            g->drawImage(sample, real);
+-        } else {
+-            paintStrokeSample(*g, sample.adjusted(8, 6, -8, -6), StrokeStyle(index.data(BrushStyleRole).toInt()),
+-                              qMax<qreal>(0.12, index.data(BrushWeightRole).toReal()), QColor(0x1b, 0x1a, 0x18));
++        if (showSample) {
++            // o traço sobre um pedaço de papel: desenhado pelo próprio pincel
++            g->setPen(Qt::NoPen);
++            g->setBrush(QColor(0xf3, 0xee, 0xe3));
++            g->drawRoundedRect(sample, 8, 8);
++            const QListView *listView = qobject_cast<const QListView*>(parent());
++            const QImage real = strokePreview(presetForId(index.data(BrushIdRole).toInt()), sample.size(),
++                                              QColor(0x1b, 0x1a, 0x18), listView ? listView->viewport() : nullptr);
++            if (!real.isNull()) {
++                g->drawImage(sample, real);
++            } else {
++                paintStrokeSample(*g, sample.adjusted(8, 6, -8, -6), StrokeStyle(index.data(BrushStyleRole).toInt()),
++                                  qMax<qreal>(0.12, index.data(BrushWeightRole).toReal()), QColor(0x1b, 0x1a, 0x18));
++            }
+         }
+         // lixeira (só nos pincéis importados) + engrenagem de ajustes
+         if (index.data(BrushIdRole).toInt() >= 0) {
+@@ -3647,7 +3675,10 @@
+     "QPushButton.nanquimTab:pressed { background: #4a4842; }"
+     "QPushButton.nanquimBrushAction { color: #eeeae0; background: #34332e; border: 1px solid #4a4842; border-radius: 12px;"
+     "  font-size: 14px; font-weight: 600; padding: 12px 10px; }"
+-    "QPushButton.nanquimBrushAction:pressed { background: #4a4842; border-color: #3e8e7e; }";
++    "QPushButton.nanquimBrushAction:pressed { background: #4a4842; border-color: #3e8e7e; }"
++    "QLineEdit#nanquimBrushSearch { background: #24231f; color: #eeeae0; border: 1px solid #4a4842;"
++    "  border-radius: 11px; padding: 0 12px; min-height: 44px; font-size: 14px; }"
++    "QLineEdit#nanquimBrushSearch:focus { border: 1.5px solid #3e8e7e; }";
+ 
+ void setBrushPanelVisible(KisMainWindow *mw, bool visible);
+ 
+@@ -3669,7 +3700,7 @@
+     QToolButton *button = mw->findChild<QToolButton*>(QStringLiteral("nanquimBrushButton"));
+     if (top && button && button->isVisible()) {
+         const int topBottom = top->mapTo(mw, QPoint(0, top->height())).y();
+-        const int w = qMin(400, mw->width() - 24);
++        const int w = qMin(460, mw->width() - 24);
+         const int h = qMin(640, mw->height() - topBottom - 24);
+         const QRect a(button->mapTo(mw, QPoint(0, 0)), button->size());
+         const int x = qBound(12, a.center().x() - w / 2, mw->width() - 12 - w);
+@@ -3678,7 +3709,7 @@
+     }
+     const int topBottom = top ? top->mapTo(mw, QPoint(0, top->height())).y()
+                               : (mw->centralWidget() ? mw->centralWidget()->mapTo(mw, QPoint(0, 0)).y() : 60);
+-    const int w = qMin(400, mw->width() - 24);
++    const int w = qMin(460, mw->width() - 24);
+     const int h = qMin(640, mw->height() - topBottom - 24);
+     int right = mw->width() - 14;
+     if (!top) {
+@@ -3765,6 +3796,12 @@
+     if (!group->checkedButton()) group->button(0)->setChecked(true);
+     tabRow->addStretch(1);
+     root->addLayout(tabRow);
++
++    QLineEdit *searchBox = new QLineEdit(panel);
++    searchBox->setObjectName(QStringLiteral("nanquimBrushSearch"));
++    searchBox->setPlaceholderText(i18n("Buscar pincel…"));
++    searchBox->setClearButtonEnabled(true);
++    root->addWidget(searchBox);
+     root->addWidget(list, 1);
+ 
+     QLabel *empty = new QLabel(panel);
+@@ -3795,30 +3832,56 @@
+         "QPushButton:pressed { background: #2f7568; color: #ffffff; }"));
+     root->addWidget(communityButton);
+ 
+-    auto reload = [group, model, list, empty, title, clearImported]() {
++    auto cachedItems = std::make_shared<QVector<BrushItem>>();
++    auto cachedCat = std::make_shared<QString>();
++    auto applyFilter = [model, list, empty, clearImported, searchBox, cachedItems, cachedCat]() {
++        const QString cat = *cachedCat;
++        const bool isImportedTab = (cat == BRUSH_IMPORTED);
++        const QString q = searchBox->text().trimmed().toLower();
++        QVector<BrushItem> shown;
++        if (q.isEmpty()) {
++            shown = *cachedItems;
++        } else {
++            shown.reserve(cachedItems->size());
++            for (const BrushItem &b : *cachedItems) {
++                if (b.name.toLower().contains(q) || b.subtitle.toLower().contains(q)) {
++                    shown << b;
++                }
++            }
++        }
++        fillBrushModel(model, shown, isImportedTab);
++        clearImported->setVisible(isImportedTab && !cachedItems->isEmpty());
++        const bool showEmpty = shown.isEmpty() && (!q.isEmpty() || isImportedTab || cat == BRUSH_FAVORITES);
++        if (!q.isEmpty() && shown.isEmpty()) {
++            empty->setText(i18n("Nenhum pincel encontrado para \"%1\".", searchBox->text().trimmed()));
++        } else {
++            empty->setText(cat == BRUSH_FAVORITES
++                           ? i18n("Nenhum favorito ainda.\nToque na estrela ao lado de um pincel para colocá-lo aqui "
++                                  "e na coluna do modo Clássico.")
++                           : i18n("Nenhum pincel importado ainda.\nToque em \"Importar pincéis\" para trazer arquivos .kpp, .bundle ou .sut, "
++                                  "ou em + para guardar o pincel atual."));
++        }
++        list->setVisible(!showEmpty);
++        empty->setVisible(showEmpty);
++    };
++    auto reload = [group, title, cachedItems, cachedCat, applyFilter]() {
+         QAbstractButton *chip = group->checkedButton();
+         const QString cat = chip ? chip->property("nanquimCategory").toString() : QStringLiteral("Tinta");
+         title->setText(i18n("PINCÉIS") + QStringLiteral(" · ") + cat.toUpper());
++        *cachedCat = cat;
+         QVector<BrushItem> items;
+         refreshFavoriteIds();
+         const bool isImportedTab = (cat == BRUSH_IMPORTED);
+         if (isImportedTab) items = importedBrushItems();
+         else if (cat == BRUSH_ALL) items = allBrushItems();
+         else if (cat == BRUSH_FAVORITES) {
+-            Q_FOREACH (const KisPaintOpPresetSP &p, favoritePresets()) items << itemForPreset(p);
++            for (const KisPaintOpPresetSP &p : favoritePresets()) items << itemForPreset(p);
+         }
+         else items = nanquimBrushItems(cat, false);
+-        fillBrushModel(model, items, isImportedTab);
+-        clearImported->setVisible(isImportedTab && !items.isEmpty());
+-        const bool showEmpty = items.isEmpty() && (isImportedTab || cat == BRUSH_FAVORITES);
+-        empty->setText(cat == BRUSH_FAVORITES
+-                       ? i18n("Nenhum favorito ainda.\nToque na estrela ao lado de um pincel para colocá-lo aqui "
+-                              "e na coluna do modo Clássico.")
+-                       : i18n("Nenhum pincel importado ainda.\nToque em \"Importar pincéis\" para trazer arquivos .kpp, .bundle ou .sut, "
+-                              "ou em + para guardar o pincel atual."));
+-        list->setVisible(!showEmpty);
+-        empty->setVisible(showEmpty);
++        *cachedItems = items;
++        applyFilter();
+     };
++    QObject::connect(searchBox, &QLineEdit::textChanged, panel, [applyFilter](const QString &) { applyFilter(); });
+     QObject::connect(group, &QButtonGroup::idClicked, panel, [group, reload](int) {
+         if (QAbstractButton *chip = group->checkedButton()) {
+             KSharedConfig::openConfig()->group("Nanquim").writeEntry("brushCategory", chip->property("nanquimCategory").toString());
+-- 
+2.43.0
