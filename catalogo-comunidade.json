@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-26",
+  "updated": "2026-11-27",
   "source": "https://krita-artists.org/c/resources/brushes-and-bundles/32",
   "stats": {
     "total": 153,
@@ -14,7 +14,7 @@
       "author": "Ramon Miranda",
       "category": "Nanquim",
       "format": ".bundle",
-      "license": "Krita-Artists · 1459 curtidas",
+      "license": "Krita-Artists · 1461 curtidas",
       "description": "Links are available in the video description or in the pinned comment. Enjoy! BRUSHES DOWNLOAD: InkP bundle : PREVIEW: InkT bundle: PREVIEW:",
       "tags": [
         "bundle"
@@ -29,7 +29,7 @@
       "author": "Ramon Miranda",
       "category": "Lápis",
       "format": ".zip",
-      "license": "Krita-Artists · 1215 curtidas",
+      "license": "Krita-Artists · 1216 curtidas",
       "description": "Because you need to feel the plaseure to draw. They are soft and very easy to use. UPDATE 8/2026 NEW 40 BRUSH BUNDLE AND V3 INTRO VIDEO: DOWNLOAD: DOWNLOAD Brushes, PDF with user guide…",
       "tags": [
         "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
@@ -95,7 +95,7 @@
       "author": "Wojtek Trybus",
       "category": "Pintura",
       "format": ".zip",
-      "license": "Krita-Artists · 295 curtidas",
+      "license": "Krita-Artists · 296 curtidas",
       "description": "Hi guys, Took a lot of time to prepare this release, but it’s finally here. Resource folder Direct download The pack features 26 brush presets, many of those using impasto features. This…",
       "tags": [
         "zip"
@@ -294,7 +294,7 @@
       "author": "Rakurri",
       "category": "Pintura",
       "format": "Tópico",
-      "license": "Krita-Artists · 692 curtidas",
+      "license": "Krita-Artists · 693 curtidas",
       "description": "Thank you so much for all the support on my previous brush set! You have all been kind and amazing! I have worked on and off ever since on an updated brush set (in between studies, life…",
       "tags": [],
       "download_url": "",
@@ -567,7 +567,7 @@
       "author": "PeacockGolden",
       "category": "Nanquim",
       "format": "Tópico",
-      "license": "Krita-Artists · 264 curtidas",
+      "license": "Krita-Artists · 265 curtidas",
       "description": "I know I’m very late for Christmas, but the making of this bundle was a little bit late to make Anyway, for this beautiful community of Krita, I bring you a gift and they are… Four hair…",
       "tags": [
         "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
@@ -721,7 +721,7 @@
       "author": "Venu",
       "category": "Pintura",
       "format": "Tópico",
-      "license": "Krita-Artists · 200 curtidas",
+      "license": "Krita-Artists · 201 curtidas",
       "description": "This one was a bit more experimental. I was messing around with the smudge engine. Feel free to use these brushes for all your jumbled up pixel needs. Let me know if there are any issues…",
       "tags": [
         "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
@@ -837,7 +837,7 @@
       "author": "Inkk",
       "category": "Nanquim",
       "format": "Tópico",
-      "license": "Krita-Artists · 170 curtidas",
+      "license": "Krita-Artists · 171 curtidas",
       "description": "Hello all! I finished development on the latest brush bundle. This time around it’s for gemstones / light effects and light accents. Link at the bottom of the post. I hope you find it…",
       "tags": [
         "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
@@ -911,7 +911,7 @@
       "author": "Sampzb",
       "category": "Nanquim",
       "format": "Tópico",
-      "license": "Krita-Artists · 154 curtidas",
+      "license": "Krita-Artists · 155 curtidas",
       "description": "I made a bundle to simulate traditional inking on paper and rusty old dip pens. link : rusty-dips-brush-pack.rar - Google Drive",
       "tags": [
         "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
@@ -998,7 +998,7 @@
       "author": "Pedro Pitéu",
       "category": "Pintura",
       "format": "Tópico",
-      "license": "Krita-Artists · 143 curtidas",
+      "license": "Krita-Artists · 144 curtidas",
       "description": "Download here Nothing fancy. It’s just a minimal version of the previous bundle with some tweaks and a few new brushes. The idea is to reduce the brush amount to a minimum in order to…",
       "tags": [],
       "download_url": "",
@@ -1339,6 +1339,21 @@
       "preview_url": "https://krita-artists.org/uploads/default/original/3X/8/9/89415f1700e13f7d8ff4b9c298a6b135b73065c7.png"
     },
     {
+      "id": "ka-192477",
+      "name": "SK3 aka \"Pencils for graphite lovers\"",
+      "author": "Ramon Miranda",
+      "category": "Lápis",
+      "format": "Tópico",
+      "license": "Krita-Artists · 106 curtidas",
+      "description": "Hi community! If you are looking for the best pencils with a realistic behavior created by me, there we go. I published a long video here The brushes are in the pinned link. and in the…",
+      "tags": [
+        "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}"
+      ],
+      "download_url": "",
+      "page_url": "https://krita-artists.org/t/sk3-aka-pencils-for-graphite-lovers/192477",
+      "preview_url": "https://krita-artists.org/uploads/default/original/3X/6/1/61501a9524e7f4a9aac03cd10f66612d031808e8.jpeg"
+    },
+    {
       "id": "ka-128563",
       "name": "Gradient tool & maps: resources",
       "author": "Victoria",
@@ -1350,21 +1365,6 @@
       "download_url": "",
       "page_url": "https://krita-artists.org/t/gradient-tool-maps-resources/128563",
       "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/c/f/cfdf2dcd84ac1ecab429a5c9799351c7c9454e16_2_1024x473.jpeg"
-    },
-    {
-      "id": "ka-192477",
-      "name": "SK3 aka \"Pencils for graphite lovers\"",
-      "author": "Ramon Miranda",
-      "category": "Lápis",
-      "format": "Tópico",
-      "license": "Krita-Artists · 105 curtidas",
-      "description": "Hi community! If you are looking for the best pencils with a realistic behavior created by me, there we go. I published a long video here The brushes are in the pinned link. and in the…",
-      "tags": [
-        "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}"
-      ],
-      "download_url": "",
-      "page_url": "https://krita-artists.org/t/sk3-aka-pencils-for-graphite-lovers/192477",
-      "preview_url": "https://krita-artists.org/uploads/default/original/3X/6/1/61501a9524e7f4a9aac03cd10f66612d031808e8.jpeg"
     },
     {
       "id": "ka-69646",
@@ -1798,19 +1798,17 @@
       "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/3/9/3931af39e3ced1429162a814b2f03dd2939c62fd_2_1024x439.jpeg"
     },
     {
-      "id": "ka-185132",
-      "name": "Cityscape Brush Set",
-      "author": "AbsintheKitsune",
-      "category": "Pintura",
+      "id": "ka-97822",
+      "name": "Poppy brushes :)",
+      "author": "FoolishTobias",
+      "category": "Nanquim",
       "format": "Tópico",
       "license": "Krita-Artists · 81 curtidas",
-      "description": "I made these brush presets to streamline the repetitive elements when making urban landscapes, especially the windows and iron supports. Ko-Fi Download Have fun!",
-      "tags": [
-        "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}"
-      ],
+      "description": "Brushes made from photos of my dog Poppy. I made them to suit my preference for dry inky brushes. EDIT: Everything has been fixed and you can now download the complete brushes UPDATED LINK…",
+      "tags": [],
       "download_url": "",
-      "page_url": "https://krita-artists.org/t/cityscape-brush-set/185132",
-      "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/b/1/b10e802f341b21a54c29b12e5c97a54ebd02fe8d_2_1024x428.png"
+      "page_url": "https://krita-artists.org/t/poppy-brushes/97822",
+      "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/b/6/b655b834136b838e921a8d501b2292e98b9918e6_2_1024x1024.jpeg"
     },
     {
       "id": "ka-76587",
@@ -1834,7 +1832,7 @@
       "author": "Michael Strothotte",
       "category": "Pintura",
       "format": "Tópico",
-      "license": "Krita-Artists · 64 curtidas",
+      "license": "Krita-Artists · 66 curtidas",
       "description": "Here I have a wide selection of “cloud brushes” for you, this compilation originally created by Paolo Puggioni for Krita 4, in the form of two ABR-based bundles, now has all the brushes…",
       "tags": [
         "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
@@ -1850,7 +1848,7 @@
       "author": "Ergo",
       "category": "Lápis",
       "format": "Tópico",
-      "license": "Krita-Artists · 64 curtidas",
+      "license": "Krita-Artists · 66 curtidas",
       "description": "Hello! First post here and wanted to share a pencil brush I made. I used the charcoal pencil by David Revoy as a base. His work is great but it didn’t exactly suit my needs so I modified…",
       "tags": [],
       "download_url": "",
@@ -1863,7 +1861,7 @@
       "author": "Rad",
       "category": "Nanquim",
       "format": "Tópico",
-      "license": "Krita-Artists · 60 curtidas",
+      "license": "Krita-Artists · 62 curtidas",
       "description": "Guess who discovered how animated brushes work tldr: 3 FREE crowd brush for manga and webtoon artists Why crowd brush? Speeds the workflow for making manga and webtoons It saves time I…",
       "tags": [],
       "download_url": "",
@@ -1889,7 +1887,7 @@
       "author": "Sampzb",
       "category": "Nanquim",
       "format": "Tópico",
-      "license": "Krita-Artists · 55 curtidas",
+      "license": "Krita-Artists · 56 curtidas",
       "description": "I made a brush bundle for line art without pressure sensitivity. This is for artists who don’t have a real graphic tablet or smart pen and work with tools like mouse or touch pens(android…",
       "tags": [
         "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
@@ -1905,7 +1903,7 @@
       "author": "Meipol",
       "category": "Pintura",
       "format": "Tópico",
-      "license": "Krita-Artists · 49 curtidas",
+      "license": "Krita-Artists · 52 curtidas",
       "description": "Hello, first time posting here~ I came across this brush online and really liked it. Unfortunately, it was made for Procreate, so I decided to try recreating it for Krita. The original…",
       "tags": [
         "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}"
@@ -1920,7 +1918,7 @@
       "author": "Bubba",
       "category": "Pintura",
       "format": "Tópico",
-      "license": "Krita-Artists · 45 curtidas",
+      "license": "Krita-Artists · 46 curtidas",
       "description": "new pack for yall. this is a general pastels set. mix the different brushes for cool pastelish looks vol 2 is in the works cool fact. Im at over 14,00 downloads for all my brush packs so…",
       "tags": [
         "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
@@ -1963,12 +1961,28 @@
       "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/d/f/dfc04e9f867202da2b3cbe5f38716aba4d8ae397_2_1024x902.jpeg"
     },
     {
+      "id": "ka-145413",
+      "name": "Ultimate krita fur brushes vol 3",
+      "author": "Bubba",
+      "category": "Pintura",
+      "format": "Tópico",
+      "license": "Krita-Artists · 38 curtidas",
+      "description": "Heres Vol 3. My motto is you can never have to much brushes. lol ULTIMATE KRITA FUR BRUSHES VOL 3 I have included a video demo of most of the brushes. If you happen to have 26 minutes of…",
+      "tags": [
+        "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
+        "{'id': 75, 'name': 'bundles', 'slug': 'bundles'}"
+      ],
+      "download_url": "",
+      "page_url": "https://krita-artists.org/t/ultimate-krita-fur-brushes-vol-3/145413",
+      "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/c/9/c9d052284e8c582c976e27b5181890136a1131ec_2_1024x576.jpeg"
+    },
+    {
       "id": "ka-193721",
       "name": "78's chalkpen",
       "author": "78 - 7aiga",
       "category": "Lápis",
       "format": "Tópico",
-      "license": "Krita-Artists · 35 curtidas",
+      "license": "Krita-Artists · 36 curtidas",
       "description": "based off of artemus pencils on csp. couldnt quite get the size as varied but i still like drawing with it download here, google drive have fun, adjust as you like edit: disclaimer! this…",
       "tags": [
         "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
@@ -1977,6 +1991,19 @@
       "download_url": "",
       "page_url": "https://krita-artists.org/t/78s-chalkpen/193721",
       "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/d/6/d6067e9a4d0159ecabcb54f855ed8b6639217ec2_2_1024x723.jpeg"
+    },
+    {
+      "id": "ka-188324",
+      "name": "\"Group of people\" brush",
+      "author": "asy133",
+      "category": "Pintura",
+      "format": "Tópico",
+      "license": "Krita-Artists · 33 curtidas",
+      "description": "Finally I was able to make brushes The brush is a group of random people, the first with details and the other without I hope someone benefits from it, especially since it took me some…",
+      "tags": [],
+      "download_url": "",
+      "page_url": "https://krita-artists.org/t/group-of-people-brush/188324",
+      "preview_url": "https://krita-artists.org/uploads/default/original/3X/c/f/cfff1f98ecbecbde0f993b59a6d8c904566de8be.jpeg"
     },
     {
       "id": "ka-193410",
@@ -1992,19 +2019,6 @@
       "download_url": "",
       "page_url": "https://krita-artists.org/t/custom-brushes-mostly-textured-and-kind-of-wispy/193410",
       "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/c/d/cd572a8a30d118dca3a3052374dd7e0c43903115_2_684x1023.jpeg"
-    },
-    {
-      "id": "ka-188324",
-      "name": "\"Group of people\" brush",
-      "author": "asy133",
-      "category": "Pintura",
-      "format": "Tópico",
-      "license": "Krita-Artists · 31 curtidas",
-      "description": "Finally I was able to make brushes The brush is a group of random people, the first with details and the other without I hope someone benefits from it, especially since it took me some…",
-      "tags": [],
-      "download_url": "",
-      "page_url": "https://krita-artists.org/t/group-of-people-brush/188324",
-      "preview_url": "https://krita-artists.org/uploads/default/original/3X/c/f/cfff1f98ecbecbde0f993b59a6d8c904566de8be.jpeg"
     },
     {
       "id": "ka-52768",
@@ -2044,7 +2058,7 @@
       "author": "cutefoxix",
       "category": "Nanquim",
       "format": "Tópico",
-      "license": "Krita-Artists · 26 curtidas",
+      "license": "Krita-Artists · 27 curtidas",
       "description": "I couldn’t find any good wobbly brushes for krita, so I made one of my own. It’s inspired by yugo limbo’s lineart The ‘wobble’ effect is a little subdued, but you’re free to go in and…",
       "tags": [
         "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
@@ -2053,6 +2067,22 @@
       "download_url": "",
       "page_url": "https://krita-artists.org/t/wobbly-ink-brush/184470",
       "preview_url": "https://krita-artists.org/uploads/default/original/3X/d/e/de37ddc3b51dbe4c1740f9037d1b00d067f4d840.png"
+    },
+    {
+      "id": "ka-194459",
+      "name": "Comic Brush Bundles - Crosshatching & FX stamps",
+      "author": "levirznd",
+      "category": "Retícula",
+      "format": "Tópico",
+      "license": "Krita-Artists · 21 curtidas",
+      "description": "Hello. This is my first time posting here, so nice to meet you all! (I’ve read the forum guidelines, but please let me know if I am posting this correctly) So, I made these two bundles for…",
+      "tags": [
+        "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
+        "{'id': 75, 'name': 'bundles', 'slug': 'bundles'}"
+      ],
+      "download_url": "",
+      "page_url": "https://krita-artists.org/t/comic-brush-bundles-crosshatching-fx-stamps/194459",
+      "preview_url": "https://krita-artists.org/uploads/default/original/3X/4/9/4998aff67992176609f5e708a1d625a3e348306d.png"
     },
     {
       "id": "ka-192754",
@@ -2071,20 +2101,20 @@
       "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/7/e/7e318dfa3ce63f91817da6cb3b9c14c6aa0a6d38_2_1024x723.jpeg"
     },
     {
-      "id": "ka-194459",
-      "name": "Comic Brush Bundles - Crosshatching & FX stamps",
-      "author": "levirznd",
-      "category": "Retícula",
+      "id": "ka-194622",
+      "name": "AL 2-Pencils",
+      "author": "AureliaLeta",
+      "category": "Lápis",
       "format": "Tópico",
       "license": "Krita-Artists · 19 curtidas",
-      "description": "Hello. This is my first time posting here, so nice to meet you all! (I’ve read the forum guidelines, but please let me know if I am posting this correctly) So, I made these two bundles for…",
+      "description": "Hellow, forum dwellers! This bundle contains 2 pencils~ Also I want to point out that these pencils are pretty much a reworked version/based on my Soft Pencil from my other bigger pencil…",
       "tags": [
         "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
         "{'id': 75, 'name': 'bundles', 'slug': 'bundles'}"
       ],
       "download_url": "",
-      "page_url": "https://krita-artists.org/t/comic-brush-bundles-crosshatching-fx-stamps/194459",
-      "preview_url": "https://krita-artists.org/uploads/default/original/3X/4/9/4998aff67992176609f5e708a1d625a3e348306d.png"
+      "page_url": "https://krita-artists.org/t/al-2-pencils/194622",
+      "preview_url": "https://krita-artists.org/uploads/default/original/3X/f/4/f44b110478fedc35f6b8bbd9f24d50e17af5ab15.jpeg"
     },
     {
       "id": "ka-192497",
@@ -2102,20 +2132,20 @@
       "preview_url": "https://krita-artists.org/uploads/default/original/3X/5/1/5172c0b439c2b298651ad0d13ab992707c48eaf4.png"
     },
     {
-      "id": "ka-194622",
-      "name": "AL 2-Pencils",
-      "author": "AureliaLeta",
-      "category": "Lápis",
+      "id": "ka-194006",
+      "name": "OUTLINE Brush (by KritaLike)",
+      "author": "ARYLUNEIX",
+      "category": "Pintura",
       "format": "Tópico",
-      "license": "Krita-Artists · 18 curtidas",
-      "description": "Hellow, forum dwellers! This bundle contains 2 pencils~ Also I want to point out that these pencils are pretty much a reworked version/based on my Soft Pencil from my other bigger pencil…",
+      "license": "Krita-Artists · 16 curtidas",
+      "description": "This brush set was created to support the idea of ​​adding a new “Alpha replacement” blending mode ; if you like this set, please vote for the idea so that, in the future, everyone can…",
       "tags": [
         "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
         "{'id': 75, 'name': 'bundles', 'slug': 'bundles'}"
       ],
       "download_url": "",
-      "page_url": "https://krita-artists.org/t/al-2-pencils/194622",
-      "preview_url": "https://krita-artists.org/uploads/default/original/3X/f/4/f44b110478fedc35f6b8bbd9f24d50e17af5ab15.jpeg"
+      "page_url": "https://krita-artists.org/t/outline-brush-by-kritalike/194006",
+      "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/8/2/82944982bfb9fa68e904cf5d76c6cb59c01520cd_2_1024x1024.jpeg"
     },
     {
       "id": "ka-193700",
@@ -2134,33 +2164,48 @@
       "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/3/1/3149da4fffe9c1cae76293f83c6d02ead7d31a64_2_1024x1024.jpeg"
     },
     {
-      "id": "ka-194006",
-      "name": "OUTLINE Brush (by KritaLike)",
-      "author": "ARYLUNEIX",
-      "category": "Pintura",
-      "format": "Tópico",
-      "license": "Krita-Artists · 15 curtidas",
-      "description": "This brush set was created to support the idea of ​​adding a new “Alpha replacement” blending mode ; if you like this set, please vote for the idea so that, in the future, everyone can…",
-      "tags": [
-        "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
-        "{'id': 75, 'name': 'bundles', 'slug': 'bundles'}"
-      ],
-      "download_url": "",
-      "page_url": "https://krita-artists.org/t/outline-brush-by-kritalike/194006",
-      "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/8/2/82944982bfb9fa68e904cf5d76c6cb59c01520cd_2_1024x1024.jpeg"
-    },
-    {
       "id": "ka-194503",
       "name": "Evan's Stupid Idiot Brush Bundle",
       "author": "Evan",
       "category": "Pintura",
       "format": "Tópico",
-      "license": "Krita-Artists · 14 curtidas",
+      "license": "Krita-Artists · 15 curtidas",
       "description": "Hi, this is my first time posting here. So I wanted to share some brushes i’ve created this year! These are all free to use and modify as you like! Here is a quick drawing i made using…",
       "tags": [],
       "download_url": "",
       "page_url": "https://krita-artists.org/t/evans-stupid-idiot-brush-bundle/194503",
       "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/b/a/bad6a2e924220a77fc4190e792eaa712cbd3827f_2_564x1024.jpeg"
+    },
+    {
+      "id": "ka-194636",
+      "name": "AL Rough Ink Brushes",
+      "author": "AureliaLeta",
+      "category": "Nanquim",
+      "format": "Tópico",
+      "license": "Krita-Artists · 14 curtidas",
+      "description": "Hellow, forum dwellers! This bundle contains 2 Rough Ink Brushes~ Both are very similar, -M- is bigger and -S- is smaller. Smaller one has less texture to it and uses rotation, mostly made…",
+      "tags": [
+        "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
+        "{'id': 75, 'name': 'bundles', 'slug': 'bundles'}"
+      ],
+      "download_url": "",
+      "page_url": "https://krita-artists.org/t/al-rough-ink-brushes/194636",
+      "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/b/1/b1a488d69230ad2fd7ada8f6711afd2b1e4d994f_2_1024x699.jpeg"
+    },
+    {
+      "id": "ka-193736",
+      "name": "11.12.2026 Brush bundle 1",
+      "author": "kgaia",
+      "category": "Pintura",
+      "format": "Tópico",
+      "license": "Krita-Artists · 13 curtidas",
+      "description": "Pacote de pincéis compartilhado pela comunidade no Krita-Artists.",
+      "tags": [
+        "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}"
+      ],
+      "download_url": "",
+      "page_url": "https://krita-artists.org/t/11-12-2026-brush-bundle-1/193736",
+      "preview_url": "https://krita-artists.org/uploads/default/original/3X/e/9/e9a885bdf1c01f571a014baa05a68d0d9643fc83.png"
     },
     {
       "id": "ka-193480",
@@ -2174,37 +2219,6 @@
       "download_url": "",
       "page_url": "https://krita-artists.org/t/kelguys-binary-brush/193480",
       "preview_url": ""
-    },
-    {
-      "id": "ka-193736",
-      "name": "11.12.2026 Brush bundle 1",
-      "author": "kgaia",
-      "category": "Pintura",
-      "format": "Tópico",
-      "license": "Krita-Artists · 12 curtidas",
-      "description": "Pacote de pincéis compartilhado pela comunidade no Krita-Artists.",
-      "tags": [
-        "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}"
-      ],
-      "download_url": "",
-      "page_url": "https://krita-artists.org/t/11-12-2026-brush-bundle-1/193736",
-      "preview_url": "https://krita-artists.org/uploads/default/original/3X/e/9/e9a885bdf1c01f571a014baa05a68d0d9643fc83.png"
-    },
-    {
-      "id": "ka-194636",
-      "name": "AL Rough Ink Brushes",
-      "author": "AureliaLeta",
-      "category": "Nanquim",
-      "format": "Tópico",
-      "license": "Krita-Artists · 12 curtidas",
-      "description": "Hellow, forum dwellers! This bundle contains 2 Rough Ink Brushes~ Both are very similar, -M- is bigger and -S- is smaller. Smaller one has less texture to it and uses rotation, mostly made…",
-      "tags": [
-        "{'id': 70, 'name': 'brushes', 'slug': 'brushes'}",
-        "{'id': 75, 'name': 'bundles', 'slug': 'bundles'}"
-      ],
-      "download_url": "",
-      "page_url": "https://krita-artists.org/t/al-rough-ink-brushes/194636",
-      "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/b/1/b1a488d69230ad2fd7ada8f6711afd2b1e4d994f_2_1024x699.jpeg"
     },
     {
       "id": "ka-192807",
@@ -2221,21 +2235,6 @@
       "download_url": "",
       "page_url": "https://krita-artists.org/t/linework-details/192807",
       "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/8/e/8e71dfddc5c3f2cb46e6dfb8eb827752a3ef6ed3_2_1024x1024.jpeg"
-    },
-    {
-      "id": "ka-193632",
-      "name": "Classical Earth Tones (12 colors)",
-      "author": "red_meat_sauce",
-      "category": "Pintura",
-      "format": "Tópico",
-      "license": "Krita-Artists · 11 curtidas",
-      "description": "Back again with another swatch palette haha. I created this palette inspired by my favorite earthy colors such as Caput Mortuum, Venetian Red, Yellow Ochre, Indigo, Green Earth and a more…",
-      "tags": [
-        "{'id': 72, 'name': 'palletes', 'slug': 'palletes'}"
-      ],
-      "download_url": "",
-      "page_url": "https://krita-artists.org/t/classical-earth-tones-12-colors/193632",
-      "preview_url": "https://krita-artists.org/uploads/default/optimized/3X/8/4/84c2a533b96ba7209ea13fbd056bf897a9e47d38_2_1024x724.jpeg"
     },
     {
       "id": "portal-krita-artists-brushes",
