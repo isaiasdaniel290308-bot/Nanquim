@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Nanquim: tela de abertura do sistema (Android 12+) escura, com a gota -->
+    <style name="DefaultTheme" parent="android:Theme.Material">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+        <item name="android:windowSplashScreenBackground">#FF24231F</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_next_foreground</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#FF24231F</item>
+    </style>
+</resources>

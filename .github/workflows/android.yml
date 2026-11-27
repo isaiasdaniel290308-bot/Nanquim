@@ -7,12 +7,13 @@ on:
   push:
     branches: [main]
     paths:
+      - "nanquim-src/**"
       - "patches/**"
       - "KRITA_REF"
       - ".github/workflows/android.yml"
 
 concurrency:
-  group: android-build
+  group: android-build-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -66,23 +67,41 @@ jobs:
         with:
           path: nanquim
 
-      - name: Baixar o Krita e aplicar os patches do Nanquim
+      - name: Baixar o Krita, aplicar patches e copiar nanquim-src
         shell: bash
         run: |
+          set -e
           REF=$(tr -d '[:space:]' < nanquim/KRITA_REF 2>/dev/null || true)
-          REF=${REF:-master}
-          git clone --filter=blob:none https://github.com/KDE/krita.git krita
+          if [ -z "$REF" ]; then
+            echo "::error::KRITA_REF está vazio"
+            exit 1
+          fi
+          # o espelho do GitHub não tem a linha 5.3; baixar direto do servidor oficial do KDE
+          for attempt in 1 2; do
+            if git clone --filter=blob:none https://invent.kde.org/graphics/krita.git krita; then
+              break
+            fi
+            [ "$attempt" = 2 ] && exit 1
+            rm -rf krita
+            sleep 10
+          done
           cd krita
           git checkout "$REF"
+          echo "KRITA_BASE=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
           git config user.name "Nanquim CI"
           git config user.email "ci@nanquim.invalid"
           shopt -s nullglob
-          # ordem numérica: 0056 → 0056.5 → 0057
           mapfile -t PATCHES < <(printf '%s\n' ../nanquim/patches/*.patch | LC_ALL=C sort -V)
           for p in "${PATCHES[@]}"; do
             echo "## Aplicando $p"
             git am --3way "$p"
           done
+          if [ -d ../nanquim/nanquim-src ]; then
+            echo "## Copiando arquivos próprios do Nanquim (nanquim-src/)"
+            cp -a ../nanquim/nanquim-src/. .
+            git add -A
+            git commit -q -m "Nanquim: arquivos próprios (nanquim-src)"
+          fi
           echo "KRITA_SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
           git log -1 --oneline
 
@@ -196,13 +215,10 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /mnt/cache/ccache
-          key: ccache-android-arm64-v2-${{ github.run_id }}
-          # v2: uma tentativa que falhou antes de compilar salvou um cache vazio com o
-          # prefixo antigo, e a build seguinte recomeçou do zero. Na falta de um v2,
-          # usa o último cache bom conhecido (build 36).
+          key: ccache-android-arm64-535-v1-${{ github.run_id }}
           restore-keys: |
+            ccache-android-arm64-535-v1-
             ccache-android-arm64-v2-
-            ccache-android-arm64-42949342015
 
       - name: Compilar o Krita (pode levar algumas horas na primeira vez)
         id: compile
@@ -276,13 +292,14 @@ jobs:
           . venv/bin/activate
           unset VIRTUAL_ENV
           export CI_COMMIT_SHORT_SHA="$KRITA_SHA"
+          export NANQUIM_BUILD_NUMBER="${{ github.run_number }}"
           echo "## teste rápido do qmlimportscanner"
           /mnt/wd/krita/_install/bin/qmlimportscanner -importPath /mnt/wd/krita/_install/qml < /dev/null | head -c 300 || true
           echo
           python3 -u build-tools/ci-scripts/build-android-package.py 2>&1 | tee build-apk.log
           ls -la /mnt/wd/krita/_packaging
           UNSIGNED=$(ls /mnt/wd/krita/_packaging/*.apk | head -1)
-          OUT="/mnt/wd/krita/_packaging/Nanquim-arm64-${KRITA_SHA}-build${{ github.run_number }}.apk"
+          OUT="/mnt/wd/krita/_packaging/Nanquim-arm64-5.3.5-${KRITA_BASE}-build${{ github.run_number }}.apk"
           "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" sign \
             --ks ~/nanquim-key/nanquim.jks --ks-key-alias nanquim \
             --ks-pass "pass:$(cat ~/nanquim-key/pass)" \
@@ -337,7 +354,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /mnt/cache/ccache
-          key: ccache-android-arm64-v2-${{ github.run_id }}
+          key: ccache-android-arm64-535-v1-${{ github.run_id }}
 
       - name: Espaço usado
         if: always()
@@ -363,10 +380,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Nanquim build ${{ github.run_number }} (Krita ${{ env.KRITA_SHA }})
+          name: Nanquim build ${{ github.run_number }} (Krita 5.3.5 · ${{ env.KRITA_BASE }})
           prerelease: true
           body: |
             APK otimizado para Android arm64 (Galaxy Tab S10 Lite), assinado com a chave do Nanquim.
-            Baseado no Krita ${{ env.KRITA_SHA }} + patches do Nanquim (pasta patches/).
-            Instala lado a lado com o Krita oficial (pacote org.krita.next).
+            Baseado no Krita 5.3.5 estável (${{ env.KRITA_BASE }}) + nanquim-src/ + patches/ (ramo `${{ github.ref_name }}`).
+            Atualiza por cima da build 100 sem precisar desinstalar e convive lado a lado com o Krita oficial (`org.krita.next`).
           files: /mnt/wd/krita/_packaging/*.apk

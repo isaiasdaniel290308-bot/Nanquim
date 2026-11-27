@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nanquim: logo gota-pena (CC BY-SA 4.0) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="64dp" android:height="64dp"
+    android:viewportWidth="64" android:viewportHeight="64">
+  <path android:pathData="M22,5h20c4,8 11,16 11,25 0,12 -13,22 -21,30 -8,-8 -21,-18 -21,-30 0,-9 7,-17 11,-25z">
+    <aapt:attr name="android:fillColor">
+      <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="64" android:endY="64">
+        <item android:offset="0" android:color="#FF2F7568"/>
+        <item android:offset="1" android:color="#FF6FBFAD"/>
+      </gradient>
+    </aapt:attr>
+  </path>
+  <path android:pathData="M32,36L32,58" android:strokeColor="#FF24231F" android:strokeWidth="3.4" android:strokeLineCap="round"/>
+  <path android:pathData="M32,28m-4.6,0a4.6,4.6 0,1 1,9.2 0a4.6,4.6 0,1 1,-9.2 0" android:fillColor="#FF24231F"/>
+</vector>

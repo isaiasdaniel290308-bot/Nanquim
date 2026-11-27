@@ -1,0 +1,705 @@
+From 90c6d188a45abda8b076b75d4f4ed8184b5dbd7a Mon Sep 17 00:00:00 2001
+From: Nanquim <nanquim@local>
+Date: Fri, 27 Nov 2026 22:17:32 +0000
+Subject: [PATCH] Nanquim: ganchos da interface de tablet, tema, fontes e
+ importacao
+
+Conecta NanquimTabletUi, NanquimSutImport, fontes Satoshi/Montserrat, tema escuro, icones proprios, roda de atalhos, seletor de arquivos nativo e faixas de camada. Adaptado para KoToolManager::instance() do Krita 5.3.5.
+---
+ krita/CMakeLists.txt                         |   1 +
+ krita/data/themes/CMakeLists.txt             |   1 +
+ libs/ui/CMakeLists.txt                       |   2 +
+ libs/ui/KisApplication.cpp                   | 116 ++++++++++++++++++-
+ libs/ui/KisMainWindow.cpp                    |  46 +++++++-
+ libs/ui/KisUiFont.cpp                        |  30 +++++
+ libs/ui/KisViewManager.cpp                   |  28 +++++
+ libs/ui/input/KisPopupWidgetAction.cpp       |   5 +
+ libs/widgetutils/KisRecentFilesManager.cpp   |   4 +
+ libs/widgetutils/KoFileDialog.cpp            |  22 ++++
+ libs/widgetutils/kis_icon_utils.cpp          |  14 +++
+ plugins/dockers/layerdocker/NodeDelegate.cpp |  43 +++++++
+ 12 files changed, 307 insertions(+), 5 deletions(-)
+
+diff --git a/krita/CMakeLists.txt b/krita/CMakeLists.txt
+index e47ec92751..07fa8404d5 100644
+--- a/krita/CMakeLists.txt
++++ b/krita/CMakeLists.txt
+@@ -179,6 +179,7 @@ set(krita_QRCS
+     ${CMAKE_SOURCE_DIR}/krita/pics/tools/SVG/16/tools-svg-16-icons.qrc
+     ${CMAKE_SOURCE_DIR}/krita/pics/tool_transform/tool-transform-icons.qrc
+     ${CMAKE_SOURCE_DIR}/krita/pics/svg/svg-icons.qrc
++    ${CMAKE_SOURCE_DIR}/krita/pics/nanquim/nanquim-icons.qrc
+     ${CMAKE_SOURCE_DIR}/libs/flake/flake.qrc
+     ${CMAKE_SOURCE_DIR}/libs/widgets/kritawidgets.qrc
+     ${CMAKE_SOURCE_DIR}/pics/icons.qrc
+diff --git a/krita/data/themes/CMakeLists.txt b/krita/data/themes/CMakeLists.txt
+index b0c8184967..07248d11d6 100644
+--- a/krita/data/themes/CMakeLists.txt
++++ b/krita/data/themes/CMakeLists.txt
+@@ -16,6 +16,7 @@ KritaBright.colors
+ KritaDark.colors
+ KritaDarkOrange.colors
+ KritaDarker.colors
++Nanquim.colors
+  ${schemefiles} DESTINATION ${KDE_INSTALL_DATADIR}/color-schemes
+ )
+ 
+diff --git a/libs/ui/CMakeLists.txt b/libs/ui/CMakeLists.txt
+index 767bc9bd5c..f9375ecf34 100644
+--- a/libs/ui/CMakeLists.txt
++++ b/libs/ui/CMakeLists.txt
+@@ -433,6 +433,8 @@ set(kritaui_LIB_SRCS
+     KisImportUserFeedbackInterface.cpp
+     kis_async_action_feedback.cpp
+     KisMainWindow.cpp
++    NanquimTabletUi.cpp
++    NanquimSutImport.cpp
+     KisOpenPane.cpp
+     KisPart.cpp
+     KisTemplate.cpp
+diff --git a/libs/ui/KisApplication.cpp b/libs/ui/KisApplication.cpp
+index 2550218330..14625816c6 100644
+--- a/libs/ui/KisApplication.cpp
++++ b/libs/ui/KisApplication.cpp
+@@ -5,6 +5,9 @@
+  * SPDX-License-Identifier: LGPL-2.0-or-later
+  */
+ 
++#include "NanquimSutImport.h"
++#include <KisTagModel.h>
++#include <KisTagResourceModel.h>
+ #include "KisApplication.h"
+ 
+ #include <stdlib.h>
+@@ -29,6 +32,14 @@
+ #include <QFile>
+ #include <QLocale>
+ #include <QMessageBox>
++#include <QUrl>
++#include <QPointer>
++#include <QTimer>
++#include <KoResource.h>
++
++namespace {
++bool nanquimImportResourceFile(QWidget *parent, const QString &url);
++}
+ #include <QProcessEnvironment>
+ #include <QStringList>
+ #include <QStyle>
+@@ -78,6 +89,10 @@
+ #include <KisResourceServerProvider.h>
+ #include <KoResourceServerProvider.h>
+ #include "opengl/kis_opengl.h"
++#include <KisResourceUserOperations.h>
++#include <KisStorageModel.h>
++#include <KisResourceTypes.h>
++#include <QMessageBox>
+ #include "kis_spin_box_unit_manager.h"
+ #include "kis_document_aware_spin_box_unit_manager.h"
+ #include "KisViewManager.h"
+@@ -510,7 +525,9 @@ bool KisApplication::start(const KisApplicationArguments &args)
+ {
+     KisScopedPerformanceLogger perfLog(QStringLiteral("KisApplication::start"));
+ #ifdef Q_OS_ANDROID
+-    KisAndroidDonations::showDonationDialog(true);
++    // Nanquim: a abertura é a NanquimSplash nativa (Java), mostrada já no
++    // onCreate da MainActivity. A janela de doação do Krita (ligada à Play
++    // Store do Krita oficial) não é usada como abertura aqui.
+ #endif
+ 
+     KisConfig cfg(false);
+@@ -567,6 +584,15 @@ bool KisApplication::start(const KisApplicationArguments &args)
+ #endif
+ 
+     KConfigGroup group(KSharedConfig::openConfig(), "theme");
++#ifdef Q_OS_ANDROID
++    // Nanquim: tema escuro azul do design, aplicado uma vez (depois vale a escolha do usuário
++    // em Configurações → Tema)
++    if (!group.readEntry("nanquimThemeV1", false)) {
++        group.writeEntry("Theme", "Nanquim");
++        group.writeEntry("nanquimThemeV1", true);
++        group.sync();
++    }
++#endif
+ #ifndef Q_OS_HAIKU
+     Digikam::ThemeManager themeManager;
+     themeManager.setCurrentTheme(group.readEntry("Theme", "Krita dark"));
+@@ -808,8 +834,8 @@ bool KisApplication::start(const KisApplicationArguments &args)
+                     return true;
+                 }
+                 else if (d->mainWindow) {
+-                    if (QFileInfo(fileName).fileName().endsWith(".bundle", Qt::CaseInsensitive)) {
+-                        d->mainWindow->installBundle(fileName);
++                    if (nanquimImportResourceFile(d->mainWindow, fileName)) {
++                        // Nanquim: .kpp e .bundle viram recursos instalados
+                     }
+                     else {
+                         KisMainWindow::OpenFlags flags = d->batchRun ? KisMainWindow::BatchMode : KisMainWindow::None;
+@@ -868,6 +894,7 @@ bool KisApplication::start(const KisApplicationArguments &args)
+     if (!d->earlyFileOpenEvents.isEmpty()) {
+         hideSplashScreen();
+         Q_FOREACH(QString fileName, d->earlyFileOpenEvents) {
++            if (nanquimImportResourceFile(d->mainWindow, fileName)) continue;
+             d->mainWindow->openDocument(fileName, QFlags<KisMainWindow::OpenFlag>());
+         }
+     }
+@@ -1144,6 +1171,85 @@ void KisApplication::remoteArguments(const QString &message)
+     executeRemoteArguments(unpackedMessage, mw);
+ }
+ 
++namespace {
++// Nanquim: abrir um pincel (.kpp) ou pacote (.bundle) instala o recurso,
++// em vez de tentar abri-lo como imagem. Usado quando o arquivo chega pelo
++// "Abrir com" do Android ou pela linha de comando.
++bool nanquimImportResourceFile(QWidget *parent, const QString &url)
++{
++    QString path = url;
++    if (path.startsWith(QStringLiteral("file://"))) {
++        path = QUrl(path).toLocalFile();
++    }
++    const QFileInfo info(path);
++    const QString suffix = info.suffix().toLower();
++    if (suffix != QStringLiteral("kpp") && suffix != QStringLiteral("bundle") && suffix != QStringLiteral("sut") && suffix != QStringLiteral("zip")) {
++        return false;
++    }
++    if (!info.exists()) {
++        return false;
++    }
++
++    // Nunca abrir diálogos durante a inicialização: no Android isso trava o
++    // app na tela de abertura. Importamos depois que a janela aparece.
++    QPointer<QWidget> parentPtr(parent);
++    QTimer::singleShot(1500, qApp, [parentPtr, path, suffix, info]() {
++        QWidget *parent = parentPtr.data();
++        if (KisApplication *app = qobject_cast<KisApplication*>(qApp)) {
++            app->hideSplashScreen();
++        }
++
++    if (suffix == QStringLiteral("zip")) {
++        QString text;
++        NanquimSutImport::importZipArchive(parent, path, &text);
++        QMessageBox::information(parent, QStringLiteral("Nanquim"), text);
++        return;
++    }
++
++    if (suffix == QStringLiteral("sut")) {
++        QString text;
++        NanquimSutImport::importFile(parent, path, &text);
++        QMessageBox::information(parent, QStringLiteral("Nanquim"), text);
++        return;
++    }
++
++    if (suffix == QStringLiteral("kpp")) {
++        KoResourceSP resource = KisResourceUserOperations::importResourceFileWithUserInput(
++            parent, QString(), ResourceType::PaintOpPresets, path);
++        if (resource) {
++            // a janela de pincéis abre na etiqueta "Nanquim": o pincel importado entra nela,
++            // senão ele só apareceria em "Tudo" e pareceria que a importação falhou
++            bool tagged = false;
++            KisTagModel tagModel(ResourceType::PaintOpPresets);
++            KisTagSP tag = tagModel.tagForUrl(QStringLiteral("Nanquim"));
++            if (tag && resource->resourceId() >= 0) {
++                KisTagResourceModel tagResourceModel(ResourceType::PaintOpPresets);
++                tagged = tagResourceModel.tagResources(tag, QVector<int>() << resource->resourceId());
++            }
++            QMessageBox::information(parent, QStringLiteral("Nanquim"),
++                                     tagged ? QStringLiteral("Pincel importado: %1\nEle já está na etiqueta \"Nanquim\" da janela de pincéis.").arg(resource->name())
++                                            : QStringLiteral("Pincel importado: %1\nEle está em \"Tudo\", na janela de pincéis.").arg(resource->name()));
++        }
++        KisUsageLogger::log(QStringLiteral("[Nanquim] Import .kpp %1: %2").arg(info.fileName()).arg(resource ? "ok" : "falhou"));
++        return;
++    }
++
++    const bool ok = KisStorageModel::instance()->importStorage(path, KisStorageModel::None);
++    QMessageBox::information(parent, QStringLiteral("Nanquim"),
++                             ok ? QStringLiteral("Pacote importado: %1\nOs pincéis estão em \"Tudo\", na janela de pincéis.").arg(info.fileName())
++                                : QStringLiteral("Não foi possível importar %1.\nTalvez ele já esteja instalado, ou o arquivo não é um pacote do Krita válido.").arg(info.fileName()));
++    KisUsageLogger::log(QStringLiteral("[Nanquim] Import .bundle %1: %2").arg(info.fileName()).arg(ok ? "ok" : "falhou"));
++    });
++    return true;
++}
++}
++
++// usado pela janela de pincéis do Nanquim ("Importar pincéis")
++bool nanquimImportResourcePublic(QWidget *parent, const QString &url)
++{
++    return nanquimImportResourceFile(parent, url);
++}
++
+ void KisApplication::fileOpenRequested(const QString &url)
+ {
+     if (!d->mainWindow) {
+@@ -1151,6 +1257,10 @@ void KisApplication::fileOpenRequested(const QString &url)
+         return;
+     }
+ 
++    if (nanquimImportResourceFile(d->mainWindow, url)) {
++        return;
++    }
++
+     KisMainWindow::OpenFlags flags = d->batchRun ? KisMainWindow::BatchMode : KisMainWindow::None;
+     d->mainWindow->openDocument(url, flags);
+ }
+diff --git a/libs/ui/KisMainWindow.cpp b/libs/ui/KisMainWindow.cpp
+index 60ad820e36..661cd7008e 100644
+--- a/libs/ui/KisMainWindow.cpp
++++ b/libs/ui/KisMainWindow.cpp
+@@ -158,6 +158,21 @@
+ #include "KisRecentFilesManager.h"
+ #include "KisWidgetConnectionUtils.h"
+ #include "KisToolBarStateModel.h"
++#include <NanquimStepTimer.h>
++
++#ifdef Q_OS_ANDROID
++#include "NanquimTabletUi.h"
++#endif
++#if defined(Q_OS_ANDROID) && defined(NANQUIM_TIMING)
++#include <QElapsedTimer>
++#include <KisUsageLogger.h>
++// Nanquim: marca quanto tempo cada etapa da montagem da janela leva (log do Krita)
++#define NANQUIM_MARK_START QElapsedTimer nanquimTimer; nanquimTimer.start();
++#define NANQUIM_MARK(what) KisUsageLogger::log(QStringLiteral("[Nanquim tempo] janela: %1 - %2 ms").arg(QStringLiteral(what)).arg(nanquimTimer.restart()));
++#else
++#define NANQUIM_MARK_START
++#define NANQUIM_MARK(what)
++#endif
+ #include <config-qmdiarea-always-show-subwindow-title.h>
+ #include <config-qt-patches-present.h>
+ #include <KisPlatformPluginInterfaceFactory.h>
+@@ -424,6 +439,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+     , d(new Private(this, uuid))
+ {
+     KisScopedPerformanceLogger perfLog(QStringLiteral("KisMainWindow::KisMainWindow"));
++    NANQUIM_MARK_START
+ 
+     KAcceleratorManager::setNoAccel(this);
+ 
+@@ -433,6 +449,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+     connect(d->workspacemodel, SIGNAL(rowsRemoved(QModelIndex,int,int)), this, SLOT(updateWindowMenu()));
+ 
+     d->viewManager = new KisViewManager(this, actionCollection());
++    NANQUIM_MARK("KisViewManager")
+     KConfigGroup group( KSharedConfig::openConfig(), "theme");
+ #ifndef Q_OS_HAIKU
+     d->themeManager = new Digikam::ThemeManager(group.readEntry("Theme", "Krita dark"), this);
+@@ -460,9 +477,11 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+ 
+     actionCollection()->addAssociatedWidget(this);
+     KoPluginLoader::instance()->load("Krita/ViewPlugin", KoPluginLoader::PluginsConfig(), d->viewManager, false);
++    NANQUIM_MARK("plugins de visualizacao")
+ 
+     // Load the per-application plugins (Right now, only Python) We do this only once, when the first mainwindow is being created.
+     KoPluginLoader::instance()->load("Krita/ApplicationPlugin", KoPluginLoader::PluginsConfig(), qApp, true);
++    NANQUIM_MARK("plugins do aplicativo")
+ 
+     KoToolBoxFactory toolBoxFactory;
+     QDockWidget *toolbox = createDockWidget(&toolBoxFactory);
+@@ -492,6 +511,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+     if (d->toolOptionsDocker) {
+         dockwidgetActions[d->toolOptionsDocker->toggleViewAction()->text()] = d->toolOptionsDocker->toggleViewAction();
+     }
++    NANQUIM_MARK("paineis (dockers)")
+     connect(KoToolManager::instance(), SIGNAL(toolOptionWidgetsChanged(KoCanvasController*,QList<QPointer<QWidget> >)), this, SLOT(newOptionWidgets(KoCanvasController*,QList<QPointer<QWidget> >)));
+ 
+     Q_FOREACH (QString title, dockwidgetActions.keys()) {
+@@ -544,9 +564,14 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+ 
+     // Load all the actions from the tool plugins
+     // ToolBoxDocker needs them when at setViewManager()
+-    Q_FOREACH(KoToolFactoryBase *toolFactory, KoToolRegistry::instance()->values()) {
+-        toolFactory->createActions(actionCollection());
++    {
++        NanquimStepTimer factoryTimer(QStringLiteral("acoes da ferramenta"));
++        Q_FOREACH(KoToolFactoryBase *toolFactory, KoToolRegistry::instance()->values()) {
++            toolFactory->createActions(actionCollection());
++            factoryTimer.mark(toolFactory->id(), 40);
++        }
+     }
++    NANQUIM_MARK("acoes das ferramentas")
+ 
+ 
+     Q_FOREACH (QDockWidget *wdg, dockWidgets()) {
+@@ -570,6 +595,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+     d->mdiArea->setAcceptDrops(true);
+ 
+     themeChanged(); // updates icon styles
++    NANQUIM_MARK("observadores e tema")
+ 
+     setCentralWidget(d->widgetStack);
+     d->widgetStack->setCurrentIndex(0);
+@@ -582,6 +608,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+     actionCollection()->addAssociatedWidget(d->canvasWindow);
+ 
+     createActions();
++    NANQUIM_MARK("createActions")
+ 
+     // the welcome screen needs to grab actions...so make sure this line goes after the createAction() so they exist
+     d->welcomePage->setMainWindow(this);
+@@ -651,6 +678,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+ 
+     // Make sure the python plugins create their actions in time
+     KisPart::instance()->notifyMainWindowIsBeingCreated(this);
++    NANQUIM_MARK("ajuda e configuracoes")
+ 
+     // If we have customized the toolbars, load that first
+     setLocalXMLFile(KoResourcePaths::locateLocal("data", "krita5.xmlgui"));
+@@ -658,6 +686,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+ 
+     guiFactory()->addClient(this);
+     applyActionIconOverridesFromLocalXML();
++    NANQUIM_MARK("menus e barras (xmlgui)")
+     connect(guiFactory(), SIGNAL(makingChanges(bool)), SLOT(slotXmlGuiMakingChanges(bool)));
+ 
+     // Create and plug toolbar list for Settings menu
+@@ -683,6 +712,7 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+ 
+     d->viewManager->updateGUI();
+     d->viewManager->updateIcons();
++    NANQUIM_MARK("lista de barras, updateGUI e icones")
+ 
+     QTimer::singleShot(1000, Qt::CoarseTimer, this, SLOT(checkSanity()));
+ 
+@@ -751,7 +781,14 @@ KisMainWindow::KisMainWindow(QUuid uuid)
+         tabBar->installEventFilter(new TabBarFilter(d->mdiArea));
+     }
+ 
++    NANQUIM_MARK("janela nativa e abas")
+     applyMainWindowSettings(d->windowStateConfig);
++    NANQUIM_MARK("restaurar estado da janela")
++
++#ifdef Q_OS_ANDROID
++    NanquimTabletUi::install(this);
++    NANQUIM_MARK("interface de tablet do Nanquim")
++#endif
+ }
+ 
+ KisMainWindow::~KisMainWindow()
+@@ -1787,6 +1824,11 @@ void KisMainWindow::setMainWindowLayoutForCurrentMainWidget(int widgetIndex, boo
+             action->setEnabled(widgetIndex);
+         }
+     }
++#ifdef Q_OS_ANDROID
++    // Nanquim: o Krita acabou de restaurar menus, barras e painéis salvos;
++    // reaplica a interface de tablet por cima
++    NanquimTabletUi::applyLayout(this, widgetIndex != 0);
++#endif
+ }
+ 
+ void KisMainWindow::adjustLayoutForWelcomePage()
+diff --git a/libs/ui/KisUiFont.cpp b/libs/ui/KisUiFont.cpp
+index b866d9dd94..67ceaee488 100644
+--- a/libs/ui/KisUiFont.cpp
++++ b/libs/ui/KisUiFont.cpp
+@@ -85,6 +85,36 @@ QFont normalFont()
+         font = *userFont;
+     } else {
+         font = systemDefaultUiFont();
++#ifdef Q_OS_ANDROID
++        // Nanquim: fonte da interface embutida no APK. O CI baixa a Satoshi
++        // (Fontshare, ITF Free Font License) para ui-*.otf; se não conseguir,
++        // copia a Montserrat (SIL OFL) para os mesmos nomes. O nome da família
++        // vem do próprio arquivo, então serve qualquer uma das duas.
++        static bool s_registered = false;
++        static QString s_family;
++        if (!s_registered) {
++            s_registered = true;
++            for (const char *w : {"regular", "medium", "bold"}) {
++                const int id = QFontDatabase::addApplicationFont(
++                            QStringLiteral(":/splash/fonts/ui-%1.otf").arg(QLatin1String(w)));
++                if (id >= 0 && s_family.isEmpty()) {
++                    const QStringList families = QFontDatabase::applicationFontFamilies(id);
++                    if (!families.isEmpty()) {
++                        s_family = families.first();
++                    }
++                }
++            }
++            // a Montserrat continua no pacote (balões de texto usam por nome)
++            for (const char *w : {"Regular", "Medium", "SemiBold", "Bold"}) {
++                QFontDatabase::addApplicationFont(QStringLiteral(":/splash/fonts/Montserrat-%1.ttf")
++                                                  .arg(QLatin1String(w)));
++            }
++            if (s_family.isEmpty()) {
++                s_family = QStringLiteral("Montserrat");
++            }
++        }
++        font.setFamily(s_family);
++#endif
+     }
+ #ifdef Q_OS_WIN
+     // XXX: Forces Qt to use full hinting for UI text, otherwise the default
+diff --git a/libs/ui/KisViewManager.cpp b/libs/ui/KisViewManager.cpp
+index d8ad99a352..81151a476f 100644
+--- a/libs/ui/KisViewManager.cpp
++++ b/libs/ui/KisViewManager.cpp
+@@ -14,6 +14,7 @@
+  */
+ 
+ 
++#include <NanquimStepTimer.h>
+ #include "KisViewManager.h"
+ #include <QPrinter>
+ 
+@@ -281,6 +282,7 @@ public:
+ KisViewManager::KisViewManager(QWidget *parent, KisKActionCollection *_actionCollection)
+     : d(new KisViewManagerPrivate(this, _actionCollection, parent))
+ {
++    NanquimStepTimer nanquimTimer(QStringLiteral("KisViewManager"));
+     d->actionCollection = _actionCollection;
+     d->mainWindow = dynamic_cast<QMainWindow*>(parent);
+     d->canvasResourceProvider.setResourceManager(&d->canvasResourceManager);
+@@ -288,6 +290,7 @@ KisViewManager::KisViewManager(QWidget *parent, KisKActionCollection *_actionCol
+ 
+     createActions();
+     setupManagers();
++    nanquimTimer.mark(QStringLiteral("acoes e gerenciadores"));
+ 
+     // These initialization functions must wait until KisViewManager ctor is complete.
+     d->statusBar.setup();
+@@ -312,14 +315,17 @@ KisViewManager::KisViewManager(QWidget *parent, KisKActionCollection *_actionCol
+     // just a clumsy way to mark the updater as completed, the subtask will
+     // be automatically deleted on completion...
+     d->persistentUnthreadedProgressUpdaterRouter->startSubtask()->setProgress(100);
++    nanquimTimer.mark(QStringLiteral("barra de status"));
+ 
+     d->controlFrame.setup(parent);
++    nanquimTimer.mark(QStringLiteral("controles do pincel (controlFrame)"));
+ 
+ 
+     //Check to draw scrollbars after "Canvas only mode" toggle is created.
+     this->showHideScrollbars();
+ 
+     KoToolManager::instance()->initializeToolActions();
++    nanquimTimer.mark(QStringLiteral("acoes das ferramentas"));
+ 
+     connect(KoToolManager::instance(), SIGNAL(inputDeviceChanged(KoInputDevice)),
+             d->controlFrame.paintopBox(), SLOT(slotInputDeviceChanged(KoInputDevice)));
+@@ -341,6 +347,7 @@ KisViewManager::KisViewManager(QWidget *parent, KisKActionCollection *_actionCol
+     connect(KoToolManager::instance(), SIGNAL(createOpacityResource(bool, KoToolBase*)), SLOT(slotCreateOpacityResource(bool, KoToolBase*)));
+ 
+     KisInputProfileManager::instance()->loadProfiles();
++    nanquimTimer.mark(QStringLiteral("perfis de entrada"));
+ 
+     KisConfig cfg(true);
+     d->showFloatingMessage = cfg.showCanvasMessages();
+@@ -354,6 +361,7 @@ KisViewManager::KisViewManager(QWidget *parent, KisKActionCollection *_actionCol
+ 
+     // Initialize the old imagesize plugin
+     new ImageSize(this);
++    nanquimTimer.mark(QStringLiteral("cores e resto"));
+ }
+ 
+ 
+@@ -1267,11 +1275,29 @@ void KisViewManager::switchCanvasOnly(bool toggled)
+         d->canvasOnlyOptions = options;
+     }
+ 
++#ifdef Q_OS_ANDROID
++    // Nanquim: no Android, trocar o estado da janela para tela cheia recria a
++    // superfície e a tela fica preta por um instante. As barras do sistema
++    // ficam como estão; só as barras do app somem. A página também não deve
++    // mudar de zoom: se estava "caber na tela", o zoom atual fica fixo antes
++    // de a área da página crescer, e ela é deslocada para não pular.
++    const bool toggleFullscreen = false;
++    const bool useCanvasOffsetCompensation = d->currentImageView &&
++                                             d->currentImageView->canvasController() &&
++                                             !main->canvasDetached();
++    if (useCanvasOffsetCompensation) {
++        const KoZoomState zs = d->currentImageView->canvasController()->zoomState();
++        if (zs.mode == KoZoomMode::ZOOM_PAGE || zs.mode == KoZoomMode::ZOOM_WIDTH) {
++            d->currentImageView->canvasController()->setZoom(KoZoomMode::ZOOM_CONSTANT, zs.zoom);
++        }
++    }
++#else
+     const bool toggleFullscreen = (options.hideTitlebarFullscreen && !cfg.fullscreenMode());
+     const bool useCanvasOffsetCompensation = d->currentImageView &&
+                                              d->currentImageView->canvasController() &&
+                                              d->currentImageView->isMaximized() &&
+                                              !main->canvasDetached();
++#endif
+ 
+     if (useCanvasOffsetCompensation) {
+         // The offset is calculated in two steps; this is the first step.
+@@ -1415,11 +1441,13 @@ void KisViewManager::switchCanvasOnly(bool toggled)
+             });
+         }
+ 
++#ifndef Q_OS_ANDROID
+                // show a fading heads-up display about the shortcut to go back
+         showFloatingMessage(i18n("Going into Canvas-Only mode.\nPress %1 to go back.",
+                                  actionCollection()->action("view_show_canvas_only")->shortcut().toString(QKeySequence::NativeText)), QIcon(),
+                             2000,
+                             KisFloatingMessage::Low);
++#endif
+     }
+     else {
+         if (!d->canvasStateInNormalMode.isEmpty()) {
+diff --git a/libs/ui/input/KisPopupWidgetAction.cpp b/libs/ui/input/KisPopupWidgetAction.cpp
+index 29b6644ab1..39f803b330 100644
+--- a/libs/ui/input/KisPopupWidgetAction.cpp
++++ b/libs/ui/input/KisPopupWidgetAction.cpp
+@@ -19,6 +19,7 @@
+ #include "kis_tool_proxy.h"
+ #include "kis_popup_palette.h"
+ #include "kis_input_manager.h"
++#include "NanquimTabletUi.h"
+ 
+ struct SinglePressEventEater : public QObject
+ {
+@@ -84,6 +85,10 @@ void KisPopupWidgetAction::end(QEvent *event)
+             if (pos.isNull()) {
+                 pos = inputManager()->canvas()->canvasWidget()->mapFromGlobal(QCursor::pos());
+             }
++            // Nanquim: a roda de atalhos (camadas e cor) substitui a paleta no modo Tablet
++            if (NanquimTabletUi::toggleWheel(inputManager()->canvas()->canvasWidget(), pos)) {
++                return;
++            }
+             inputManager()->registerPopupWidget(popupWidget);
+ 
+             /// the popup widget in not modal, so we shouldn't
+diff --git a/libs/widgetutils/KisRecentFilesManager.cpp b/libs/widgetutils/KisRecentFilesManager.cpp
+index 18e5e3dac4..56068a2e06 100644
+--- a/libs/widgetutils/KisRecentFilesManager.cpp
++++ b/libs/widgetutils/KisRecentFilesManager.cpp
+@@ -21,7 +21,11 @@ class KisRecentFilesManager::Private
+ {
+ public:
+     KisRecentFilesManager *m_q;
++#ifdef Q_OS_ANDROID
++    int m_maxItems {24};   // Nanquim: a galeria mostra mais desenhos recentes
++#else
+     int m_maxItems {10};
++#endif
+     QVector<KisRecentFilesEntry> m_entries;
+ 
+ private:
+diff --git a/libs/widgetutils/KoFileDialog.cpp b/libs/widgetutils/KoFileDialog.cpp
+index d4ad079071..4793e4bd29 100644
+--- a/libs/widgetutils/KoFileDialog.cpp
++++ b/libs/widgetutils/KoFileDialog.cpp
+@@ -258,8 +258,27 @@ void KoFileDialog::createFileDialog()
+     onFilterSelected(d->fileDialog->selectedNameFilter());
+ }
+ 
++#ifdef Q_OS_ANDROID
++// O Nanquim pede ao Qt que desenhe as perguntas e avisos (AA_DontUseNativeDialogs),
++// mas o seletor de arquivos precisa continuar o do Android: é ele que dá acesso
++// à galeria, ao Drive e às pastas do tablet. Liberado só enquanto ele está aberto.
++namespace {
++struct AllowNativeFileDialog {
++    bool previous;
++    AllowNativeFileDialog() : previous(QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs))
++    {
++        QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false);
++    }
++    ~AllowNativeFileDialog() { QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, previous); }
++};
++}
++#endif
++
+ QString KoFileDialog::filename()
+ {
++#ifdef Q_OS_ANDROID
++    AllowNativeFileDialog allowNative;
++#endif
+     QString url;
+     createFileDialog();
+ 
+@@ -371,6 +390,9 @@ QString KoFileDialog::filename()
+ 
+ QStringList KoFileDialog::filenames()
+ {
++#ifdef Q_OS_ANDROID
++    AllowNativeFileDialog allowNative;
++#endif
+     QStringList urls;
+ 
+     createFileDialog();
+diff --git a/libs/widgetutils/kis_icon_utils.cpp b/libs/widgetutils/kis_icon_utils.cpp
+index 7ec6cc47a0..7ae39ca992 100644
+--- a/libs/widgetutils/kis_icon_utils.cpp
++++ b/libs/widgetutils/kis_icon_utils.cpp
+@@ -33,6 +33,20 @@ QIcon loadIcon(const QString &name)
+         return cached.value();
+     }
+ 
++#ifdef Q_OS_ANDROID
++    // Nanquim: ícones no estilo do design (traço fino, cantos redondos) para os
++    // botões mais usados dos painéis. Só no tema escuro, porque são claros.
++    if (!useDarkIcons()) {
++        const QString nanquimIcon = QStringLiteral(":/nanquim/") + name + QStringLiteral(".svg");
++        if (QFile(nanquimIcon).exists()) {
++            QIcon icon(nanquimIcon);
++            s_icons.insert(icon.cacheKey(), name);
++            s_cache.insert(name, icon);
++            return icon;
++        }
++    }
++#endif
++
+     // try load themed icon
+     const char * const prefix = useDarkIcons() ? "dark_" : "light_";
+ 
+diff --git a/plugins/dockers/layerdocker/NodeDelegate.cpp b/plugins/dockers/layerdocker/NodeDelegate.cpp
+index 99b0251943..e801b4fd2c 100644
+--- a/plugins/dockers/layerdocker/NodeDelegate.cpp
++++ b/plugins/dockers/layerdocker/NodeDelegate.cpp
+@@ -37,6 +37,36 @@
+ typedef KisBaseNode::Property* OptionalProperty;
+ 
+ #include <kis_base_node.h>
++#include "kis_node.h"
++#include "kis_node_filter_proxy_model.h"
++
++namespace {
++// Nanquim: faixa de cor na ponta de cada camada mostra o tipo dela.
++// Azul tinta, azul claro vetor e texto, ciano retícula e preenchimento,
++// âmbar rascunho, cinza grupo (cores de papel fixo do Nanquim).
++QColor nanquimLayerBand(const QModelIndex &index)
++{
++    KisNodeSP node;
++    if (const KisNodeFilterProxyModel *proxy = qobject_cast<const KisNodeFilterProxyModel*>(index.model())) {
++        node = proxy->nodeFromIndex(index);
++    } else if (const KisNodeModel *model = qobject_cast<const KisNodeModel*>(index.model())) {
++        node = model->nodeFromIndex(index);
++    }
++    if (!node) return QColor();
++    const QString name = node->name().toLower();
++    if (name.contains(QStringLiteral("rascunho")) || name.contains(QStringLiteral("sketch"))) {
++        return QColor(0xe6, 0xb4, 0x5a);
++    }
++    if (node->inherits("KisGeneratorLayer") || name.contains(QStringLiteral("retícula"))
++            || name.contains(QStringLiteral("screentone"))) {
++        return QColor(0x6f, 0xbf, 0xad);
++    }
++    if (node->inherits("KisGroupLayer")) return QColor(0x7a, 0x76, 0x6d);
++    if (node->inherits("KisShapeLayer")) return QColor(0x6f, 0xbf, 0xad);
++    if (node->inherits("KisPaintLayer")) return QColor(0x3e, 0x8e, 0x7e);
++    return QColor();
++}
++}
+ 
+ class NodeDelegate::Private
+ {
+@@ -133,6 +163,19 @@ void NodeDelegate::paint(QPainter *p, const QStyleOptionViewItem &o, const QMode
+         } else {
+             p->setFont(option.font);
+             drawColorLabel(p, option, index);
++            {
++                const QColor band = nanquimLayerBand(index);
++                if (band.isValid()) {
++                    const int x = option.direction == Qt::RightToLeft ? option.rect.right() - 3 : option.rect.left() + 1;
++                    const QRectF r(x, option.rect.top() + 4, 3, option.rect.height() - 8);
++                    p->save();
++                    p->setRenderHint(QPainter::Antialiasing);
++                    p->setPen(Qt::NoPen);
++                    p->setBrush(band);
++                    p->drawRoundedRect(r, 1.5, 1.5);
++                    p->restore();
++                }
++            }
+             drawThumbnail(p, option, index);
+             drawText(p, option, index); // BUG: Creating group moves things around (RTL-layout alignment)
+             drawIcons(p, option, index);
+-- 
+2.56.1
+

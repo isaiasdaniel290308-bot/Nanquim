@@ -1,0 +1,21 @@
+<!--
+  SPDX-FileCopyrightText: 2026 Nanquim
+  SPDX-License-Identifier: CC0-1.0
+-->
+<RCC>
+    <qresource prefix="/nanquim">
+        <file>addlayer.svg</file>
+        <file>arrowdown.svg</file>
+        <file>arrowup.svg</file>
+        <file>deletelayer.svg</file>
+        <file>docker_close.svg</file>
+        <file>duplicatelayer.svg</file>
+        <file>layer-locked.svg</file>
+        <file>layer-unlocked.svg</file>
+        <file>novisible.svg</file>
+        <file>properties.svg</file>
+        <file>view-choose.svg</file>
+        <file>view-filter.svg</file>
+        <file>visible.svg</file>
+    </qresource>
+</RCC>

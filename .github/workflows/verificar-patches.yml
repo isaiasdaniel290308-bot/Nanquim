@@ -1,18 +1,20 @@
-# Verifica, em poucos minutos e sem compilar, se a fila inteira de patches aplica.
+# Verifica, em poucos minutos e sem compilar, se a fila de patches aplica e se
+# nanquim-src/ não conflita com nenhum arquivo do Krita.
 # - base "atual": o Krita do KRITA_REF (falha aqui = a build vai falhar; corrija antes)
-# - base "estavel": uma versão estável do Krita (padrão v5.3.4), para medir quanto
-#   trabalho daria mudar a base do Nanquim. Falhar aqui não bloqueia nada.
+# - base "comparacao": outra versão estável do Krita (padrão v6.0.5.1 = Krita 5.3.5.1),
+#   para testar facilmente antes de atualizar o KRITA_REF.
 name: Verificar patches
 
 on:
   workflow_dispatch:
     inputs:
-      base_estavel:
-        description: "Versão estável do Krita para comparar (tag ou ramo)"
+      base_comparacao:
+        description: "Versão do Krita para testar atualização (tag, commit ou ramo)"
         required: false
-        default: "krita/5.3"
+        default: "v6.0.5.1"
   push:
     paths:
+      - "nanquim-src/**"
       - "patches/**"
       - "KRITA_REF"
       - ".github/workflows/verificar-patches.yml"
@@ -31,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        base: [atual, estavel]
+        base: [atual, comparacao]
     steps:
       - name: Baixar o repositório Nanquim
         uses: actions/checkout@v4
@@ -44,55 +46,70 @@ jobs:
           set -e
           if [ "${{ matrix.base }}" = "atual" ]; then
             REF=$(tr -d '[:space:]' < nanquim/KRITA_REF 2>/dev/null || true)
-            REF=${REF:-master}
+            if [ -z "$REF" ]; then
+              echo "::error::KRITA_REF está vazio"
+              exit 1
+            fi
           else
-            REF="${{ inputs.base_estavel || 'krita/5.3' }}"
+            REF="${{ inputs.base_comparacao || 'v6.0.5.1' }}"
           fi
-          git clone --filter=blob:none https://github.com/KDE/krita.git krita
+          git clone --filter=blob:none https://invent.kde.org/graphics/krita.git krita
           cd krita
-          if ! git checkout -q "$REF" 2>/dev/null; then
-            echo "Não achei '$REF'; tentando alternativas da linha 5.3"
-            for alt in v5.3.4 krita/5.3; do
-              if git checkout -q "$alt" 2>/dev/null; then REF="$alt"; break; fi
-            done
+          if ! git checkout -q "$REF" 2>/dev/null && ! git checkout -q "origin/$REF" 2>/dev/null; then
+            echo "::error::Não achei '$REF' no repositório oficial do Krita (invent.kde.org)."
+            exit 1
           fi
           echo "BASE_REF=$REF" >> "$GITHUB_ENV"
+          echo "BASE_DESC=$(git log -1 --format='%h %s (%ad)' --date=short)" >> "$GITHUB_ENV"
           git log -1 --format='Base: %h %s (%ad)' --date=short
 
-      - name: Aplicar a fila inteira de patches
+      - name: Verificar nanquim-src e aplicar a fila de patches
         shell: bash
         run: |
           set +e
           cd krita
           git config user.name "Nanquim CI"
           git config user.email "ci@nanquim.invalid"
-          ok=0; fail=0
+          ok=0; fail=0; col=0
           : > ../relatorio.txt
+
+          if [ -d ../nanquim/nanquim-src ]; then
+            while IFS= read -r -d '' f; do
+              rel="${f#../nanquim/nanquim-src/}"
+              if [ -e "$rel" ]; then
+                col=$((col + 1))
+                echo "COLISAO $rel" >> ../relatorio.txt
+              fi
+            done < <(find ../nanquim/nanquim-src -type f -print0 | sort -z)
+          fi
+
+          shopt -s nullglob
           mapfile -t PATCHES < <(printf '%s\n' ../nanquim/patches/*.patch | LC_ALL=C sort -V)
           for p in "${PATCHES[@]}"; do
             n=$(basename "$p")
             if git am --3way -q "$p" >/dev/null 2>&1; then
-              ok=$((ok + 1)); echo "ok     $n" >> ../relatorio.txt
+              ok=$((ok + 1)); echo "ok      $n" >> ../relatorio.txt
             else
               git am --abort >/dev/null 2>&1 || true
-              fail=$((fail + 1)); echo "FALHA  $n" >> ../relatorio.txt
+              fail=$((fail + 1)); echo "FALHA   $n" >> ../relatorio.txt
             fi
           done
-          marks=$( { grep -l '^<<<<<<<\|^>>>>>>>' ../nanquim/patches/*.patch 2>/dev/null || true; } | wc -l)
+
+          marks=$( { grep -rl '^<<<<<<<\|^>>>>>>>' ../nanquim/patches/ ../nanquim/nanquim-src/ 2>/dev/null || true; } | wc -l)
           {
-            echo "### Base ${{ matrix.base }}: ${BASE_REF}"
+            echo "### Base ${{ matrix.base }}: \`${BASE_REF}\` (${BASE_DESC})"
             echo
-            echo "Aplicaram: **${ok}** · Falharam: **${fail}** · Patches com marca de conflito: **${marks}**"
-            echo
-            echo "Um patch que falha é pulado; os seguintes podem falhar só por causa dele."
-            echo
-            echo '```'
-            grep '^FALHA' ../relatorio.txt | head -150 || true
-            echo '```'
+            echo "Patches aplicados: **${ok}** · Falhas: **${fail}** · Colisões em \`nanquim-src/\`: **${col}** · Marcas de conflito: **${marks}**"
+            if [ "$fail" -gt 0 ] || [ "$col" -gt 0 ]; then
+              echo
+              echo '```'
+              grep -E '^(FALHA|COLISAO)' ../relatorio.txt || true
+              echo '```'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
           cat ../relatorio.txt
-          echo "RESUMO base=${{ matrix.base }} ref=${BASE_REF} ok=${ok} falhas=${fail} marcas=${marks}"
-          if [ "${{ matrix.base }}" = "atual" ] && { [ "$fail" -gt 0 ] || [ "$marks" -gt 0 ]; }; then
+          echo "RESUMO base=${{ matrix.base }} ref=${BASE_REF} ok=${ok} falhas=${fail} colisoes=${col} marcas=${marks}"
+          if [ "${{ matrix.base }}" = "atual" ] && { [ "$fail" -gt 0 ] || [ "$col" -gt 0 ] || [ "$marks" -gt 0 ]; }; then
             exit 1
           fi
 

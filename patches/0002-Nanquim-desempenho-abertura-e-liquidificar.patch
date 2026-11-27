@@ -1,0 +1,914 @@
+From 593c29bd83427434935a876ffda6dc6f9dfed9dc Mon Sep 17 00:00:00 2001
+From: Nanquim <nanquim@local>
+Date: Fri, 27 Nov 2026 22:17:32 +0000
+Subject: [PATCH] Nanquim: desempenho, abertura rapida e liquidificar
+ multithread
+
+Acelera abertura (cache de recursos quebrados, acoes compartilhadas de pintura, popups sob demanda no KisPaintopBox), ajusta memoria/PNG no Android e aplica Liquidificar em varias threads. Adaptado para o Krita 5.3.5 estavel.
+---
+ libs/flake/KoToolFactoryBase.cpp              |   7 +-
+ libs/global/KisScopedPerformanceLogger.h      |  19 +-
+ libs/image/kis_grid_interpolation_tools.h     |  32 ++++
+ libs/image/kis_image_config.cpp               |  13 +-
+ libs/image/kis_liquify_transform_worker.cpp   | 175 +++++++++++++++++-
+ libs/resources/KisResourceCacheDb.cpp         |  56 ++++++
+ libs/ui/kis_config.cc                         |  47 ++++-
+ libs/ui/kis_control_frame.cpp                 |   7 +
+ libs/ui/kis_paintop_box.cc                    |  60 ++++--
+ libs/ui/kis_paintop_box.h                     |   9 +
+ libs/ui/kis_png_converter.cpp                 |   6 +
+ libs/ui/tool/KisToolPaintFactoryBase.cpp      |  21 +++
+ .../tool_transform2/kis_tool_transform.cc     |   7 +
+ .../kis_tool_transform_config_widget.cpp      |   4 +
+ 14 files changed, 431 insertions(+), 32 deletions(-)
+
+diff --git a/libs/flake/KoToolFactoryBase.cpp b/libs/flake/KoToolFactoryBase.cpp
+index 14bef01c57..e3122cde32 100644
+--- a/libs/flake/KoToolFactoryBase.cpp
++++ b/libs/flake/KoToolFactoryBase.cpp
+@@ -4,6 +4,7 @@
+  * SPDX-License-Identifier: LGPL-2.0-or-later
+  */
+ 
++#include <NanquimStepTimer.h>
+ #include "KoToolFactoryBase.h"
+ 
+ #include "KoToolBase.h"
+@@ -48,14 +49,16 @@ QList<QAction *> KoToolFactoryBase::createActions(KisKActionCollection *actionCo
+ {
+     QList<QAction *> toolActions;
+ 
++    NanquimStepTimer nanquimTimer(QStringLiteral("ferramenta ") + id());
+     KisActionRegistry *actionRegistry = KisActionRegistry::instance();
+     QList<QAction*> actions = createActionsImpl();
++    nanquimTimer.mark(QStringLiteral("criar acoes (createActionsImpl)"), 40);
+     QAction *action = actionRegistry->makeQAction(id(), this);
+     actionCollection->addAction(id(), action);
+     connect(action, SIGNAL(triggered()), SLOT(activateTool()));
++    nanquimTimer.mark(QStringLiteral("acao da ferramenta"), 40);
+     //qDebug() << action << action->shortcut();
+ 
+-
+     Q_FOREACH(QAction *action, actions) {
+         if (action->objectName().isEmpty()) {
+             qWarning() << "Tool" << id() << "tries to add an action without a name";
+@@ -123,6 +126,8 @@ QList<QAction *> KoToolFactoryBase::createActions(KisKActionCollection *actionCo
+     }
+ #endif
+ 
++    nanquimTimer.mark(QStringLiteral("registrar acoes"), 40);
++
+ //    qDebug() << "Generated actions for tool factory" << id();
+ //    Q_FOREACH(QAction *action, toolActions) {
+ //        qDebug() << "\taction:" << action->objectName() << "shortcut" << action->shortcuts() << "tools" << action->property("tool_action").toStringList();
+diff --git a/libs/global/KisScopedPerformanceLogger.h b/libs/global/KisScopedPerformanceLogger.h
+index 39ad19a9cf..d8e24aa519 100644
+--- a/libs/global/KisScopedPerformanceLogger.h
++++ b/libs/global/KisScopedPerformanceLogger.h
+@@ -9,6 +9,7 @@
+ 
+ #include "kis_debug.h"
+ #include "kritaglobal_export.h"
++#include "KisUsageLogger.h"
+ 
+ class KRITAGLOBAL_EXPORT KisScopedPerformanceLogger
+ {
+@@ -17,9 +18,15 @@ public:
+     explicit KisScopedPerformanceLogger(const QString &title)
+         : m_title(title)
+     {
++#if defined(Q_OS_ANDROID) && defined(NANQUIM_TIMING)
++        // Nanquim: compilado com -DNANQUIM_TIMING, os tempos vão para o log do Krita
++        // (Ajuda > Mostrar log do Krita), para medir a abertura do app.
++        m_timer.start();
++#else
+         if (dbgPerformanceIsEnabled()) {
+             m_timer.start();
+         }
++#endif
+     }
+ 
+     ~KisScopedPerformanceLogger()
+@@ -29,10 +36,14 @@ public:
+             // and long durations are reasonably comprehensible without having
+             // to decipher excessively long numbers.
+             qint64 nsecs = m_timer.nsecsElapsed();
+-            dbgPerformance.noquote() << QStringLiteral("%1: %2.%3 ms")
+-                                            .arg(m_title)
+-                                            .arg(nsecs / 1000000LL)
+-                                            .arg(nsecs % 1000000LL, 6, 10, QChar('0'));
++            const QString message = QStringLiteral("%1: %2.%3 ms")
++                                        .arg(m_title)
++                                        .arg(nsecs / 1000000LL)
++                                        .arg(nsecs % 1000000LL, 6, 10, QChar('0'));
++            dbgPerformance.noquote() << message;
++#if defined(Q_OS_ANDROID) && defined(NANQUIM_TIMING)
++            KisUsageLogger::log(QStringLiteral("[Nanquim tempo] ") + message);
++#endif
+         }
+     }
+ 
+diff --git a/libs/image/kis_grid_interpolation_tools.h b/libs/image/kis_grid_interpolation_tools.h
+index 54e686863c..68a28ae1e2 100644
+--- a/libs/image/kis_grid_interpolation_tools.h
++++ b/libs/image/kis_grid_interpolation_tools.h
+@@ -186,6 +186,11 @@ struct PaintDevicePolygonOp
+     }
+ 
+     void fastCopyArea(QRect areaToCopy, bool lazy) {
++        // Nanquim: com recorte, cada thread só escreve na sua faixa
++        if (!m_clipRect.isNull()) {
++            areaToCopy &= m_clipRect;
++            if (areaToCopy.isEmpty()) return;
++        }
+ #ifdef DEBUG_PAINTING_POLYGONS
+ 
+         QRect boundRect = areaToCopy;
+@@ -221,6 +226,9 @@ struct PaintDevicePolygonOp
+         //m_rectId++;
+ #endif
+         QRect boundRect = clipDstPolygon.boundingRect().toAlignedRect();
++        if (!m_clipRect.isNull()) {
++            boundRect &= m_clipRect;
++        }
+         if (boundRect.isEmpty()) return;
+ 
+         bool samePolygon = (m_dstDev->colorSpace() == m_srcDev->colorSpace())
+@@ -334,6 +342,16 @@ struct PaintDevicePolygonOp
+         m_canMergeRects = newCanMergeRects;
+     }
+ 
++    /**
++     * Nanquim: limita a escrita a um retângulo do destino. Com isso várias
++     * threads podem processar a mesma grade, cada uma na sua faixa, sem
++     * escrever nos mesmos pixels e na mesma ordem do processamento serial.
++     */
++    inline void setClipRect(const QRect &rect) {
++        m_clipRect = rect;
++    }
++
++    QRect m_clipRect;
+     KisPaintDeviceSP m_srcDev;
+     KisPaintDeviceSP m_dstDev;
+     const qreal m_epsilon {0.001};
+@@ -380,6 +398,10 @@ struct QImagePolygonOp
+     }
+ 
+     void fastCopyArea(QRect areaToCopy, bool lazy) {
++        if (!m_clipRect.isNull()) {
++            areaToCopy &= m_clipRect;
++            if (areaToCopy.isEmpty()) return;
++        }
+         if (lazy) {
+             m_rectsToCopy.append(areaToCopy.adjusted(0, 0, -1, -1));
+             return;
+@@ -423,6 +445,10 @@ struct QImagePolygonOp
+ 
+     void operator() (const QPolygonF &srcPolygon, const QPolygonF &dstPolygon, const QPolygonF &clipDstPolygon) {
+         QRect boundRect = clipDstPolygon.boundingRect().toAlignedRect();
++        if (!m_clipRect.isNull()) {
++            boundRect &= m_clipRect;
++            if (boundRect.isEmpty()) return;
++        }
+ 
+         bool samePolygon = (m_dstImage.format() == m_srcImage.format())
+                 && KisAlgebra2D::fuzzyPointCompare(srcPolygon, dstPolygon, m_epsilon)
+@@ -508,6 +534,12 @@ struct QImagePolygonOp
+         m_canMergeRects = canMergeRects;
+     }
+ 
++    // Nanquim: limita a escrita a um retângulo (coordenadas do destino), ver PaintDevicePolygonOp
++    inline void setClipRect(const QRect &rect) {
++        m_clipRect = rect;
++    }
++    QRect m_clipRect;
++
+     const QImage &m_srcImage;
+     QImage &m_dstImage;
+     QPointF m_srcImageOffset;
+diff --git a/libs/image/kis_image_config.cpp b/libs/image/kis_image_config.cpp
+index eba8c3c38b..cca3dd540b 100644
+--- a/libs/image/kis_image_config.cpp
++++ b/libs/image/kis_image_config.cpp
+@@ -194,8 +194,19 @@ int KisImageConfig::poolLimit() const
+ 
+ qreal KisImageConfig::memoryHardLimitPercent(bool requestDefault) const
+ {
++#ifdef Q_OS_ANDROID
++    // Nanquim: o Android mata o app bem antes de ele usar metade da RAM.
++    // Com um teto menor, o Krita passa a guardar blocos da imagem no disco
++    // (swap próprio) antes de o sistema fechar o app por falta de memória.
++    // Testes no Tab S10 Lite: 25% fazia o Krita trocar dados com o disco no meio
++    // do transformar/liquidificar (lento) e não salvava os desenhos de 1-2 GiB
++    // de qualquer forma. 45% fica perto do padrão do Krita, com um pouco de folga.
++    const qreal fallback = 45.;
++#else
++    const qreal fallback = 50.;
++#endif
+     return !requestDefault ?
+-        m_config.readEntry("memoryHardLimitPercent", 50.) : 50.;
++        m_config.readEntry("memoryHardLimitPercent", fallback) : fallback;
+ }
+ 
+ void KisImageConfig::setMemoryHardLimitPercent(qreal value)
+diff --git a/libs/image/kis_liquify_transform_worker.cpp b/libs/image/kis_liquify_transform_worker.cpp
+index fec30b43a4..0c7d41699f 100644
+--- a/libs/image/kis_liquify_transform_worker.cpp
++++ b/libs/image/kis_liquify_transform_worker.cpp
+@@ -11,6 +11,12 @@
+ #include "kis_dom_utils.h"
+ #include "krita_utils.h"
+ #include "KisSpatialContainer.h"
++#include <NanquimStepTimer.h>
++#include <QThread>
++#include <atomic>
++#include <limits>
++#include <thread>
++#include <vector>
+ 
+ 
+ struct Q_DECL_HIDDEN KisLiquifyTransformWorker::Private
+@@ -415,15 +421,103 @@ void KisLiquifyTransformWorker::run(KisPaintDeviceSP srcDevice, KisPaintDeviceSP
+ {
+     KIS_SAFE_ASSERT_RECOVER_RETURN(*srcDevice->colorSpace() == *dstDevice->colorSpace());
+ 
++    NanquimStepTimer nanquimTimer(QStringLiteral("liquidificar"));
++
+     dstDevice->clear();
+ 
+     using namespace GridIterationTools;
+     QRect correctSubGrid = calculateCorrectSubGrid(m_d->srcBounds, m_d->pixelPrecision, m_d->accumulatedBrushStrokes, m_d->gridSize);
+ 
++    RegularGridIndexesOp probeIndexes(m_d->gridSize);
++    const bool canMergeRects = GridIterationTools::canProcessRectsInRandomOrder(probeIndexes, m_d->transformedPoints, correctSubGrid);
++    const QList<QRectF> areasToCopy = cutOutSubgridFromBounds(correctSubGrid, m_d->srcBounds, m_d->gridSize, m_d->originalPoints);
++
++    // ------------------------------------------------------------------
++    // Nanquim: aplicação em várias threads.
++    //
++    // O destino é dividido em faixas horizontais alinhadas aos blocos (64 px).
++    // Cada faixa percorre, na ordem original, só as linhas da grade que podem
++    // cair nela, e escreve apenas dentro dela (setClipRect). Assim cada pixel
++    // é escrito por uma única thread e na mesma ordem do código serial: o
++    // resultado é idêntico, só que dividido entre os núcleos do aparelho.
++    // ------------------------------------------------------------------
++    const int threadCount = qBound(1, QThread::idealThreadCount(), 8);
++    const QRect extent = m_d->srcBounds | m_d->transformedPointsContainer.exactBounds().toAlignedRect();
++    const int bandHeight = 256;
++
++    if (threadCount > 1 && extent.height() > 2 * bandHeight) {
++        // alcance vertical (no destino) de cada linha de quadrados da grade
++        const int firstRow = correctSubGrid.top();
++        const int endRow = correctSubGrid.bottom();      // linhas válidas: [firstRow, endRow)
++        const int firstCol = correctSubGrid.left();
++        const int lastCol = correctSubGrid.right();
++        const int rows = qMax(0, endRow - firstRow);
++        QVector<qreal> rowMin(rows, std::numeric_limits<qreal>::max());
++        QVector<qreal> rowMax(rows, std::numeric_limits<qreal>::lowest());
++        for (int r = 0; r < rows; r++) {
++            for (int rr = firstRow + r; rr <= firstRow + r + 1; rr++) {
++                for (int c = firstCol; c <= lastCol; c++) {
++                    const qreal y = m_d->transformedPoints[GridIterationTools::pointToIndex(QPoint(c, rr), m_d->gridSize)].y();
++                    rowMin[r] = qMin(rowMin[r], y);
++                    rowMax[r] = qMax(rowMax[r], y);
++                }
++            }
++        }
++
++        const int top = (extent.top() >= 0 ? extent.top() / 64 : (extent.top() - 63) / 64) * 64;
++        const int bandCount = (extent.bottom() - top) / bandHeight + 1;
++        std::atomic<int> nextBand {0};
++
++        auto worker = [&]() {
++            int b;
++            while ((b = nextBand.fetch_add(1)) < bandCount) {
++                const QRect band = QRect(extent.left(), top + b * bandHeight, extent.width(), bandHeight) & extent;
++                if (band.isEmpty()) continue;
++
++                PaintDevicePolygonOp polygonOp(srcDevice, dstDevice);
++                polygonOp.setCanMergeRects(canMergeRects);
++                polygonOp.setClipRect(band);
++
++                int rFirst = -1;
++                int rLast = -1;
++                for (int r = 0; r < rows; r++) {
++                    if (rowMax[r] >= band.top() - 2 && rowMin[r] <= band.bottom() + 2) {
++                        if (rFirst < 0) rFirst = r;
++                        rLast = r;
++                    }
++                }
++
++                if (rFirst >= 0) {
++                    const QRect bandSubGrid(QPoint(firstCol, firstRow + rFirst), QPoint(lastCol, firstRow + rLast + 1));
++                    RegularGridIndexesOp indexesOp(m_d->gridSize);
++                    iterateThroughGrid<AlwaysCompletePolygonPolicy>(polygonOp, indexesOp,
++                                                                    m_d->gridSize,
++                                                                    m_d->originalPoints,
++                                                                    m_d->transformedPoints,
++                                                                    bandSubGrid);
++                }
++                for (int i = 0; i < areasToCopy.length(); i++) {
++                    polygonOp.fastCopyArea(areasToCopy[i].toRect(), false);
++                }
++                polygonOp.finalize();
++            }
++        };
++
++        std::vector<std::thread> pool;
++        for (int i = 1; i < threadCount; i++) {
++            pool.emplace_back(worker);
++        }
++        worker();
++        for (std::thread &t : pool) {
++            t.join();
++        }
++        nanquimTimer.mark(QStringLiteral("aplicar em %1 threads (%2 x %3 px)")
++                          .arg(threadCount).arg(extent.width()).arg(extent.height()));
++        return;
++    }
++
+     PaintDevicePolygonOp polygonOp(srcDevice, dstDevice);
+     RegularGridIndexesOp indexesOp(m_d->gridSize);
+-
+-    bool canMergeRects = GridIterationTools::canProcessRectsInRandomOrder(indexesOp, m_d->transformedPoints, correctSubGrid);
+     polygonOp.setCanMergeRects(canMergeRects);
+ 
+ #ifdef DEBUG_PAINTING_POLYGONS
+@@ -435,7 +529,6 @@ void KisLiquifyTransformWorker::run(KisPaintDeviceSP srcDevice, KisPaintDeviceSP
+                                                     m_d->originalPoints,
+                                                     m_d->transformedPoints,
+                                                     correctSubGrid);
+-    QList<QRectF> areasToCopy = cutOutSubgridFromBounds(correctSubGrid, m_d->srcBounds, m_d->gridSize, m_d->originalPoints);
+ #ifdef DEBUG_PAINTING_POLYGONS
+     QList<QColor> colors = {Qt::blue, Qt::green, Qt::yellow, Qt::black};
+ #endif
+@@ -445,6 +538,7 @@ void KisLiquifyTransformWorker::run(KisPaintDeviceSP srcDevice, KisPaintDeviceSP
+ #endif
+         polygonOp.fastCopyArea(areasToCopy[i].toRect(), false);
+     }
++    nanquimTimer.mark(QStringLiteral("aplicar em 1 thread"));
+ }
+ 
+ QRect KisLiquifyTransformWorker::approxChangeRect(const QRect &rc)
+@@ -554,11 +648,76 @@ QImage KisLiquifyTransformWorker::runOnQImage(const QImage &srcImage,
+     polygonOp.setCanMergeRects(canMergeRects);
+ 
+ 
+-    GridIterationTools::iterateThroughGrid<GridIterationTools::AlwaysCompletePolygonPolicy>(polygonOp, indexesOp,
+-                                                    m_d->gridSize,
+-                                                    originalPointsLocal,
+-                                                    transformedPointsLocal,
+-                                                    correctSubGrid);
++    NanquimStepTimer nanquimTimer(QStringLiteral("liquidificar (previa)"));
++    const int threadCount = qBound(1, QThread::idealThreadCount(), 8);
++    const int bandHeight = 64;
++
++    if (threadCount > 1 && dstBoundsI.height() > 2 * bandHeight && !correctSubGrid.isEmpty()) {
++        // Nanquim: mesma divisão em faixas do run(); cada faixa escreve só nas suas linhas da imagem
++        using namespace GridIterationTools;
++        const int firstRow = correctSubGrid.top();
++        const int endRow = correctSubGrid.bottom();
++        const int firstCol = correctSubGrid.left();
++        const int lastCol = correctSubGrid.right();
++        const int rows = qMax(0, endRow - firstRow);
++        QVector<qreal> rowMin(rows, std::numeric_limits<qreal>::max());
++        QVector<qreal> rowMax(rows, std::numeric_limits<qreal>::lowest());
++        for (int r = 0; r < rows; r++) {
++            for (int rr = firstRow + r; rr <= firstRow + r + 1; rr++) {
++                for (int c = firstCol; c <= lastCol; c++) {
++                    const qreal y = transformedPointsLocal[GridIterationTools::pointToIndex(QPoint(c, rr), m_d->gridSize)].y();
++                    rowMin[r] = qMin(rowMin[r], y);
++                    rowMax[r] = qMax(rowMax[r], y);
++                }
++            }
++        }
++
++        const int bandCount = dstBoundsI.height() / bandHeight + 1;
++        std::atomic<int> nextBand {0};
++        auto worker = [&]() {
++            int b;
++            while ((b = nextBand.fetch_add(1)) < bandCount) {
++                const QRect band = QRect(dstBoundsI.left(), dstBoundsI.top() + b * bandHeight,
++                                         dstBoundsI.width(), bandHeight) & dstBoundsI;
++                if (band.isEmpty()) continue;
++                int rFirst = -1;
++                int rLast = -1;
++                for (int r = 0; r < rows; r++) {
++                    if (rowMax[r] >= band.top() - 2 && rowMin[r] <= band.bottom() + 2) {
++                        if (rFirst < 0) rFirst = r;
++                        rLast = r;
++                    }
++                }
++                if (rFirst < 0) continue;
++                QImagePolygonOp bandOp(srcImage, dstImage, srcImageOffset, dstQImageOffset);
++                bandOp.setCanMergeRects(canMergeRects);
++                bandOp.setClipRect(band);
++                RegularGridIndexesOp bandIndexes(m_d->gridSize);
++                const QRect bandSubGrid(QPoint(firstCol, firstRow + rFirst), QPoint(lastCol, firstRow + rLast + 1));
++                iterateThroughGrid<AlwaysCompletePolygonPolicy>(bandOp, bandIndexes,
++                                                                m_d->gridSize,
++                                                                originalPointsLocal,
++                                                                transformedPointsLocal,
++                                                                bandSubGrid);
++            }
++        };
++        dstImage.detach();   // garante a cópia própria antes de dividir entre as threads
++        std::vector<std::thread> pool;
++        for (int i = 1; i < threadCount; i++) {
++            pool.emplace_back(worker);
++        }
++        worker();
++        for (std::thread &t : pool) {
++            t.join();
++        }
++    } else {
++        GridIterationTools::iterateThroughGrid<GridIterationTools::AlwaysCompletePolygonPolicy>(polygonOp, indexesOp,
++                                                        m_d->gridSize,
++                                                        originalPointsLocal,
++                                                        transformedPointsLocal,
++                                                        correctSubGrid);
++    }
++    nanquimTimer.mark(QStringLiteral("%1 x %2 px").arg(dstBoundsI.width()).arg(dstBoundsI.height()), 30);
+ 
+ 
+     QList<QRectF> areasToCopy = GridIterationTools::cutOutSubgridFromBounds(correctSubGrid, m_d->srcBounds, m_d->gridSize, m_d->originalPoints);
+diff --git a/libs/resources/KisResourceCacheDb.cpp b/libs/resources/KisResourceCacheDb.cpp
+index e901450fa3..00760d30e4 100644
+--- a/libs/resources/KisResourceCacheDb.cpp
++++ b/libs/resources/KisResourceCacheDb.cpp
+@@ -18,6 +18,8 @@
+ #include <QElapsedTimer>
+ #include <QDataStream>
+ #include <QByteArray>
++#include <QCryptographicHash>
++#include <QTimer>
+ #include <QMessageBox>
+ 
+ #include <KritaVersionWrapper.h>
+@@ -28,6 +30,9 @@
+ #include <kis_debug.h>
+ #include <KisUsageLogger.h>
+ 
++#include <KSharedConfig>
++#include <KConfigGroup>
++
+ #include <KisSqlQueryLoader.h>
+ #include <KisDatabaseTransactionLock.h>
+ #include "KisResourceLocator.h"
+@@ -1918,6 +1923,43 @@ QDebug operator<<(QDebug dbg, const ResourceVersion &ver)
+ 
+     return dbg.space();
+ }
++
++/// Nanquim: registro de recursos que falham ao carregar (presets de bundle
++/// com dependência quebrada). Sem isto, cada inicialização recarrega e falha
++/// de novo em todos eles, gastando tempo de abertura. A chave guarda
++/// url+versão: mudou o arquivo, tenta de novo.
++QString brokenResourceKey(const QString &storageLocation, const QString &url)
++{
++    return QString::fromLatin1(QCryptographicHash::hash(
++            (storageLocation + QLatin1Char('/') + url).toUtf8(),
++            QCryptographicHash::Sha1).toHex());
++}
++
++bool isKnownBrokenResource(const KisResourceStorageSP &storage, const ResourceVersion &item)
++{
++    KConfigGroup cfg(KSharedConfig::openConfig(), QStringLiteral("NanquimBrokenResources"));
++    const QStringList saved = cfg.readEntry(brokenResourceKey(storage->location(), item.url), QStringList());
++    return saved.size() == 2
++            && saved.at(0).toLongLong() == item.timestamp.toSecsSinceEpoch()
++            && saved.at(1).toInt() == item.version;
++}
++
++void markBrokenResource(const KisResourceStorageSP &storage, const ResourceVersion &item)
++{
++    KConfigGroup cfg(KSharedConfig::openConfig(), QStringLiteral("NanquimBrokenResources"));
++    cfg.writeEntry(brokenResourceKey(storage->location(), item.url),
++                   QStringList {QString::number(item.timestamp.toSecsSinceEpoch()),
++                                QString::number(item.version)});
++    // sincroniza depois (agrupado): o Android mata o app sem fechar direito,
++    // e sem sync explícito a lista não sobreviveria à sessão
++    QTimer::singleShot(2000, []() { KSharedConfig::openConfig()->sync(); });
++}
++
++void unmarkBrokenResource(const KisResourceStorageSP &storage, const ResourceVersion &item)
++{
++    KConfigGroup cfg(KSharedConfig::openConfig(), QStringLiteral("NanquimBrokenResources"));
++    cfg.deleteEntry(brokenResourceKey(storage->location(), item.url));
++}
+ }
+ 
+ bool KisResourceCacheDb::synchronizeStorage(KisResourceStorageSP storage)
+@@ -2088,10 +2130,21 @@ bool KisResourceCacheDb::synchronizeStorage(KisResourceStorageSP storage)
+         while (itA != endA) {
+             if (itA->resourceId >= 0) break;
+ 
++            /// Nanquim: um recurso que falha (preset de bundle com dependência
++            /// quebrada, por exemplo) voltaria a ser carregado e a falhar em
++            /// TODA inicialização, dezenas ou centenas de vezes. Guarda a
++            /// falha por url+versão e pula sem carregar; se o arquivo mudar
++            /// (timestamp/version), tenta de novo.
++            if (isKnownBrokenResource(storage, *itA)) {
++                ++itA;
++                continue;
++            }
++
+             KoResourceSP res = storage->resource(itA->url);
+ 
+             if (!res) {
+                 KisUsageLogger::log("Could not load resource " + itA->url);
++                markBrokenResource(storage, *itA);
+                 ++itA;
+                 continue;
+             }
+@@ -2100,6 +2153,7 @@ bool KisResourceCacheDb::synchronizeStorage(KisResourceStorageSP storage)
+             res->setMD5Sum(storage->resourceMd5(itA->url));
+             if (!res->valid()) {
+                 KisUsageLogger::log("Could not retrieve md5 for resource " + itA->url);
++                markBrokenResource(storage, *itA);
+                 ++itA;
+                 continue;
+             }
+@@ -2118,6 +2172,8 @@ bool KisResourceCacheDb::synchronizeStorage(KisResourceStorageSP storage)
+                 continue;
+             }
+ 
++            unmarkBrokenResource(storage, *itA);
++
+             auto nextResource = std::upper_bound(itA, endA, *itA, ResourceVersion::CompareByResourceId());
+             for (auto it = std::next(itA); it != nextResource; ++it) {
+                 KoResourceSP res = storage->resource(it->url);
+diff --git a/libs/ui/kis_config.cc b/libs/ui/kis_config.cc
+index c545b5805b..cfed8e6908 100644
+--- a/libs/ui/kis_config.cc
++++ b/libs/ui/kis_config.cc
+@@ -191,7 +191,13 @@ void KisConfig::setUndoEnabled(bool undo) const
+ 
+ int KisConfig::undoStackLimit(bool defaultValue) const
+ {
+-    return (defaultValue ? 200 : m_cfg.readEntry("undoStackLimit", 200));
++#ifdef Q_OS_ANDROID
++    // Nanquim: 100 passos de desfazer guardam bastante e poupam memória no tablet
++    const int fallback = 100;
++#else
++    const int fallback = 200;
++#endif
++    return (defaultValue ? fallback : m_cfg.readEntry("undoStackLimit", fallback));
+ }
+ 
+ void KisConfig::setUndoStackLimit(int limit) const
+@@ -1046,7 +1052,14 @@ void KisConfig::disableOpenGL() const
+ 
+ int KisConfig::openGLFilteringMode(bool defaultValue) const
+ {
+-    return (defaultValue ? 3 : m_cfg.readEntry("OpenGLFilterMode", 3));
++#ifdef Q_OS_ANDROID
++    // Nanquim: filtro trilinear (mipmaps) em vez do bicúbico de alta qualidade.
++    // Na GPU do celular/tablet o bicúbico pesa em todo quadro de zoom e rotação.
++    const int fallback = 2;
++#else
++    const int fallback = 3;
++#endif
++    return (defaultValue ? fallback : m_cfg.readEntry("OpenGLFilterMode", fallback));
+ }
+ 
+ void KisConfig::setOpenGLFilteringMode(int filteringMode)
+@@ -1095,7 +1108,14 @@ void KisConfig::setPreferXcbEglProvider(bool value)
+ 
+ int KisConfig::openGLTextureSize(bool defaultValue) const
+ {
+-    return (defaultValue ? 256 : m_cfg.readEntry("textureSize", 256));
++#ifdef Q_OS_ANDROID
++    // Nanquim: 256 px travou a abertura do canvas OpenGL no Android desde a
++    // build 95 (builds 95-97). Volta para 512 px mantendo o time-lapse calmo.
++    const int fallback = 512;
++#else
++    const int fallback = 256;
++#endif
++    return (defaultValue ? fallback : m_cfg.readEntry("textureSize", fallback));
+ }
+ 
+ bool KisConfig::forceOpenGLFenceWorkaround(bool defaultValue) const
+@@ -1296,7 +1316,11 @@ void KisConfig::setScrollingCheckers(bool sc) const
+ 
+ QColor KisConfig::canvasBorderColor(bool defaultValue) const
+ {
++#ifdef Q_OS_ANDROID
++    QColor color(QColor(36, 35, 31));   // Nanquim: grafite em volta da página (redesenho)
++#else
+     QColor color(QColor(128,128,128));
++#endif
+     return (defaultValue ? color : m_cfg.readEntry("canvasBorderColor", color));
+ }
+ 
+@@ -1307,7 +1331,13 @@ void KisConfig::setCanvasBorderColor(const QColor& color) const
+ 
+ bool KisConfig::hideScrollbars(bool defaultValue) const
+ {
+-    return (defaultValue ? false : m_cfg.readEntry("hideScrollbars", false));
++#ifdef Q_OS_ANDROID
++    // Nanquim: no tablet a página se move com os dedos; sem barras de rolagem
++    const bool hide = true;
++#else
++    const bool hide = false;
++#endif
++    return (defaultValue ? hide : m_cfg.readEntry("hideScrollbars", hide));
+ }
+ 
+ void KisConfig::setHideScrollbars(bool value) const
+@@ -1948,7 +1978,14 @@ void KisConfig::setFavoritePresets(const int value)
+ 
+ bool KisConfig::levelOfDetailEnabled(bool defaultValue) const
+ {
+-    return (defaultValue ? false : m_cfg.readEntry("levelOfDetailEnabled", false));
++#ifdef Q_OS_ANDROID
++    // Nanquim: "Prévia instantânea" ligada. Pincéis grandes e filtros desenham
++    // primeiro numa versão reduzida da imagem e completam depois.
++    const bool fallback = true;
++#else
++    const bool fallback = false;
++#endif
++    return (defaultValue ? fallback : m_cfg.readEntry("levelOfDetailEnabled", fallback));
+ }
+ 
+ void KisConfig::setLevelOfDetailEnabled(bool value)
+diff --git a/libs/ui/kis_control_frame.cpp b/libs/ui/kis_control_frame.cpp
+index 6120281b8c..d029784edd 100644
+--- a/libs/ui/kis_control_frame.cpp
++++ b/libs/ui/kis_control_frame.cpp
+@@ -9,6 +9,7 @@
+  *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
++#include <NanquimStepTimer.h>
+ #include "kis_control_frame.h"
+ 
+ #include <stdlib.h>
+@@ -68,8 +69,11 @@ KisControlFrame::KisControlFrame(KisViewManager *view, QWidget *parent, const ch
+ 
+ void KisControlFrame::setup(QWidget *parent)
+ {
++    NanquimStepTimer nanquimTimer(QStringLiteral("controles do pincel"));
+     createPatternsChooser(m_viewManager);
++    nanquimTimer.mark(QStringLiteral("texturas (patterns)"));
+     createGradientsChooser(m_viewManager);
++    nanquimTimer.mark(QStringLiteral("gradientes"));
+ 
+     QWidgetAction *action  = new QWidgetAction(this);
+     action->setText(i18n("&Patterns"));
+@@ -106,7 +110,9 @@ void KisControlFrame::setup(QWidget *parent)
+     m_dual->setFixedSize(28, 28);
+     connect(m_viewManager, SIGNAL(viewChanged()), SLOT(slotUpdateDisplayRenderer()));
+ 
++    nanquimTimer.mark(QStringLiteral("botoes de cor"));
+     m_paintopBox = new KisPaintopBox(m_viewManager, parent, "paintopbox");
++    nanquimTimer.mark(QStringLiteral("caixa de pinceis (KisPaintopBox)"));
+ 
+     action = new QWidgetAction(this);
+     action->setText(i18n("&Painter's Tools"));
+@@ -129,6 +135,7 @@ void KisControlFrame::setup(QWidget *parent)
+     action->setText(i18n("&Docker Box"));
+     m_viewManager->actionCollection()->addAction("dockerBox", action);
+     action->setDefaultWidget(m_dockerPopupButton);
++    nanquimTimer.mark(QStringLiteral("caixa de paineis"));
+ }
+ 
+ void KisControlFrame::slotUpdateDisplayRenderer()
+diff --git a/libs/ui/kis_paintop_box.cc b/libs/ui/kis_paintop_box.cc
+index fce4647c54..1b4c4a2bd7 100644
+--- a/libs/ui/kis_paintop_box.cc
++++ b/libs/ui/kis_paintop_box.cc
+@@ -336,15 +336,15 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
+     m_workspaceWidget->setToolTip(i18n("Choose workspace"));
+     m_workspaceWidget->setFixedSize(buttonsize, buttonsize);
+     m_workspaceWidget->setIconSize(QSize(iconsize, iconsize));
+-    KisWorkspaceChooser *workspacePopup = new KisWorkspaceChooser(viewManager);
+-    m_workspaceWidget->setPopupWidget(workspacePopup);
+     m_workspaceWidget->setAutoRaise(true);
+     m_workspaceWidget->setArrowVisible(false);
+ 
+-    m_presetsChooserPopup = new KisPaintOpPresetsChooserPopup();
+-    m_presetsChooserPopup->setMinimumHeight(550);
+-    m_presetsChooserPopup->setMinimumWidth(450);
+-    m_presetSelectorPopupButton->setPopupWidget(m_presetsChooserPopup);
++    // Nanquim: a lista de pincéis do Krita e o seletor de espaços de trabalho só são
++    // montados no primeiro uso. Cada um lê o banco de recursos inteiro ao ser criado,
++    // o que pesava na abertura do app, e o Nanquim tem a sua própria janela de pincéis.
++    // "pressed" vem antes do "released" que abre a janela, então ela já existe a tempo.
++    connect(m_presetSelectorPopupButton, &QAbstractButton::pressed, this, [this]() { ensurePresetsChooserPopup(); });
++    connect(m_workspaceWidget, &QAbstractButton::pressed, this, [this]() { ensureWorkspacePopup(); });
+ 
+     QHBoxLayout* baseLayout = new QHBoxLayout(this);
+     m_paintopWidget = new QWidget(this);
+@@ -440,8 +440,11 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
+     action = new QWidgetAction(this);
+     KisActionRegistry::instance()->propertizeAction("show_brush_presets", action);
+     viewManager->actionCollection()->addAction("show_brush_presets", action);
+-    connect(action, SIGNAL(triggered()), m_presetSelectorPopupButton, SLOT(showPopupWidget()));
+-    m_presetsChooserPopup->addAction(action);
++    m_showBrushPresetsAction = action;
++    connect(action, &QAction::triggered, this, [this]() {
++        ensurePresetsChooserPopup();
++        m_presetSelectorPopupButton->showPopupWidget();
++    });
+ 
+     QWidget* mirrorActions = new QWidget(this);
+     QHBoxLayout* mirrorLayout = new QHBoxLayout(mirrorActions);
+@@ -461,8 +464,11 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
+     KisActionRegistry::instance()->propertizeAction(ResourceType::Workspaces, action);
+     viewManager->actionCollection()->addAction(ResourceType::Workspaces, action);
+     action->setDefaultWidget(m_workspaceWidget);
+-    connect(action, SIGNAL(triggered()), m_workspaceWidget, SLOT(showPopupWidget()));
+-    workspacePopup->addAction(action);
++    m_workspaceAction = action;
++    connect(action, &QAction::triggered, this, [this]() {
++        ensureWorkspacePopup();
++        m_workspaceWidget->showPopupWidget();
++    });
+ 
+     if (!cfg.toolOptionsInDocker()) {
+         m_toolOptionsPopup = new KisToolOptionsPopup();
+@@ -509,8 +515,6 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
+ 
+     connect(m_presetsEditor, SIGNAL(createPresetFromScratch(QString)), this, SLOT(slotCreatePresetFromScratch(QString)));
+ 
+-    connect(m_presetsChooserPopup, SIGNAL(resourceSelected(KoResourceSP ))      , SLOT(resourceSelected(KoResourceSP )));
+-    connect(m_presetsChooserPopup, SIGNAL(resourceClicked(KoResourceSP ))      , SLOT(resourceSelected(KoResourceSP )));
+ 
+     connect(m_resourceProvider   , SIGNAL(sigNodeChanged(KisNodeSP))    , SLOT(slotNodeChanged(KisNodeSP)));
+     connect(m_cmbCompositeOp     , SIGNAL(currentIndexChanged(int))           , SLOT(slotSetCompositeMode(int)));
+@@ -582,6 +586,34 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
+ }
+ 
+ 
++void KisPaintopBox::ensurePresetsChooserPopup()
++{
++    if (m_presetsChooserPopup) return;
++    m_presetsChooserPopup = new KisPaintOpPresetsChooserPopup();
++    m_presetsChooserPopup->setMinimumHeight(550);
++    m_presetsChooserPopup->setMinimumWidth(450);
++    m_presetSelectorPopupButton->setPopupWidget(m_presetsChooserPopup);
++    if (m_showBrushPresetsAction) {
++        m_presetsChooserPopup->addAction(m_showBrushPresetsAction);
++    }
++    connect(m_presetsChooserPopup, SIGNAL(resourceSelected(KoResourceSP ))      , SLOT(resourceSelected(KoResourceSP )));
++    connect(m_presetsChooserPopup, SIGNAL(resourceClicked(KoResourceSP ))      , SLOT(resourceSelected(KoResourceSP )));
++    if (m_resourceProvider && m_resourceProvider->currentPreset()) {
++        m_presetsChooserPopup->canvasResourceChanged(m_resourceProvider->currentPreset());
++    }
++}
++
++void KisPaintopBox::ensureWorkspacePopup()
++{
++    if (m_workspacePopupCreated) return;
++    m_workspacePopupCreated = true;
++    KisWorkspaceChooser *workspacePopup = new KisWorkspaceChooser(m_viewManager);
++    m_workspaceWidget->setPopupWidget(workspacePopup);
++    if (m_workspaceAction) {
++        workspacePopup->addAction(m_workspaceAction);
++    }
++}
++
+ KisPaintopBox::~KisPaintopBox()
+ {
+     updatePresetConfig();
+@@ -1042,7 +1074,9 @@ void KisPaintopBox::slotCanvasResourceChanged(int key, const QVariant &value)
+             /**
+              * Update currently selected preset in both the popup widgets
+              */
+-            m_presetsChooserPopup->canvasResourceChanged(preset);
++            if (m_presetsChooserPopup) {
++                m_presetsChooserPopup->canvasResourceChanged(preset);
++            }
+             m_presetsEditor->currentPresetChanged(preset);
+         }
+ 
+diff --git a/libs/ui/kis_paintop_box.h b/libs/ui/kis_paintop_box.h
+index 0017446ce4..216bd51823 100644
+--- a/libs/ui/kis_paintop_box.h
++++ b/libs/ui/kis_paintop_box.h
+@@ -27,6 +27,7 @@
+ #include "kis_signal_auto_connection.h"
+ #include "kis_signal_compressor.h"
+ 
++class QAction;
+ class QMenu;
+ class QToolButton;
+ class QString;
+@@ -136,6 +137,11 @@ private:
+     void sliderChanged(int n);
+     void findDefaultPresets();
+ 
++private:
++    // Nanquim: janelas montadas só no primeiro uso (abertura mais rápida)
++    void ensurePresetsChooserPopup();
++    void ensureWorkspacePopup();
++
+ private Q_SLOTS:
+ 
+     void slotSetupDefaultPreset();
+@@ -200,6 +206,9 @@ private:
+     KisPaintOpPresetsChooserPopup*      m_presetsChooserPopup {0};
+     KisViewManager*                     m_viewManager {0};
+     KisPopupButton*                     m_workspaceWidget {0};
++    QAction*                            m_showBrushPresetsAction {0};
++    QAction*                            m_workspaceAction {0};
++    bool                                m_workspacePopupCreated {false};
+     KisWidgetChooser*                   m_sliderChooser[5];
+     QMap<KoID, KisPaintOpConfigWidget*> m_paintopOptionWidgets;
+     KisFavoriteResourceManager*         m_favoriteResourceManager {0};
+diff --git a/libs/ui/kis_png_converter.cpp b/libs/ui/kis_png_converter.cpp
+index 71bda1f51d..ee6fb1c313 100644
+--- a/libs/ui/kis_png_converter.cpp
++++ b/libs/ui/kis_png_converter.cpp
+@@ -859,7 +859,13 @@ bool KisPNGConverter::saveDeviceToStore(const QString &filename, const QRect &im
+             metaDataStore = new KisMetaData::Store(*metaData);
+         }
+         KisPNGOptions options;
++#ifdef Q_OS_ANDROID
++        // Nanquim: a imagem mesclada do .kra (prévia) é recomprimida a cada
++        // salvamento; no tablet, nível 1 salva bem mais rápido (arquivo um pouco maior)
++        options.compression = 1;
++#else
+         options.compression = 3;
++#endif
+         options.interlace = false;
+         options.tryToSaveAsIndexed = false;
+         options.alpha = true;
+diff --git a/libs/ui/tool/KisToolPaintFactoryBase.cpp b/libs/ui/tool/KisToolPaintFactoryBase.cpp
+index f83e6bb299..089edb90da 100644
+--- a/libs/ui/tool/KisToolPaintFactoryBase.cpp
++++ b/libs/ui/tool/KisToolPaintFactoryBase.cpp
+@@ -5,6 +5,7 @@
+  */
+ #include "KisToolPaintFactoryBase.h"
+ 
++#include <QAction>
+ #include <kis_action_registry.h>
+ #include <kis_action.h>
+ 
+@@ -21,6 +22,26 @@ KisToolPaintFactoryBase::~KisToolPaintFactoryBase()
+ 
+ QList<QAction *> KisToolPaintFactoryBase::createActionsImpl()
+ {
++#ifdef Q_OS_ANDROID
++    // Nanquim: cada ferramenta de pintura recriava (traduzia, configurava e
++    // depois descartava) as mesmas 6 ações compartilhadas. No Android só existe
++    // uma janela, então da segunda ferramenta em diante basta devolver ações
++    // "marcadoras" com o mesmo nome: KoToolFactoryBase::createActions encontra
++    // a ação de verdade na coleção, apaga a marcadora e só anota a ferramenta.
++    static bool s_sharedActionsCreated = false;
++    if (s_sharedActionsCreated) {
++        QList<QAction *> placeholders;
++        for (const char *name : {"increase_brush_size", "decrease_brush_size",
++                                 "rotate_brush_tip_clockwise", "rotate_brush_tip_clockwise_precise",
++                                 "rotate_brush_tip_counter_clockwise", "rotate_brush_tip_counter_clockwise_precise"}) {
++            QAction *placeholder = new QAction(this);
++            placeholder->setObjectName(QLatin1String(name));
++            placeholders << placeholder;
++        }
++        return placeholders;
++    }
++    s_sharedActionsCreated = true;
++#endif
+     KisActionRegistry *actionRegistry = KisActionRegistry::instance();
+     QList<QAction *> actions;
+ 
+diff --git a/plugins/tools/tool_transform2/kis_tool_transform.cc b/plugins/tools/tool_transform2/kis_tool_transform.cc
+index 58238507cc..2e5e1c6449 100644
+--- a/plugins/tools/tool_transform2/kis_tool_transform.cc
++++ b/plugins/tools/tool_transform2/kis_tool_transform.cc
+@@ -204,7 +204,14 @@ void KisToolTransform::resetCursorStyle()
+ void KisToolTransform::slotGlobalConfigChanged()
+ {
+     KConfigGroup group = KSharedConfig::openConfig()->group(toolId());
++    #ifdef Q_OS_ANDROID
++    // Nanquim: no tablet, a prévia por sobreposição deixa o liquidificar e as
++    // deformações respondendo na hora (a prévia "na pilha" recalculava a imagem
++    // inteira a cada ~2 s). O resultado final é o mesmo ao aplicar.
++    m_preferOverlayPreviewStyle = group.readEntry("useOverlayPreviewStyle", true);
++#else
+     m_preferOverlayPreviewStyle = group.readEntry("useOverlayPreviewStyle", false);
++#endif
+     m_forceLodMode = group.readEntry("forceLodMode", true);
+ }
+ 
+diff --git a/plugins/tools/tool_transform2/kis_tool_transform_config_widget.cpp b/plugins/tools/tool_transform2/kis_tool_transform_config_widget.cpp
+index 9a1183f5c3..950385967f 100644
+--- a/plugins/tools/tool_transform2/kis_tool_transform_config_widget.cpp
++++ b/plugins/tools/tool_transform2/kis_tool_transform_config_widget.cpp
+@@ -38,7 +38,11 @@ KisToolTransformConfigWidget::KisToolTransformConfigWidget(TransformTransactionP
+     setupUi(this);
+ 
+     KConfigGroup group = KSharedConfig::openConfig()->group("KisToolTransform");
++    #ifdef Q_OS_ANDROID
++    bool useInStackPreview = !group.readEntry("useOverlayPreviewStyle", true);   // Nanquim
++#else
+     bool useInStackPreview = !group.readEntry("useOverlayPreviewStyle", false);
++#endif
+     bool forceLodMode = group.readEntry("forceLodMode", true);
+ 
+     if (useInStackPreview && !forceLodMode) {
+-- 
+2.56.1
+

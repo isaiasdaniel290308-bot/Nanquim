@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Nanquim -->
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+<svg width="64" height="64" viewBox="0 0 64 64" version="1.1" xmlns="http://www.w3.org/2000/svg">
+ <defs>
+  <linearGradient id="g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+   <stop offset="0" stop-color="#2f7568"/>
+   <stop offset="1" stop-color="#6fbfad"/>
+  </linearGradient>
+ </defs>
+ <path d="M22 5h20c4 8 11 16 11 25 0 12-13 22-21 30-8-8-21-18-21-30 0-9 7-17 11-25z" fill="url(#g)"/>
+ <path d="M32 36v22" stroke="#24231f" stroke-width="3.4" stroke-linecap="round"/>
+ <circle cx="32" cy="28" r="4.6" fill="#24231f"/>
+</svg>
