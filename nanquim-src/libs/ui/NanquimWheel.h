@@ -20,6 +20,7 @@
 #include <QPointer>
 #include <QtMath>
 #include <functional>
+#include "NanquimTheme.h"
 
 /**
  * Nanquim: roda de atalhos (build 60).
@@ -222,15 +223,35 @@ protected:
         g.setRenderHint(QPainter::SmoothPixmapTransform);
         const QPointF c = center();
 
+        const NanquimTheme::Palette &pal = NanquimTheme::palette();
+        QColor discBg = pal.surface;
+        discBg.setAlpha(248);
+
         // sombra leve e disco
         for (int i = 6; i > 0; i--) {
             g.setPen(Qt::NoPen);
             g.setBrush(QColor(0, 0, 0, 10));
             g.drawEllipse(c + QPointF(0, 3), R_OUT + i, R_OUT + i);
         }
-        g.setBrush(QColor(0x2e, 0x2d, 0x29, 246));
-        g.setPen(QPen(QColor(0x52, 0x4f, 0x48), 1));
+        g.setBrush(discBg);
+        g.setPen(QPen(pal.accent, 2.2));
         g.drawEllipse(c, R_OUT, R_OUT);
+
+        // retícula/textura discreta recortada dentro do disco
+        const QPixmap &texPm = NanquimTheme::texturePixmap();
+        if (!texPm.isNull()) {
+            QPainterPath discClip;
+            discClip.addEllipse(c, R_OUT - 1, R_OUT - 1);
+            g.save();
+            g.setClipPath(discClip);
+            if (NanquimTheme::isPerspectiveTexture()) {
+                g.drawPixmap(int(c.x() + R_OUT - texPm.width()),
+                             int(c.y() + R_OUT - texPm.height()), texPm);
+            } else {
+                g.drawTiledPixmap(QRectF(c.x() - R_OUT, c.y() - R_OUT, 2 * R_OUT, 2 * R_OUT), texPm);
+            }
+            g.restore();
+        }
 
         // pincéis no anel de fora
         const qreal step = 360.0 / SECTORS;
@@ -238,15 +259,17 @@ protected:
             const qreal mid = -90.0 + i * step;
             const bool has = i < m_brushes.size() && m_brushes[i].kind != Empty;
             const bool active = has && i == m_active;
-            QPainterPath sector = ringSector(c, R_LAYER_IN + 1, R_OUT - 1, mid - step / 2 + 0.6, mid + step / 2 - 0.6);
+            QPainterPath sector = ringSector(c, R_LAYER_IN + 1, R_OUT - 2, mid - step / 2 + 0.6, mid + step / 2 - 0.6);
             g.setPen(Qt::NoPen);
             if (active) {
                 QLinearGradient grad(c - QPointF(R_OUT, R_OUT), c + QPointF(R_OUT, R_OUT));
-                grad.setColorAt(0, QColor(0x3e, 0x8e, 0x7e));
-                grad.setColorAt(1, QColor(0x6f, 0xbf, 0xad));
+                grad.setColorAt(0, pal.accent);
+                grad.setColorAt(1, pal.accentLight);
                 g.setBrush(grad);
             } else {
-                g.setBrush(QColor(0x34, 0x33, 0x2e));
+                QColor secBg = pal.elevated;
+                secBg.setAlpha(215);
+                g.setBrush(secBg);
             }
             g.drawPath(sector);
             if (i == m_pressedSector) {
@@ -278,7 +301,7 @@ protected:
                     g.setClipPath(clip);
                     g.drawImage(box, br.thumb);
                     g.restore();
-                    g.setPen(QPen(active ? QColor(0x13, 0x23, 0x20) : QColor(0x52, 0x4f, 0x48), 1.4));
+                    g.setPen(QPen(active ? QColor(0x13, 0x23, 0x20) : pal.border2, 1.4));
                     g.setBrush(Qt::NoBrush);
                     g.drawRoundedRect(box, 9, 9);
                 } else {
@@ -292,7 +315,7 @@ protected:
                 // selo: estrela (favorito) ou relógio (recente), do lado de dentro
                 const QPointF badge = c + QPointF(std::cos(a), std::sin(a)) * (R_LAYER_IN + 10);
                 g.setPen(Qt::NoPen);
-                g.setBrush(active ? QColor(0x13, 0x23, 0x20) : QColor(0x2e, 0x2d, 0x29));
+                g.setBrush(active ? QColor(0x13, 0x23, 0x20) : pal.surface);
                 g.drawEllipse(badge, 8, 8);
                 if (br.kind == Favorite) {
                     QPolygonF star;
@@ -301,7 +324,7 @@ protected:
                         const qreal rad = (k % 2 == 0) ? 5.5 : 2.4;
                         star << badge + QPointF(std::cos(sa) * rad, std::sin(sa) * rad);
                     }
-                    g.setBrush(QColor(0x6f, 0xbf, 0xad));
+                    g.setBrush(pal.accentLight);
                     g.drawPolygon(star);
                 } else {
                     g.setPen(QPen(QColor(0xa8, 0xa3, 0x98), 1.3, Qt::SolidLine, Qt::RoundCap));
@@ -313,7 +336,7 @@ protected:
             }
         }
         g.setPen(Qt::NoPen);
-        g.setBrush(QColor(0x2e, 0x2d, 0x29));
+        g.setBrush(pal.surface);
         g.drawEllipse(c, R_LAYER_IN - 1, R_LAYER_IN - 1);
 
         // anel de matiz
@@ -346,6 +369,8 @@ protected:
         lf.setPixelSize(15);
         lf.setWeight(QFont::Bold);
         g.setFont(lf);
+        QColor pillBg = pal.surface2;
+        pillBg.setAlpha(245);
         const int shown = m_pressedSector >= 0 ? m_pressedSector : m_active;
         if (shown >= 0 && shown < m_brushes.size() && m_brushes[shown].kind != Empty) {
             const Brush &br = m_brushes[shown];
@@ -353,8 +378,8 @@ protected:
             const QFontMetrics fm(lf);
             const qreal w = qMin<qreal>(width() - 20, fm.horizontalAdvance(text) + 40);
             const QRectF r(width() / 2.0 - w / 2, 6, w, 40);
-            g.setPen(QPen(QColor(0x2f, 0x75, 0x68), 1));
-            g.setBrush(QColor(0x3a, 0x39, 0x34, 245));
+            g.setPen(QPen(pal.accentDark, 1));
+            g.setBrush(pillBg);
             g.drawRoundedRect(r, 20, 20);
             g.setPen(QColor(0xee, 0xea, 0xe0));
             g.drawText(r, Qt::AlignCenter, fm.elidedText(text, Qt::ElideRight, int(w - 28)));
@@ -366,8 +391,8 @@ protected:
             pf.setPixelSize(14);
             pf.setWeight(QFont::DemiBold);
             g.setFont(pf);
-            g.setPen(QPen(QColor(0x5a, 0x57, 0x4f), 1));
-            g.setBrush(m_layerPressed ? QColor(0x4a, 0x48, 0x42) : QColor(0x3a, 0x39, 0x34, 245));
+            g.setPen(QPen(pal.border3, 1));
+            g.setBrush(m_layerPressed ? pal.line : pillBg);
             g.drawRoundedRect(lr, lr.height() / 2, lr.height() / 2);
             g.setPen(QColor(0xee, 0xea, 0xe0));
             const QString text = QStringLiteral("Camada: ") + m_layer;

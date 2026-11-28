@@ -6,6 +6,7 @@
 
 #include "NanquimTabletUi.h"
 #include "NanquimWheel.h"
+#include "NanquimTheme.h"
 
 #include <QAction>
 #include <QApplication>
@@ -335,6 +336,11 @@ const char *DRAFT = "<path d='M4 20l1-4 11-11 3 3-11 11z' stroke-dasharray='2.4 
 const char *PHONE = "<rect x='7' y='3' width='10' height='18' rx='2.5'/><path d='M10.5 18h3'/>";
 const char *SLICE = "<rect x='5' y='3.5' width='14' height='17' rx='2'/><path d='M3 9h18M3 15h18' stroke-dasharray='2 2'/>";
 const char *TRASH = "<path d='M4.5 7h15M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12.5a1.5 1.5 0 0 0 1.5 1.5h5a1.5 1.5 0 0 0 1.5-1.5L17 7'/><path d='M10 11v6M14 11v6'/>";
+const char *SAVE = "<path d='M5 3h11l3 3v15H5zM8 3v5h8V3M8 21v-7h8v7'/>";
+const char *SIDEBAR = "<rect x='4' y='4' width='16' height='16' rx='2'/><path d='M9 4v16'/>";
+const char *EXIT_FOCUS = "<path d='M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5M9 9L4 4M15 9l5-5M9 15l-5 5M15 15l5 5'/>";
+const char *PALETTE = "<path d='M12 3a9 9 0 1 0 0 18c1.5 0 2-1 2-2s-1-1.5-1-2.5 1-1.5 2-1.5h2a4 4 0 0 0 4-4c0-4.4-4-8-9-8z'/><circle cx='7.5' cy='11' r='1' fill='currentColor' stroke='none'/><circle cx='10' cy='7.5' r='1' fill='currentColor' stroke='none'/><circle cx='14.5' cy='7.5' r='1' fill='currentColor' stroke='none'/>";
+const char *LASSO = "<path d='M5 13c-2-5 3-9 8-8.5S21 9 19 13s-8 4-10 3'/><path d='M9 16c-1 2 0 4 2 5'/>";
 }
 
 // telas do Nanquim (definidas mais adiante)
@@ -342,6 +348,9 @@ void showComicsSheet(KisMainWindow *mw, int tab);
 void showExport(KisMainWindow *mw);
 void showBrushSettings(KisMainWindow *mw);
 void showSettings(KisMainWindow *mw);
+void showCustomize(KisMainWindow *mw);
+void applyNanquimTheme(KisMainWindow *mw);
+void syncFocusPanelButtons(KisMainWindow *mw);
 void showAbout(KisMainWindow *mw);
 void showNewPage(KisMainWindow *mw);
 void refreshStudioBrushes(KisMainWindow *mw);
@@ -711,7 +720,8 @@ QFrame *panelHost(KisMainWindow *mw)
     if (host) return host;
     host = new QFrame(mw);
     host->setObjectName(PANEL_HOST_ID);
-    host->setStyleSheet(QLatin1String(PANEL_HOST_STYLE));
+    host->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(PANEL_HOST_STYLE))
+                        + NanquimTheme::panelTextureRule(QStringLiteral("QFrame#nanquimPanelHost")));
     QVBoxLayout *l = new QVBoxLayout(host);
     l->setContentsMargins(1, 1, 1, 1);
     l->setSpacing(0);
@@ -919,6 +929,16 @@ void closePanel(KisMainWindow *mw, QDockWidget *dw, bool animate)
     if (!panelOpen(mw, dw)) return;
     s_popupAnchor.clear();   // a âncora é do pop-up aberto; fechou, não sobra
     QFrame *host = mw->findChild<QFrame*>(PANEL_HOST_ID);
+    const bool wasFocusPinned = host && host->property("nanquimFocusPinned").toBool();
+    if (host) host->setProperty("nanquimFocusPinned", false);
+    if (wasFocusPinned && animate && dw) {
+        KConfigGroup cfg = KSharedConfig::openConfig()->group(QStringLiteral("Nanquim"));
+        const QString nm = dw->objectName();
+        if (nm == QLatin1String("KisLayerBox")) cfg.writeEntry("focusShowLayers", false);
+        else if (nm == COLOR_DOCK_NAME || nm == QLatin1String("ColorSelectorNg")
+                 || nm == QLatin1String("WideGamutColorSelector")) cfg.writeEntry("focusShowColor", false);
+        cfg.sync();
+    }
     const bool hosted = host && dw->parentWidget() == host;
     QWidget *shown = hosted ? static_cast<QWidget*>(host) : static_cast<QWidget*>(dw);
     const QRect geom(shown->mapTo(mw, QPoint(0, 0)), shown->size());
@@ -928,6 +948,7 @@ void closePanel(KisMainWindow *mw, QDockWidget *dw, bool animate)
     } else {
         dw->hide();
     }
+    syncFocusPanelButtons(mw);
     if (animate) {
         const int direction = hosted ? 0 : (railOnRight() ? -1 : +1);
         if (direction == 0) {
@@ -961,7 +982,7 @@ void ensurePanelHeader(KisMainWindow *mw, QDockWidget *dw)
     QWidget *header = new QWidget(dw);
     header->setObjectName(QStringLiteral("nanquimPanelHeader"));
     header->setAttribute(Qt::WA_StyledBackground);
-    header->setStyleSheet(QLatin1String(PANEL_HOST_STYLE));
+    header->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(PANEL_HOST_STYLE)));
     QHBoxLayout *l = new QHBoxLayout(header);
     l->setContentsMargins(16, 6, 6, 6);
     l->setSpacing(2);
@@ -1092,7 +1113,9 @@ protected:
                 && sizeBox->property("nanquimOpen").toBool();
         // só conta pop-up ABERTO: os painéis existem sempre, escondidos; sem este
         // teste todo toque na página era engolido (build 69: nada abria)
-        const bool hostOpen = host && host->isVisible();
+        const bool focusPinned = host && host->property("nanquimFocusPinned").toBool()
+                && (canvasOnlyActive(m_mw) || s_focusMode);
+        const bool hostOpen = host && host->isVisible() && !focusPinned;
         const bool brushesOpen = brushes && brushes->isVisible();
         if (!hostOpen && !brushesOpen && !sizeOpen) return false;
 
@@ -1146,7 +1169,8 @@ private:
         for (const char *id : {"nanquimStudioTitle", "nanquimStudioTools", "nanquimStudioRail",
                                "nanquimStudioLayers", "nanquimStudioPages",
                                "nanquimThumbDock", "nanquimSwatch", "nanquimExpandTab", "nanquimToolsFlyout",
-                               "nanquimQuickColors", "nanquimFocusBar", "nanquimFocusExit",
+                               "nanquimQuickColors", "nanquimFocusBar", "nanquimFocusFile", "nanquimFocusBrush",
+                               "nanquimFocusPanels", "nanquimFocusExit",
                                "nanquimFocusSize", "nanquimFocusSizeButton", "nanquimSelectionBar"}) {
             if (QWidget *w = m_mw->findChild<QWidget*>(QLatin1String(id))) {
                 if (w->isVisible() && QRect(w->mapToGlobal(QPoint(0, 0)), w->size()).contains(global)) return false;
@@ -2041,8 +2065,9 @@ void updateSafeTop(KisMainWindow *mw)
         return;
     }
     top->setProperty("nanquimInset", inset);
-    top->setStyleSheet(QLatin1String(TOP_STYLE)
-                       + QStringLiteral("QToolBar#nanquimTop { padding-top: %1px; }").arg(4 + inset));
+    top->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(TOP_STYLE))
+                       + QStringLiteral("QToolBar#nanquimTop { padding-top: %1px; }").arg(4 + inset)
+                       + NanquimTheme::panelTextureRule(QStringLiteral("QToolBar#nanquimTop")));
 }
 
 QIcon colorSwatchIcon(const QColor &c)
@@ -3684,6 +3709,18 @@ void setBrushPanelVisible(KisMainWindow *mw, bool visible);
 
 void placeBrushPanel(KisMainWindow *mw, QFrame *panel)
 {
+    if (QWidget *fp = mw->findChild<QWidget*>(QStringLiteral("nanquimFocusPanels"))) {
+        if (fp->isVisible()) {
+            const QRect r(fp->mapTo(mw, QPoint(0, 0)), fp->size());
+            const int w = qMin(420, mw->width() - 24);
+            const int y = r.bottom() + 10;
+            const int h = qMin(620, mw->height() - y - 16);
+            const int x = railOnRight() ? qMax(12, r.left())
+                                        : qBound(12, r.right() - w + 1, mw->width() - 12 - w);
+            panel->setGeometry(x, y, w, qMax(260, h));
+            return;
+        }
+    }
     for (const char *railId : {"nanquimStudioRail", "nanquimFocusBar"}) {
         QWidget *rail = mw->findChild<QWidget*>(QLatin1String(railId));
         if (rail && rail->isVisible()) {
@@ -3732,7 +3769,8 @@ void buildBrushPanel(KisMainWindow *mw)
     s_strokeMw = mw;
     QFrame *panel = new QFrame(mw);
     panel->setObjectName(BRUSH_PANEL_ID);
-    panel->setStyleSheet(QLatin1String(BRUSH_PANEL_STYLE));
+    panel->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(BRUSH_PANEL_STYLE))
+                         + NanquimTheme::panelTextureRule(QStringLiteral("QFrame#nanquimBrushPanel")));
     panel->hide();
 
     QVBoxLayout *root = new QVBoxLayout(panel);
@@ -4032,6 +4070,10 @@ void setBrushPanelVisible(KisMainWindow *mw, bool visible)
     if (!panel) return;
     if (QToolButton *b = mw->findChild<QToolButton*>(QStringLiteral("nanquimBrushButton"))) {
         b->setChecked(visible);
+    }
+    if (QToolButton *fb = mw->findChild<QToolButton*>(QStringLiteral("nanquimFocusBrushesToggle"))) {
+        QSignalBlocker block(fb);
+        fb->setChecked(visible);
     }
     if (panel->isVisible() == visible) return;
     if (visible) {
@@ -4404,7 +4446,8 @@ void buildTopBar(KisMainWindow *mw)
     top->setMovable(false);
     top->setFloatable(false);
     top->setContextMenuPolicy(Qt::PreventContextMenu);
-    top->setStyleSheet(QLatin1String(TOP_STYLE));
+    top->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(TOP_STYLE))
+                       + NanquimTheme::panelTextureRule(QStringLiteral("QToolBar#nanquimTop")));
     top->setIconSize(QSize(22, 22));
     mw->addToolBar(Qt::TopToolBarArea, top);
 
@@ -4557,6 +4600,15 @@ void buildTopBar(KisMainWindow *mw)
         top->addWidget(exportButton);
     }
 
+    // personalizar aparência (tema, intensidade de cor, retícula e imagem no painel)
+    {
+        QToolButton *customize = iconButton(top, i18n("Personalizar aparência"), designIcon(Svg::SETTINGS));
+        customize->setObjectName(QStringLiteral("nanquimCustomizeButton"));
+        customize->setProperty(NEEDS_CANVAS, true);
+        QObject::connect(customize, &QToolButton::clicked, mw, [mw]() { showCustomize(mw); });
+        top->addWidget(customize);
+    }
+
     // modo foco: esconde as barras (sai pelo botão no canto da página)
     {
         static const char *SVG_FOCUS = "<path d='M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4'/>";
@@ -4605,22 +4657,24 @@ const char *NAV_STYLE =
 
 QString navStyle()
 {
-    QString style = QLatin1String(NAV_STYLE);
+    QString style = NanquimTheme::recolorStyle(QLatin1String(NAV_STYLE));
     if (railOnRight()) {
         style.replace(QLatin1String("border-right: 1px solid"), QLatin1String("border-left: 1px solid"));
     }
+    style += NanquimTheme::panelTextureRule(QStringLiteral("QToolBar#nanquimTools"));
     return style;
 }
 
 QString expandTabStyle()
 {
-    return railOnRight()
-        ? QStringLiteral("QToolButton { background: rgba(46,45,41,0.94); border: 1px solid #4a4842;"
+    const QString base = railOnRight()
+        ? QStringLiteral("QToolButton { background: rgba(46,45,41,0.96); border: 1px solid #4a4842;"
                          " border-right: none; border-top-left-radius: 12px; border-bottom-left-radius: 12px;"
                          " padding: 14px 6px; }")
-        : QStringLiteral("QToolButton { background: rgba(46,45,41,0.94); border: 1px solid #4a4842;"
+        : QStringLiteral("QToolButton { background: rgba(46,45,41,0.96); border: 1px solid #4a4842;"
                          " border-left: none; border-top-right-radius: 12px; border-bottom-right-radius: 12px;"
                          " padding: 14px 6px; }");
+    return NanquimTheme::recolorStyle(base);
 }
 
 
@@ -4811,7 +4865,8 @@ void buildToolsFlyout(KisMainWindow *mw)
     KoToolManager *toolManager = KoToolManager::instance();
     QFrame *flyout = new QFrame(mw);
     flyout->setObjectName(FLYOUT_ID);
-    flyout->setStyleSheet(QLatin1String(FLYOUT_STYLE));
+    flyout->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(FLYOUT_STYLE))
+                          + NanquimTheme::panelTextureRule(QStringLiteral("QFrame#nanquimToolsFlyout")));
     flyout->hide();
 
     QVBoxLayout *root = new QVBoxLayout(flyout);
@@ -5624,17 +5679,50 @@ void placeFocusWidgets(KisMainWindow *mw)
         topInset = qMax(0, avail.top() - winTop);
         bottomInset = qBound(0, winBottom - (avail.bottom() + 1), 160);
     }
-    const bool right = railOnRight();
-    if (QFrame *bar = mw->findChild<QFrame*>(QStringLiteral("nanquimFocusBar"))) {
-        const int safeTop = area.top() + topInset + 10;
-        const int safeBottom = area.bottom() - bottomInset - 10;
-        const int availH = qMax(360, safeBottom - safeTop + 1);
-        const int minH = bar->layout() ? bar->layout()->minimumSize().height() : 580;
-        const int targetH = qMin(availH, qMax(minH, qMin(740, availH - 16)));
-        bar->setFixedHeight(targetH);
-        const int x = right ? area.right() - 12 - bar->width() + 1 : area.left() + 12;
-        const int y = safeTop + qMax(0, (availH - bar->height()) / 2);
-        bar->move(x, qBound(safeTop, y, qMax(safeTop, safeBottom - bar->height() + 1)));
+    const int safeTop = area.top() + topInset + 10;
+    const int safeBottom = area.bottom() - bottomInset - 10;
+    const int margin = 12;
+
+    QFrame *fileBox = mw->findChild<QFrame*>(QStringLiteral("nanquimFocusFile"));
+    QFrame *brushBox = mw->findChild<QFrame*>(QStringLiteral("nanquimFocusBrush"));
+    QFrame *panelsBox = mw->findChild<QFrame*>(QStringLiteral("nanquimFocusPanels"));
+    QFrame *bar = mw->findChild<QFrame*>(QStringLiteral("nanquimFocusBar"));
+
+    int leftEdge = area.left() + margin;
+    int rightEdge = area.right() - margin + 1;
+    if (fileBox) {
+        fileBox->adjustSize();
+        fileBox->move(area.left() + margin, safeTop);
+        if (fileBox->isVisible()) fileBox->raise();
+        leftEdge = fileBox->geometry().right() + 12;
+    }
+    if (panelsBox) {
+        panelsBox->adjustSize();
+        panelsBox->move(qMax(area.left() + margin, area.right() - margin - panelsBox->width() + 1), safeTop);
+        if (panelsBox->isVisible()) panelsBox->raise();
+        rightEdge = panelsBox->geometry().left() - 12;
+    }
+    if (brushBox) {
+        brushBox->adjustSize();
+        const int availCenter = rightEdge - leftEdge;
+        if (availCenter >= brushBox->width()) {
+            const int idealX = area.center().x() - brushBox->width() / 2;
+            const int x = qBound(leftEdge, idealX, rightEdge - brushBox->width());
+            brushBox->move(x, safeTop);
+        } else {
+            const int x = qBound(area.left() + margin, area.center().x() - brushBox->width() / 2,
+                                 qMax(area.left() + margin, area.right() - margin - brushBox->width() + 1));
+            brushBox->move(x, safeTop + 60);
+        }
+        if (brushBox->isVisible()) brushBox->raise();
+    }
+    if (bar) {
+        bar->adjustSize();
+        const int topMin = safeTop + 64;
+        const int availH = qMax(220, safeBottom - topMin + 1);
+        const int x = railOnRight() ? area.right() - margin - bar->width() + 1 : area.left() + margin;
+        const int y = topMin + qMax(0, (availH - bar->height()) / 2);
+        bar->move(x, qBound(topMin, y, qMax(topMin, safeBottom - bar->height() + 1)));
         if (bar->isVisible()) bar->raise();
     }
     placeSelectionBar(mw);
@@ -6129,9 +6217,68 @@ void closeFocusSizeBox(KisMainWindow *mw)
     if (QToolButton *b = mw->findChild<QToolButton*>(QStringLiteral("nanquimFocusSizeButton"))) b->setChecked(false);
 }
 
-void showFocusBarAnimated(KisMainWindow *mw, bool visible, bool animate)
+QString focusCapsuleStyle(const QString &objectName)
+{
+    const QString base = QStringLiteral(
+        "QFrame#%1 { background: " NQ_RELEVO2_BG "; border: 1px solid " NQ_RELEVO2_BORDA "; border-radius: 14px; }"
+        "QFrame#nanquimFocusDivider { background: #4a4842; border: none; }"
+        "QFrame#%1 QToolButton { border: 1px solid transparent; border-radius: 10px; padding: 0;"
+        "  min-width: 44px; max-width: 44px; min-height: 44px; max-height: 44px; color: #eeeae0; background: transparent; }"
+        "QFrame#%1 QToolButton:hover { background: rgba(255,255,255,0.06); }"
+        "QFrame#%1 QToolButton:pressed { background: #3a3934; }"
+        "QFrame#%1 QToolButton:checked { background: #2f7568; border: 1px solid #6fbfad; color: #ffffff; }"
+        "QFrame#%1 QToolButton#nanquimFocusEraser:checked { background: #4a2933; border: 1px solid #ff6b8b; color: #ffffff; }"
+        "QFrame#%1 QToolButton::menu-indicator { image: none; width: 0px; }"
+        "QLabel#nanquimFocusVal { color: #eeeae0; font-size: 12px; font-weight: 600; background: transparent; min-width: 42px; }"
+        "QFrame#%1 QSlider:horizontal { min-width: 112px; max-width: 132px; min-height: 36px; background: transparent; }"
+        "QFrame#%1 QSlider::groove:horizontal { height: 6px; background: #4a4842; border-radius: 3px; }"
+        "QFrame#%1 QSlider::sub-page:horizontal { height: 6px; background: #3e8e7e; border-radius: 3px; }"
+        "QFrame#%1 QSlider::handle:horizontal { width: 20px; height: 20px; margin: -7px 0;"
+        "  background: #eeeae0; border: 2px solid #2f7568; border-radius: 10px; }").arg(objectName);
+    return NanquimTheme::recolorStyle(base) + NanquimTheme::panelTextureRule(QStringLiteral("QFrame#") + objectName);
+}
+
+QFrame *focusVDivider(QWidget *parent)
+{
+    QFrame *d = new QFrame(parent);
+    d->setObjectName(QStringLiteral("nanquimFocusDivider"));
+    d->setFixedSize(1, 26);
+    return d;
+}
+
+void syncFocusPanelButtons(KisMainWindow *mw)
 {
     if (!mw) return;
+    QDockWidget *colorDock = findDock(mw, {QStringLiteral("NanquimColorDock"), QStringLiteral("ColorSelectorNg"),
+                                           QStringLiteral("WideGamutColorSelector")});
+    QDockWidget *layersDock = findDock(mw, {QStringLiteral("KisLayerBox")});
+    QFrame *brushes = mw->findChild<QFrame*>(BRUSH_PANEL_ID);
+    if (QToolButton *b = mw->findChild<QToolButton*>(QStringLiteral("nanquimFocusColorToggle"))) {
+        QSignalBlocker block(b);
+        b->setChecked(colorDock && panelOpen(mw, colorDock));
+    }
+    if (QToolButton *b = mw->findChild<QToolButton*>(QStringLiteral("nanquimFocusLayersToggle"))) {
+        QSignalBlocker block(b);
+        b->setChecked(layersDock && panelOpen(mw, layersDock));
+    }
+    if (QToolButton *b = mw->findChild<QToolButton*>(QStringLiteral("nanquimFocusBrushesToggle"))) {
+        QSignalBlocker block(b);
+        b->setChecked(brushes && brushes->isVisible());
+    }
+    if (QToolButton *b = mw->findChild<QToolButton*>(QStringLiteral("nanquimFocusToolsToggle"))) {
+        QFrame *bar = mw->findChild<QFrame*>(QStringLiteral("nanquimFocusBar"));
+        QSignalBlocker block(b);
+        b->setChecked(bar && bar->isVisible());
+    }
+}
+
+void showFocusBarAnimated(KisMainWindow *mw, bool visible, bool animate)
+{
+    Q_UNUSED(animate);
+    if (!mw) return;
+    QFrame *fileBox = mw->findChild<QFrame*>(QStringLiteral("nanquimFocusFile"));
+    QFrame *brushBox = mw->findChild<QFrame*>(QStringLiteral("nanquimFocusBrush"));
+    QFrame *panelsBox = mw->findChild<QFrame*>(QStringLiteral("nanquimFocusPanels"));
     QFrame *bar = mw->findChild<QFrame*>(QStringLiteral("nanquimFocusBar"));
     if (!bar) return;
 
@@ -6142,223 +6289,139 @@ void showFocusBarAnimated(KisMainWindow *mw, bool visible, bool animate)
 
     if (!visible) {
         closeFocusSizeBox(mw);
-        if (!bar->isVisible()) return;
-        if (!animate || !mw->centralWidget() || !mw->centralWidget()->isVisible()) {
-            bar->hide();
-            return;
+        if (QFrame *host = mw->findChild<QFrame*>(PANEL_HOST_ID)) {
+            if (host->property("nanquimFocusPinned").toBool()) {
+                host->setProperty("nanquimFocusPinned", false);
+                if (QDockWidget *dw = hostedDock(mw)) closePanel(mw, dw, false);
+            }
         }
-        const QRect geom(bar->mapTo(mw, QPoint(0, 0)), bar->size());
-        const QPixmap shot = lightShot(bar->grab());
+        if (fileBox) fileBox->hide();
+        if (brushBox) brushBox->hide();
+        if (panelsBox) panelsBox->hide();
         bar->hide();
-        if (shot.isNull() || geom.isEmpty()) return;
-
-        const int dir = railOnRight() ? +1 : -1;
-        const int dist = geom.width() + 22;
-        QRect reach = geom;
-        if (dir < 0) reach.setLeft(reach.left() - dist);
-        else reach.setRight(reach.right() + dist);
-        reach = reach.intersected(mw->rect());
-        if (reach.isEmpty()) return;
-
-        const QPointF base(geom.topLeft() - reach.topLeft());
-        const QEasingCurve curve(QEasingCurve::InCubic);
-        NanquimOverlay *o = new NanquimOverlay(mw, reach, [shot, base, dir, dist, curve](QPainter &g, const QRect &, qreal p) {
-            const qreal e = curve.valueForProgress(p);
-            g.setOpacity(qBound(0.0, 1.0 - e, 1.0));
-            g.drawPixmap(base + QPointF(dir * e * dist, 0), shot);
-        });
-        runOverlay(s_focusBarOverlay, o, 180, QEasingCurve::Linear);
+        syncFocusPanelButtons(mw);
         return;
     }
 
     refreshFocusBarInfo(mw);
     flushLayouts();
+    const KConfigGroup cfg = KSharedConfig::openConfig()->group(QStringLiteral("Nanquim"));
+    const bool showTools = cfg.readEntry("focusShowTools", true);
+
+    if (fileBox) { fileBox->show(); fileBox->raise(); }
+    if (brushBox) { brushBox->show(); brushBox->raise(); }
+    if (panelsBox) { panelsBox->show(); panelsBox->raise(); }
+    bar->setVisible(showTools);
+    if (showTools) bar->raise();
+
     placeFocusWidgets(mw);
 
-    if (!animate || !mw->centralWidget() || !mw->centralWidget()->isVisible()) {
-        bar->show();
-        bar->raise();
-        return;
-    }
-
-    bar->ensurePolished();
-    bar->adjustSize();
-    placeFocusWidgets(mw);
-    const QRect geom(bar->mapTo(mw, QPoint(0, 0)), bar->size());
-    const QPixmap shot = lightShot(bar->grab());
-    bar->hide();
-    if (shot.isNull() || geom.isEmpty()) {
-        bar->show();
-        bar->raise();
-        return;
-    }
-
-    const int dir = railOnRight() ? +1 : -1;
-    const int dist = geom.width() + 24;
-    QRect reach = geom;
-    if (dir < 0) reach.setLeft(reach.left() - dist);
-    else reach.setRight(reach.right() + dist);
-    reach = reach.intersected(mw->rect());
-    if (reach.isEmpty()) {
-        bar->show();
-        bar->raise();
-        return;
-    }
-
-    const QPointF base(geom.topLeft() - reach.topLeft());
-    const QEasingCurve curve = softSpring();
-    NanquimOverlay *o = new NanquimOverlay(mw, reach, [shot, base, dir, dist, curve](QPainter &g, const QRect &, qreal p) {
-        // espera 18% do tempo para a barra antiga recolher antes de surgir com mola
-        const qreal local = qBound(0.0, (p - 0.18) / 0.82, 1.0);
-        if (local <= 0.0) return;
-        const qreal e = curve.valueForProgress(local);
-        g.setOpacity(qBound(0.0, local * 1.6, 1.0));
-        g.drawPixmap(base + QPointF(dir * (1.0 - e) * dist, 0), shot);
-    });
-    QPointer<KisMainWindow> mwGuard(mw);
-    QPointer<QFrame> barGuard(bar);
-    runOverlay(s_focusBarOverlay, o, 290, QEasingCurve::Linear, [mwGuard, barGuard]() {
-        if (!mwGuard || !barGuard) return;
-        if (mwGuard->property("nanquimOnCanvas").toBool() && (canvasOnlyActive(mwGuard) || s_focusMode)) {
-            placeFocusWidgets(mwGuard);
-            barGuard->show();
-            barGuard->raise();
+    // Restaura Cor ou Camadas se o usuário deixou ligado no Modo Foco (padrão: ambos desligados)
+    const bool wantColor = cfg.readEntry("focusShowColor", false);
+    const bool wantLayers = !wantColor && cfg.readEntry("focusShowLayers", false);
+    if (wantColor) {
+        if (QDockWidget *dw = findDock(mw, {QStringLiteral("NanquimColorDock"), QStringLiteral("ColorSelectorNg"),
+                                            QStringLiteral("WideGamutColorSelector")})) {
+            if (QToolButton *anchor = mw->findChild<QToolButton*>(QStringLiteral("nanquimFocusColorToggle"))) {
+                s_popupAnchor = anchor;
+                ensurePanelHeader(mw, dw);
+                showHosted(mw, dw, false);
+                if (QFrame *host = mw->findChild<QFrame*>(PANEL_HOST_ID)) {
+                    host->setProperty("nanquimFocusPinned", true);
+                }
+            }
         }
-    });
+    } else if (wantLayers) {
+        if (QDockWidget *dw = findDock(mw, {QStringLiteral("KisLayerBox")})) {
+            if (QToolButton *anchor = mw->findChild<QToolButton*>(QStringLiteral("nanquimFocusLayersToggle"))) {
+                s_popupAnchor = anchor;
+                ensurePanelHeader(mw, dw);
+                showHosted(mw, dw, false);
+                if (QFrame *host = mw->findChild<QFrame*>(PANEL_HOST_ID)) {
+                    host->setProperty("nanquimFocusPinned", true);
+                }
+            }
+        }
+    }
+    syncFocusPanelButtons(mw);
 }
 
+// Modo Foco inspirado no redesign de u/Mandoart-Studios (r/krita):
+// 4 cápsulas leves sobre a página — arquivo (topo esquerdo), pincel/tamanho/opacidade
+// (topo centro), ferramentas (lateral ocultável) e liga/desliga de Cor, Camadas e Pincéis
+// (topo direito). Botões com 44 px mínimos para toque com S Pen.
 void buildFocusWidgets(KisMainWindow *mw)
 {
-    QFrame *bar = new QFrame(mw);
-    bar->setObjectName(QStringLiteral("nanquimFocusBar"));
-    bar->setFixedWidth(88);
-    bar->setStyleSheet(QStringLiteral(
-        "QFrame#nanquimFocusBar { background: " NQ_RELEVO2_BG "; border: 1px solid " NQ_RELEVO2_BORDA "; border-radius: 22px; }"
-        "QFrame#nanquimFocusDivider { background: #4a4842; border: none; }"
-        "QFrame#nanquimFocusBar QToolButton { border: 1px solid transparent; border-radius: 11px; padding: 0;"
-        "  min-width: 52px; max-width: 52px; min-height: 34px; max-height: 34px; color: #eeeae0; background: transparent; }"
-        "QFrame#nanquimFocusBar QToolButton:pressed { background: #3a3934; }"
-        "QFrame#nanquimFocusBar QToolButton:checked { background: #2f7568; border: 1px solid #6fbfad; color: #ffffff; }"
-        "QFrame#nanquimFocusBar QToolButton#nanquimFocusEraser:checked { background: #4a2933; border: 1px solid #ff6b8b; color: #ffffff; }"
-        "QFrame#nanquimFocusBar QToolButton#nanquimFocusPicker { min-width: 34px; max-width: 34px; min-height: 30px; max-height: 30px;"
-        "  background: #3a3934; border: 1px solid #524f48; border-radius: 9px; }"
-        "QFrame#nanquimFocusBar QToolButton#nanquimFocusPicker:checked { background: #2f7568; border: 1px solid #6fbfad; }"
-        "QFrame#nanquimFocusBar QToolButton#nanquimFocusBack { min-height: 26px; max-height: 26px; }"
-        "QFrame#nanquimFocusBar QToolButton#nanquimFocusColor { min-width: 40px; max-width: 40px; min-height: 36px; max-height: 36px; }"
-        "QFrame#nanquimFocusBar QToolButton#nanquimFocusUndo, QFrame#nanquimFocusBar QToolButton#nanquimFocusRedo,"
-        "QFrame#nanquimFocusBar QToolButton#nanquimFocusBrushesButton, QFrame#nanquimFocusBar QToolButton#nanquimFocusLayersButton,"
-        "QFrame#nanquimFocusBar QToolButton#nanquimFocusRulersButton, QFrame#nanquimFocusBar QToolButton#nanquimFocusSnapButton {"
-        "  min-width: 38px; max-width: 38px; min-height: 38px; max-height: 38px; border-radius: 10px; }"
-        "QFrame#nanquimFocusBar QToolButton#nanquimFocusPrev, QFrame#nanquimFocusBar QToolButton#nanquimFocusNext {"
-        "  min-width: 18px; max-width: 18px; min-height: 22px; max-height: 22px; border-radius: 7px; }"
-        "QFrame#nanquimFocusBar QToolButton#nanquimFocusMore { min-width: 26px; max-width: 26px; min-height: 26px; max-height: 26px; border-radius: 8px; }"
-        "QFrame#nanquimFocusBar QToolButton::menu-indicator { image: none; width: 0px; }"
-        "QPushButton#nanquimFocusHeader { border: none; border-radius: 8px; padding: 1px 2px; background: transparent;"
-        "  color: #eeeae0; font-size: 11px; font-weight: 600; }"
-        "QPushButton#nanquimFocusHeader:pressed { background: #3a3934; }"
-        "QLabel#nanquimFocusVal { color: #a8a398; font-size: 11px; font-weight: 600; background: transparent; }"
-        "QLabel#nanquimFocusPageLabel { color: #a8a398; font-size: 11px; font-weight: 600; background: transparent; }"
-        "QPushButton#nanquimFocusExit { border: none; border-radius: 8px; padding: 2px 3px; min-height: 26px; max-height: 26px;"
-        "  min-width: 34px; max-width: 40px; background: transparent; color: #eeeae0; font-size: 11px; font-weight: 600; }"
-        "QPushButton#nanquimFocusExit:pressed { background: #3a3934; }"
-        "QFrame#nanquimFocusBar QSlider:vertical { width: 32px; background: transparent; }"
-        "QFrame#nanquimFocusBar QSlider::groove:vertical { width: 6px; background: #4a4842; border-radius: 3px; }"
-        "QFrame#nanquimFocusBar QSlider::sub-page:vertical { width: 6px; background: #4a4842; border-radius: 3px; }"
-        "QFrame#nanquimFocusBar QSlider::add-page:vertical { width: 6px; background: #6fbfad; border-radius: 3px; }"
-        "QFrame#nanquimFocusBar QSlider::handle:vertical { height: 20px; width: 20px; margin: 0 -7px;"
-        "  background: #eeeae0; border: 2px solid #2f7568; border-radius: 10px; }"));
-
-    QVBoxLayout *l = new QVBoxLayout(bar);
-    l->setContentsMargins(6, 7, 6, 7);
-    l->setSpacing(2);
-    l->setAlignment(Qt::AlignHCenter);
-
     QPointer<KisMainWindow> mwGuard(mw);
 
-    // 1. Voltar à galeria e título/página compactos (tocar no título abre a faixa do capítulo)
-    QToolButton *backBtn = iconButton(bar, i18n("Voltar à galeria"), designIcon(Svg::BACK, 16), false);
-    backBtn->setObjectName(QStringLiteral("nanquimFocusBack"));
-    backBtn->setIconSize(QSize(16, 16));
-    QObject::connect(backBtn, &QToolButton::clicked, mw, [mwGuard]() {
+    // --- 1. Cápsula topo esquerdo: galeria, salvar, desfazer, refazer, ferramentas ---
+    QFrame *fileBox = new QFrame(mw);
+    fileBox->setObjectName(QStringLiteral("nanquimFocusFile"));
+    fileBox->setStyleSheet(focusCapsuleStyle(QStringLiteral("nanquimFocusFile")));
+    QHBoxLayout *fl = new QHBoxLayout(fileBox);
+    fl->setContentsMargins(6, 6, 6, 6);
+    fl->setSpacing(4);
+
+    QToolButton *galleryBtn = iconButton(fileBox, i18n("Voltar à galeria"), designIcon(Svg::GALLERY, 20), false);
+    galleryBtn->setObjectName(QStringLiteral("nanquimFocusBack"));
+    galleryBtn->setIconSize(QSize(20, 20));
+    QObject::connect(galleryBtn, &QToolButton::clicked, mw, [mwGuard]() {
         if (!mwGuard) return;
         if (QAction *a = act(mwGuard, "view_show_canvas_only")) {
             if (a->isChecked()) a->trigger();
         }
         showGalleryAnimated(mwGuard);
     });
-    l->addWidget(backBtn, 0, Qt::AlignHCenter);
+    fl->addWidget(galleryBtn);
 
-    QPushButton *headerBtn = new QPushButton(QStringLiteral("NANQUIM\np. 1"), bar);
-    headerBtn->setObjectName(QStringLiteral("nanquimFocusHeader"));
-    headerBtn->setToolTip(i18n("Páginas do capítulo"));
-    headerBtn->setFocusPolicy(Qt::NoFocus);
-    headerBtn->setFixedWidth(70);
-    QObject::connect(headerBtn, &QPushButton::clicked, mw, [mwGuard]() {
-        if (mwGuard) toggleFilmstripDrawer(mwGuard);
-    });
-    l->addWidget(headerBtn, 0, Qt::AlignHCenter);
-    l->addWidget(focusDivider(bar), 0, Qt::AlignHCenter);
-
-    // 2. Cor atual (toque abre o popover de cor; toque longo abre a roda de atalhos)
-    QToolButton *colorBtn = new QToolButton(bar);
-    colorBtn->setObjectName(QStringLiteral("nanquimFocusColor"));
-    colorBtn->setProperty("nanquimPopup", QStringLiteral("rail"));
-    colorBtn->setToolTip(i18n("Cor"));
-    colorBtn->setFocusPolicy(Qt::NoFocus);
-    colorBtn->setAutoRaise(true);
-    colorBtn->setIconSize(QSize(28, 28));
-    auto refreshColor = [mwGuard, colorBtn]() {
-        if (!mwGuard || !mwGuard->viewManager() || !mwGuard->viewManager()->canvasResourceProvider()) return;
-        colorBtn->setIcon(swatchIcon(mwGuard->viewManager()->canvasResourceProvider()->fgColor().toQColor(), 28));
-    };
-    refreshColor();
-    if (KisViewManager *vm = mw->viewManager()) {
-        if (vm->canvasResourceProvider()) {
-            QObject::connect(vm->canvasResourceProvider(), &KisCanvasResourceProvider::sigFGColorChanged, colorBtn,
-                             [refreshColor](const KoColor &) { refreshColor(); });
-        }
+    if (QAction *saveAct = act(mw, "file_save")) {
+        QToolButton *saveBtn = iconButton(fileBox, i18n("Salvar"), designIcon(Svg::SAVE, 20), false);
+        saveBtn->setIconSize(QSize(20, 20));
+        QObject::connect(saveBtn, &QToolButton::clicked, saveAct, &QAction::trigger);
+        fl->addWidget(saveBtn);
     }
-    QTimer *colorHold = new QTimer(colorBtn);
-    colorHold->setSingleShot(true);
-    colorHold->setInterval(400);
-    QSharedPointer<bool> colorHeld(new bool(false));
-    QObject::connect(colorBtn, &QToolButton::pressed, colorHold, [colorHold, colorHeld]() {
-        *colorHeld = false;
-        colorHold->start();
-    });
-    QObject::connect(colorBtn, &QToolButton::released, colorHold, &QTimer::stop);
-    QObject::connect(colorHold, &QTimer::timeout, mw, [mwGuard, colorBtn, colorHeld]() {
-        if (!mwGuard) return;
-        *colorHeld = true;
-        openWheel(mwGuard, colorBtn->mapTo(mwGuard, colorBtn->rect().center()));
-    });
-    QObject::connect(colorBtn, &QToolButton::clicked, mw, [mwGuard, colorBtn, colorHeld]() {
-        if (!mwGuard) return;
-        if (*colorHeld) {
-            *colorHeld = false;
-            return;
-        }
-        QDockWidget *dw = findDock(mwGuard, {QStringLiteral("NanquimColorDock"), QStringLiteral("ColorSelectorNg"),
-                                             QStringLiteral("WideGamutColorSelector")});
-        togglePanelFrom(mwGuard, dw, colorBtn);
-    });
-    l->addWidget(colorBtn, 0, Qt::AlignHCenter);
+    fl->addWidget(focusVDivider(fileBox));
 
-    // 3. Ferramentas essenciais: Pincel, Borracha, Lata, Seleção (Laço) e Transformar
+    for (const char *name : {"edit_undo", "edit_redo"}) {
+        const bool isUndo = QLatin1String(name) == QLatin1String("edit_undo");
+        QToolButton *b = iconButton(fileBox, isUndo ? i18n("Desfazer") : i18n("Refazer"),
+                                    designIcon(isUndo ? Svg::UNDO : Svg::REDO, 20), false);
+        b->setObjectName(isUndo ? QStringLiteral("nanquimFocusUndo") : QStringLiteral("nanquimFocusRedo"));
+        b->setIconSize(QSize(20, 20));
+        if (QAction *a = act(mw, name)) {
+            b->setEnabled(a->isEnabled());
+            QObject::connect(b, &QToolButton::clicked, mw, [mwGuard, a, isUndo]() {
+                a->trigger();
+                if (mwGuard) showToast(mwGuard, isUndo ? i18n("Desfazer") : i18n("Refazer"));
+            });
+            QObject::connect(a, &QAction::changed, b, [a, b]() { b->setEnabled(a->isEnabled()); });
+        }
+        fl->addWidget(b);
+    }
+    fl->addWidget(focusVDivider(fileBox));
+
+    QToolButton *toolsToggle = iconButton(fileBox, i18n("Mostrar ou esconder ferramentas"), designIcon(Svg::SIDEBAR, 20), true);
+    toolsToggle->setObjectName(QStringLiteral("nanquimFocusToolsToggle"));
+    toolsToggle->setIconSize(QSize(20, 20));
+    toolsToggle->setChecked(KSharedConfig::openConfig()->group(QStringLiteral("Nanquim")).readEntry("focusShowTools", true));
+    fl->addWidget(toolsToggle);
+
+    // --- 2. Cápsula topo centro: Pincel, Borracha, Tamanho e Opacidade ---
+    QFrame *brushBox = new QFrame(mw);
+    brushBox->setObjectName(QStringLiteral("nanquimFocusBrush"));
+    brushBox->setStyleSheet(focusCapsuleStyle(QStringLiteral("nanquimFocusBrush")));
+    QHBoxLayout *bl = new QHBoxLayout(brushBox);
+    bl->setContentsMargins(6, 6, 10, 6);
+    bl->setSpacing(6);
+
     QAction *erase = act(mw, "erase_action");
     struct Entry { const char *tip; const char *svg; const char *id; bool eraser; const char *objName; };
-    const Entry entries[] = {
-        {"Pincel", Svg::BRUSH, "KritaShape/KisToolBrush", false, "nanquimFocusBrush"},
-        {"Borracha", Svg::ERASER, "KritaShape/KisToolBrush", true, "nanquimFocusEraser"},
-        {"Lata de tinta", Svg::BUCKET, "KritaFill/KisToolFill", false, "nanquimFocusBucket"},
-        {"Seleção", Svg::SELECT, "KisToolSelectOutline", false, "nanquimFocusSelect"},
-        {"Transformar", Svg::TRANSFORM, "KisToolTransform", false, "nanquimFocusTransform"},
-    };
     QList<QPair<QToolButton*, Entry>> buttons;
-    for (const Entry &en : entries) {
+
+    auto addToolBtn = [&](QWidget *parent, QBoxLayout *lay, const Entry &en) {
         QAction *tool = act(mw, en.id);
-        if (!tool || (en.eraser && !erase)) continue;
-        QToolButton *b = iconButton(bar, i18n(en.tip), designIcon(en.svg, 20), true);
+        if (!tool || (en.eraser && !erase)) return;
+        QToolButton *b = iconButton(parent, i18n(en.tip), designIcon(en.svg, 20), true);
         b->setObjectName(QLatin1String(en.objName));
         b->setIconSize(QSize(20, 20));
         const Entry copy = en;
@@ -6369,52 +6432,41 @@ void buildFocusWidgets(KisMainWindow *mw)
                 erase->trigger();
             }
         });
-        l->addWidget(b, 0, Qt::AlignHCenter);
+        lay->addWidget(b);
         buttons << qMakePair(b, en);
-    }
-    l->addWidget(focusDivider(bar), 0, Qt::AlignHCenter);
+    };
 
-    // 4. Sliders diretos (Tamanho + Conta-gotas no meio + Opacidade) e Desfazer/Refazer
-    QLabel *sizeLabel = new QLabel(QStringLiteral("—"), bar);
-    sizeLabel->setObjectName(QStringLiteral("nanquimFocusVal"));
-    sizeLabel->setAlignment(Qt::AlignCenter);
-    QSlider *sizeSlider = new QSlider(Qt::Vertical, bar);
+    addToolBtn(brushBox, bl, {"Pincel", Svg::BRUSH, "KritaShape/KisToolBrush", false, "nanquimFocusBrushBtn"});
+    addToolBtn(brushBox, bl, {"Borracha", Svg::ERASER, "KritaShape/KisToolBrush", true, "nanquimFocusEraser"});
+    bl->addWidget(focusVDivider(brushBox));
+
+    QSlider *sizeSlider = new QSlider(Qt::Horizontal, brushBox);
     sizeSlider->setRange(0, 1000);
-    sizeSlider->setMinimumHeight(46);
-    sizeSlider->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     sizeSlider->setFocusPolicy(Qt::NoFocus);
     sizeSlider->setToolTip(i18n("Tamanho do pincel"));
+    QLabel *sizeLabel = new QLabel(QStringLiteral("—"), brushBox);
+    sizeLabel->setObjectName(QStringLiteral("nanquimFocusVal"));
+    sizeLabel->setAlignment(Qt::AlignCenter);
 
-    QToolButton *pickerBtn = nullptr;
-    if (QAction *pickerAct = act(mw, "KritaSelected/KisToolColorSampler")) {
-        pickerBtn = iconButton(bar, i18n("Conta-gotas"), designIcon(Svg::PICKER, 17), true);
-        pickerBtn->setObjectName(QStringLiteral("nanquimFocusPicker"));
-        pickerBtn->setIconSize(QSize(20, 20));
-        QObject::connect(pickerBtn, &QToolButton::clicked, pickerAct, &QAction::trigger);
-        buttons << qMakePair(pickerBtn, Entry{"Conta-gotas", Svg::PICKER, "KritaSelected/KisToolColorSampler", false, "nanquimFocusPicker"});
-    }
-
-    QSlider *opSlider = new QSlider(Qt::Vertical, bar);
+    QSlider *opSlider = new QSlider(Qt::Horizontal, brushBox);
     opSlider->setRange(1, 100);
     opSlider->setValue(100);
-    opSlider->setMinimumHeight(42);
-    opSlider->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     opSlider->setFocusPolicy(Qt::NoFocus);
     opSlider->setToolTip(i18n("Opacidade"));
-    QLabel *opLabel = new QLabel(QStringLiteral("100%"), bar);
+    QLabel *opLabel = new QLabel(QStringLiteral("100%"), brushBox);
     opLabel->setObjectName(QStringLiteral("nanquimFocusVal"));
     opLabel->setAlignment(Qt::AlignCenter);
 
-    l->addWidget(sizeLabel, 0, Qt::AlignHCenter);
-    l->addWidget(sizeSlider, 2, Qt::AlignHCenter);
-    if (pickerBtn) l->addWidget(pickerBtn, 0, Qt::AlignHCenter);
-    l->addWidget(opSlider, 2, Qt::AlignHCenter);
-    l->addWidget(opLabel, 0, Qt::AlignHCenter);
+    bl->addWidget(sizeSlider);
+    bl->addWidget(sizeLabel);
+    bl->addWidget(focusVDivider(brushBox));
+    bl->addWidget(opSlider);
+    bl->addWidget(opLabel);
 
     QObject::connect(sizeSlider, &QSlider::valueChanged, mw, [mwGuard, sizeLabel](int v) {
         if (!mwGuard) return;
         const qreal px = sliderToSize(v);
-        sizeLabel->setText(QString::number(qRound(px)));
+        sizeLabel->setText(QStringLiteral("%1 px").arg(qRound(px)));
         if (KoCanvasResourceProvider *r = resources(mwGuard)) {
             r->setResource(KoCanvasResource::Size, px);
             showBrushHud(mwGuard);
@@ -6436,7 +6488,7 @@ void buildFocusWidgets(KisMainWindow *mw)
         if (sv.isValid()) {
             QSignalBlocker block(sizeSlider);
             sizeSlider->setValue(sizeToSlider(sv.toReal()));
-            sizeLabel->setText(QString::number(qRound(sv.toReal())));
+            sizeLabel->setText(QStringLiteral("%1 px").arg(qRound(sv.toReal())));
         }
         const QVariant ov = r->resource(KoCanvasResource::Opacity);
         if (ov.isValid()) {
@@ -6447,75 +6499,33 @@ void buildFocusWidgets(KisMainWindow *mw)
         }
     };
     if (KoCanvasResourceProvider *r = resources(mw)) {
-        QObject::connect(r, &KoCanvasResourceProvider::canvasResourceChanged, bar, [pullSliders](int key, const QVariant &) {
+        QObject::connect(r, &KoCanvasResourceProvider::canvasResourceChanged, brushBox, [pullSliders](int key, const QVariant &) {
             if (key == KoCanvasResource::Size || key == KoCanvasResource::Opacity
                     || key == KoCanvasResource::CurrentPaintOpPreset) {
                 pullSliders();
             }
         });
     }
-    QTimer::singleShot(0, bar, pullSliders);
+    QTimer::singleShot(0, brushBox, pullSliders);
 
-    // Desfazer e Refazer logo abaixo dos sliders
-    QHBoxLayout *undoRow = new QHBoxLayout();
-    undoRow->setContentsMargins(0, 2, 0, 0);
-    undoRow->setSpacing(2);
-    for (const char *name : {"edit_undo", "edit_redo"}) {
-        const bool isUndo = QLatin1String(name) == QLatin1String("edit_undo");
-        QToolButton *b = iconButton(bar, isUndo ? i18n("Desfazer") : i18n("Refazer"),
-                                    designIcon(isUndo ? Svg::UNDO : Svg::REDO, 16), false);
-        b->setObjectName(isUndo ? QStringLiteral("nanquimFocusUndo") : QStringLiteral("nanquimFocusRedo"));
-        b->setIconSize(QSize(16, 16));
-        if (QAction *a = act(mw, name)) {
-            b->setEnabled(a->isEnabled());
-            QObject::connect(b, &QToolButton::clicked, mw, [mwGuard, a, isUndo]() {
-                a->trigger();
-                if (mwGuard) showToast(mwGuard, isUndo ? i18n("Desfazer") : i18n("Refazer"));
-            });
-            QObject::connect(a, &QAction::changed, b, [a, b]() { b->setEnabled(a->isEnabled()); });
-        }
-        undoRow->addWidget(b);
-    }
-    l->addLayout(undoRow);
-    l->addWidget(focusDivider(bar), 0, Qt::AlignHCenter);
+    // --- 3. Cápsula lateral de ferramentas (ocultável) ---
+    QFrame *bar = new QFrame(mw);
+    bar->setObjectName(QStringLiteral("nanquimFocusBar"));
+    bar->setStyleSheet(focusCapsuleStyle(QStringLiteral("nanquimFocusBar")));
+    QVBoxLayout *tl = new QVBoxLayout(bar);
+    tl->setContentsMargins(6, 6, 6, 6);
+    tl->setSpacing(4);
+    tl->setAlignment(Qt::AlignHCenter);
 
-    // 5. Pincéis e Camadas lado a lado
-    QHBoxLayout *panelsRow = new QHBoxLayout();
-    panelsRow->setContentsMargins(0, 0, 0, 0);
-    panelsRow->setSpacing(2);
-    QToolButton *brushesBtn = iconButton(bar, i18n("Pincéis"), designIcon(Svg::PEN, 20), false);
-    brushesBtn->setObjectName(QStringLiteral("nanquimFocusBrushesButton"));
-    brushesBtn->setIconSize(QSize(20, 20));
-    QObject::connect(brushesBtn, &QToolButton::clicked, mw, [mwGuard, brushesBtn]() {
-        if (!mwGuard) return;
-        QFrame *panel = mwGuard->findChild<QFrame*>(BRUSH_PANEL_ID);
-        const bool wasOpen = panel && panel->isVisible();
-        setBrushPanelVisible(mwGuard, !wasOpen);
-        if (!wasOpen) s_popupAnchor = brushesBtn;
-    });
-    panelsRow->addWidget(brushesBtn);
+    addToolBtn(bar, tl, {"Mover", Svg::MOVE, "KritaTransform/KisToolMove", false, "nanquimFocusMove"});
+    addToolBtn(bar, tl, {"Seleção retangular", Svg::SELECT, "KisToolSelectRectangular", false, "nanquimFocusRect"});
+    addToolBtn(bar, tl, {"Laço", Svg::LASSO, "KisToolSelectOutline", false, "nanquimFocusSelect"});
+    tl->addWidget(focusDivider(bar), 0, Qt::AlignHCenter);
+    addToolBtn(bar, tl, {"Lata de tinta", Svg::BUCKET, "KritaFill/KisToolFill", false, "nanquimFocusBucket"});
+    addToolBtn(bar, tl, {"Conta-gotas", Svg::PICKER, "KritaSelected/KisToolColorSampler", false, "nanquimFocusPicker"});
+    addToolBtn(bar, tl, {"Transformar", Svg::TRANSFORM, "KisToolTransform", false, "nanquimFocusTransform"});
+    tl->addWidget(focusDivider(bar), 0, Qt::AlignHCenter);
 
-    if (QDockWidget *layersDock = findDock(mw, {QStringLiteral("KisLayerBox")})) {
-        QToolButton *layersBtn = iconButton(bar, i18n("Camadas"), designIcon(Svg::LAYERS, 20), true);
-        layersBtn->setObjectName(QStringLiteral("nanquimFocusLayersButton"));
-        layersBtn->setProperty("nanquimPopup", QStringLiteral("rail"));
-        layersBtn->setIconSize(QSize(20, 20));
-        QObject::connect(layersBtn, &QToolButton::clicked, mw, [mwGuard, layersDock, layersBtn]() {
-            if (!mwGuard) return;
-            togglePanelFrom(mwGuard, layersDock, layersBtn);
-            layersBtn->setChecked(panelOpen(mwGuard, layersDock));
-        });
-        QObject::connect(layersDock->toggleViewAction(), &QAction::toggled, layersBtn, [layersBtn](bool on) {
-            layersBtn->setChecked(on);
-        });
-        panelsRow->addWidget(layersBtn);
-    }
-    l->addLayout(panelsRow);
-
-    // 5b. Réguas (Perspectiva/Paralela/Retícula/Extrair linha) e Ímã (Snap) lado a lado
-    QHBoxLayout *rulersRow = new QHBoxLayout();
-    rulersRow->setContentsMargins(0, 0, 0, 0);
-    rulersRow->setSpacing(2);
     QToolButton *rulersBtn = iconButton(bar, i18n("Quadrinhos e réguas"), designIcon(Svg::RULER, 20), false);
     rulersBtn->setObjectName(QStringLiteral("nanquimFocusRulersButton"));
     rulersBtn->setProperty("nanquimPopup", QStringLiteral("rail"));
@@ -6526,7 +6536,7 @@ void buildFocusWidgets(KisMainWindow *mw)
     });
     rulersBtn->setMenu(focusRulerMenu);
     rulersBtn->setPopupMode(QToolButton::InstantPopup);
-    rulersRow->addWidget(rulersBtn);
+    tl->addWidget(rulersBtn);
 
     QToolButton *snapBtn = iconButton(bar, i18n("Ímã nas réguas (Snap)"), designIcon(Svg::MAGNET, 20), true);
     snapBtn->setObjectName(QStringLiteral("nanquimFocusSnapButton"));
@@ -6539,73 +6549,103 @@ void buildFocusWidgets(KisMainWindow *mw)
             snapBtn->setChecked(on);
             if (mwGuard) showToast(mwGuard, on ? i18n("Ímã nas réguas: ligado") : i18n("Ímã nas réguas: desligado"));
         });
-        QObject::connect(snapAct, &QAction::toggled, snapBtn, [snapBtn](bool on) {
-            snapBtn->setChecked(on);
-        });
-        QObject::connect(snapAct, &QAction::changed, snapBtn, [snapAct, snapBtn]() {
-            snapBtn->setChecked(snapAct->isChecked());
-        });
+        QObject::connect(snapAct, &QAction::toggled, snapBtn, [snapBtn](bool on) { snapBtn->setChecked(on); });
+        QObject::connect(snapAct, &QAction::changed, snapBtn, [snapAct, snapBtn]() { snapBtn->setChecked(snapAct->isChecked()); });
     } else {
         snapBtn->setEnabled(false);
     }
-    rulersRow->addWidget(snapBtn);
-    l->addLayout(rulersRow);
+    tl->addWidget(snapBtn);
 
-    // 6. Paginação compacta em linha única (< 1/1 >)
-    QHBoxLayout *pageRow = new QHBoxLayout();
-    pageRow->setContentsMargins(0, 0, 0, 0);
-    pageRow->setSpacing(1);
-    QToolButton *prevBtn = iconButton(bar, i18n("Página anterior"), designIcon(Svg::BACK, 12), false);
-    prevBtn->setObjectName(QStringLiteral("nanquimFocusPrev"));
-    prevBtn->setIconSize(QSize(12, 12));
-    prevBtn->setEnabled(false);
-    QLabel *pageLabel = new QLabel(QStringLiteral("1/1"), bar);
-    pageLabel->setObjectName(QStringLiteral("nanquimFocusPageLabel"));
-    pageLabel->setAlignment(Qt::AlignCenter);
-    QToolButton *nextBtn = iconButton(bar, i18n("Próxima página"), designIcon(Svg::FORWARD, 12), false);
-    nextBtn->setObjectName(QStringLiteral("nanquimFocusNext"));
-    nextBtn->setIconSize(QSize(12, 12));
-    nextBtn->setEnabled(false);
-    QObject::connect(prevBtn, &QToolButton::clicked, mw, [mwGuard, bar]() {
-        if (!mwGuard) return;
-        const QString p = bar->property("nanquimFocusPrevPath").toString();
-        if (!p.isEmpty()) focusBarOpenPage(mwGuard, p);
+    QObject::connect(toolsToggle, &QToolButton::clicked, mw, [mwGuard, bar](bool on) {
+        KConfigGroup cfg = KSharedConfig::openConfig()->group(QStringLiteral("Nanquim"));
+        cfg.writeEntry("focusShowTools", on);
+        cfg.sync();
+        bar->setVisible(on);
+        if (on && mwGuard) placeFocusWidgets(mwGuard);
     });
-    QObject::connect(nextBtn, &QToolButton::clicked, mw, [mwGuard, bar]() {
-        if (!mwGuard) return;
-        const QString p = bar->property("nanquimFocusNextPath").toString();
-        if (!p.isEmpty()) focusBarOpenPage(mwGuard, p);
-    });
-    pageRow->addWidget(prevBtn);
-    pageRow->addWidget(pageLabel, 1);
-    pageRow->addWidget(nextBtn);
-    l->addLayout(pageRow);
-    l->addWidget(focusDivider(bar), 0, Qt::AlignHCenter);
 
-    // 7. Mais opções (...) e Sair lado a lado
-    QHBoxLayout *footRow = new QHBoxLayout();
-    footRow->setContentsMargins(0, 0, 0, 0);
-    footRow->setSpacing(2);
-    QToolButton *moreBtn = iconButton(bar, i18n("Mais opções"), designIcon(Svg::MORE, 16), false);
-    moreBtn->setObjectName(QStringLiteral("nanquimFocusMore"));
-    moreBtn->setIconSize(QSize(16, 16));
-    QMenu *moreMenu = new QMenu(moreBtn);
-    QObject::connect(moreMenu, &QMenu::aboutToShow, mw, [mwGuard, moreMenu]() {
-        moreMenu->clear();
-        if (!mwGuard || !mwGuard->menuBar()) return;
-        Q_FOREACH (QAction *a, mwGuard->menuBar()->actions()) {
-            moreMenu->addAction(a);
+    // --- 4. Cápsula topo direito: liga/desliga Cor, Camadas, Pincéis, Personalizar e Sair ---
+    QFrame *panelsBox = new QFrame(mw);
+    panelsBox->setObjectName(QStringLiteral("nanquimFocusPanels"));
+    panelsBox->setStyleSheet(focusCapsuleStyle(QStringLiteral("nanquimFocusPanels")));
+    QHBoxLayout *pl = new QHBoxLayout(panelsBox);
+    pl->setContentsMargins(6, 6, 6, 6);
+    pl->setSpacing(4);
+
+    auto toggleFocusDock = [mwGuard](QDockWidget *dw, QToolButton *anchor, const char *cfgKey, const char *otherKey) {
+        if (!mwGuard || !dw) return;
+        const bool wasOpen = panelOpen(mwGuard, dw);
+        setBrushPanelVisible(mwGuard, false);
+        KConfigGroup cfg = KSharedConfig::openConfig()->group(QStringLiteral("Nanquim"));
+        if (wasOpen) {
+            closePanel(mwGuard, dw, true);
+            cfg.writeEntry(cfgKey, false);
+            cfg.sync();
+        } else {
+            if (QDockWidget *other = hostedDock(mwGuard)) closePanel(mwGuard, other, false);
+            s_popupAnchor = anchor;
+            ensurePanelHeader(mwGuard, dw);
+            showHosted(mwGuard, dw, true);
+            if (QFrame *host = mwGuard->findChild<QFrame*>(PANEL_HOST_ID)) {
+                host->setProperty("nanquimFocusPinned", true);
+            }
+            cfg.writeEntry(cfgKey, true);
+            cfg.writeEntry(otherKey, false);
+            cfg.sync();
         }
-    });
-    moreBtn->setMenu(moreMenu);
-    moreBtn->setPopupMode(QToolButton::InstantPopup);
-    footRow->addWidget(moreBtn);
+        syncFocusPanelButtons(mwGuard);
+    };
 
-    QPushButton *exitBtn = new QPushButton(i18n("Sair"), bar);
+    if (QDockWidget *colorDock = findDock(mw, {QStringLiteral("NanquimColorDock"), QStringLiteral("ColorSelectorNg"),
+                                               QStringLiteral("WideGamutColorSelector")})) {
+        QToolButton *colorToggle = iconButton(panelsBox, i18n("Mostrar ou esconder Cor"), designIcon(Svg::PALETTE, 20), true);
+        colorToggle->setObjectName(QStringLiteral("nanquimFocusColorToggle"));
+        colorToggle->setProperty("nanquimPopup", QStringLiteral("below"));
+        colorToggle->setIconSize(QSize(20, 20));
+        QObject::connect(colorToggle, &QToolButton::clicked, mw, [toggleFocusDock, colorDock, colorToggle]() {
+            toggleFocusDock(colorDock, colorToggle, "focusShowColor", "focusShowLayers");
+        });
+        pl->addWidget(colorToggle);
+    }
+
+    if (QDockWidget *layersDock = findDock(mw, {QStringLiteral("KisLayerBox")})) {
+        QToolButton *layersToggle = iconButton(panelsBox, i18n("Mostrar ou esconder Camadas"), designIcon(Svg::LAYERS, 20), true);
+        layersToggle->setObjectName(QStringLiteral("nanquimFocusLayersToggle"));
+        layersToggle->setProperty("nanquimPopup", QStringLiteral("below"));
+        layersToggle->setIconSize(QSize(20, 20));
+        QObject::connect(layersToggle, &QToolButton::clicked, mw, [toggleFocusDock, layersDock, layersToggle]() {
+            toggleFocusDock(layersDock, layersToggle, "focusShowLayers", "focusShowColor");
+        });
+        pl->addWidget(layersToggle);
+    }
+
+    QToolButton *brushesToggle = iconButton(panelsBox, i18n("Pincéis"), designIcon(Svg::PEN, 20), true);
+    brushesToggle->setObjectName(QStringLiteral("nanquimFocusBrushesToggle"));
+    brushesToggle->setIconSize(QSize(20, 20));
+    QObject::connect(brushesToggle, &QToolButton::clicked, mw, [mwGuard, brushesToggle]() {
+        if (!mwGuard) return;
+        QFrame *panel = mwGuard->findChild<QFrame*>(BRUSH_PANEL_ID);
+        const bool wasOpen = panel && panel->isVisible();
+        setBrushPanelVisible(mwGuard, !wasOpen);
+        if (!wasOpen) s_popupAnchor = brushesToggle;
+        syncFocusPanelButtons(mwGuard);
+    });
+    pl->addWidget(brushesToggle);
+
+    pl->addWidget(focusVDivider(panelsBox));
+
+    QToolButton *customBtn = iconButton(panelsBox, i18n("Personalizar aparência"), designIcon(Svg::SETTINGS, 20), false);
+    customBtn->setObjectName(QStringLiteral("nanquimFocusCustomize"));
+    customBtn->setIconSize(QSize(20, 20));
+    QObject::connect(customBtn, &QToolButton::clicked, mw, [mwGuard]() {
+        if (mwGuard) showCustomize(mwGuard);
+    });
+    pl->addWidget(customBtn);
+
+    QToolButton *exitBtn = iconButton(panelsBox, i18n("Sair do modo foco"), designIcon(Svg::EXIT_FOCUS, 20), false);
     exitBtn->setObjectName(QStringLiteral("nanquimFocusExit"));
-    exitBtn->setToolTip(i18n("Sair do modo foco"));
-    exitBtn->setFocusPolicy(Qt::NoFocus);
-    QObject::connect(exitBtn, &QPushButton::clicked, mw, [mwGuard]() {
+    exitBtn->setIconSize(QSize(20, 20));
+    QObject::connect(exitBtn, &QToolButton::clicked, mw, [mwGuard]() {
         if (!mwGuard) return;
         if (QAction *a = act(mwGuard, "view_show_canvas_only")) {
             if (a->isChecked()) {
@@ -6615,8 +6655,7 @@ void buildFocusWidgets(KisMainWindow *mw)
         }
         setFocusMode(mwGuard, false);
     });
-    footRow->addWidget(exitBtn);
-    l->addLayout(footRow);
+    pl->addWidget(exitBtn);
 
     // Sincroniza ferramenta ativa e avisa discretamente ao trocar no modo foco
     KoToolManager *toolManager = KoToolManager::instance();
@@ -6626,10 +6665,7 @@ void buildFocusWidgets(KisMainWindow *mw)
         for (const auto &pair : buttons) {
             const QLatin1String id(pair.second.id);
             const bool isBrush = id == QLatin1String("KritaShape/KisToolBrush");
-            const bool isSelect = id == QLatin1String("KisToolSelectOutline");
-            const bool matched = isSelect
-                    ? active.startsWith(QLatin1String("KisToolSelect"))
-                    : (active == id && (!isBrush || pair.second.eraser == erasing));
+            const bool matched = (active == id && (!isBrush || pair.second.eraser == erasing));
             pair.first->setChecked(matched);
         }
         pullSliders();
@@ -6646,6 +6682,7 @@ void buildFocusWidgets(KisMainWindow *mw)
         QString name;
         if (id == QLatin1String("KritaShape/KisToolBrush")) name = erasing ? i18n("Borracha") : i18n("Pincel");
         else if (id == QLatin1String("KritaFill/KisToolFill")) name = i18n("Lata de tinta");
+        else if (id == QLatin1String("KritaTransform/KisToolMove")) name = i18n("Mover");
         else if (id.startsWith(QLatin1String("KisToolSelect"))) name = i18n("Seleção");
         else if (id == QLatin1String("KisToolTransform")) name = i18n("Transformar");
         else if (id == QLatin1String("KritaSelected/KisToolColorSampler")) name = i18n("Conta-gotas");
@@ -6657,8 +6694,11 @@ void buildFocusWidgets(KisMainWindow *mw)
     });
     if (erase) QObject::connect(erase, &QAction::toggled, bar, [sync](bool) { sync(); });
     QTimer::singleShot(0, bar, sync);
-    bar->adjustSize();
-    bar->hide();
+
+    for (QFrame *f : {fileBox, brushBox, panelsBox, bar}) {
+        f->adjustSize();
+        f->hide();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6777,20 +6817,23 @@ void updateSelectionBar(KisMainWindow *mw, bool animate)
     });
 }
 
+const char *SELECTION_BAR_STYLE =
+    "QFrame#nanquimSelectionBar { background: " NQ_RELEVO2_BG "; border: 1px solid " NQ_RELEVO2_BORDA "; border-radius: 20px; }"
+    "QFrame#nanquimSelDivider { background: #4a4842; border: none; }"
+    "QFrame#nanquimSelectionBar QToolButton { border: 1px solid transparent; border-radius: 12px; padding: 0 8px;"
+    "  min-height: 36px; max-height: 36px; color: #eeeae0; font-size: 12px; font-weight: 600; background: transparent; }"
+    "QFrame#nanquimSelectionBar QToolButton:pressed { background: #3a3934; }"
+    "QFrame#nanquimSelectionBar QToolButton:checked { background: #2f7568; border: 1px solid #6fbfad; color: #ffffff; }"
+    "QFrame#nanquimSelectionBar QToolButton#nanquimSelTone { background: #253d37; border: 1px solid #3e8e7e; color: #d8f2eb; }"
+    "QFrame#nanquimSelectionBar QToolButton#nanquimSelTone:pressed { background: #2f7568; color: #ffffff; }"
+    "QFrame#nanquimSelectionBar QToolButton#nanquimSelClear:pressed { background: #4a2933; border: 1px solid #ff6b8b; }";
+
 void buildSelectionBar(KisMainWindow *mw)
 {
     QFrame *bar = new QFrame(mw);
     bar->setObjectName(SELECTION_BAR_ID);
-    bar->setStyleSheet(QStringLiteral(
-        "QFrame#nanquimSelectionBar { background: " NQ_RELEVO2_BG "; border: 1px solid " NQ_RELEVO2_BORDA "; border-radius: 20px; }"
-        "QFrame#nanquimSelDivider { background: #4a4842; border: none; }"
-        "QFrame#nanquimSelectionBar QToolButton { border: 1px solid transparent; border-radius: 12px; padding: 0 8px;"
-        "  min-height: 36px; max-height: 36px; color: #eeeae0; font-size: 12px; font-weight: 600; background: transparent; }"
-        "QFrame#nanquimSelectionBar QToolButton:pressed { background: #3a3934; }"
-        "QFrame#nanquimSelectionBar QToolButton:checked { background: #2f7568; border: 1px solid #6fbfad; color: #ffffff; }"
-        "QFrame#nanquimSelectionBar QToolButton#nanquimSelTone { background: #253d37; border: 1px solid #3e8e7e; color: #d8f2eb; }"
-        "QFrame#nanquimSelectionBar QToolButton#nanquimSelTone:pressed { background: #2f7568; color: #ffffff; }"
-        "QFrame#nanquimSelectionBar QToolButton#nanquimSelClear:pressed { background: #4a2933; border: 1px solid #ff6b8b; }"));
+    bar->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(SELECTION_BAR_STYLE))
+                       + NanquimTheme::panelTextureRule(QStringLiteral("QFrame#nanquimSelectionBar")));
 
     QHBoxLayout *l = new QHBoxLayout(bar);
     l->setContentsMargins(8, 6, 8, 6);
@@ -8692,7 +8735,7 @@ QWidget *buildGallery(KisMainWindow *mw)
     QWidget *gallery = new QWidget();
     gallery->setObjectName(GALLERY_ID);
     gallery->setAttribute(Qt::WA_StyledBackground);
-    gallery->setStyleSheet(QLatin1String(GALLERY_STYLE));
+    gallery->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(GALLERY_STYLE)));
     QVBoxLayout *root = new QVBoxLayout(gallery);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
@@ -9876,7 +9919,7 @@ void showWelcome(KisMainWindow *mw, bool startAtGuide)
     dlg->setObjectName(QStringLiteral("nanquimWelcome"));
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
-    dlg->setStyleSheet(QLatin1String(WELCOME_STYLE));
+    dlg->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(WELCOME_STYLE)));
     dlg->setModal(true);
     dlg->setFixedWidth(qMin(680, mw->width() - 80));
 
@@ -10046,6 +10089,8 @@ void fillNanquimMenu(KisMainWindow *mw, QMenu *menu)
     menu->addSeparator();
     QAction *guide = menu->addAction(i18n("Boas-vindas e guia rápido"));
     QObject::connect(guide, &QAction::triggered, mw, [mw]() { showWelcome(mw, false); });
+    QAction *customize = menu->addAction(i18n("Personalizar aparência…"));
+    QObject::connect(customize, &QAction::triggered, mw, [mw]() { showCustomize(mw); });
     QAction *settings = menu->addAction(i18n("Configurações do Nanquim…"));
     QObject::connect(settings, &QAction::triggered, mw, [mw]() { showSettings(mw); });
     QAction *about = menu->addAction(i18n("Sobre e créditos"));
@@ -10063,7 +10108,7 @@ void buildNanquimMenu(KisMainWindow *mw)
 
 
 // Painéis do modo Clássico no estilo do protótipo: fundo #34332e, títulos discretos,
-// campos e botões arredondados e o azul do Nanquim na seleção. Só nos painéis, para
+// campos e botões arredondados e o destaque do Nanquim na seleção. Só nos painéis, para
 // não pesar o resto da janela (folha de estilo em tudo deixaria a tela mais lenta).
 const char *CLASSIC_DOCK_STYLE =
     "QDockWidget { color: #cfcabf; font-size: 12px; }"
@@ -10096,23 +10141,32 @@ const char *CLASSIC_DOCK_STYLE =
     "QScrollBar::handle:horizontal { background: #7a766d; border-radius: 3px; min-width: 30px; }"
     "QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page { background: none; border: none; width: 0; height: 0; }";
 
-void styleClassicDocks(KisMainWindow *mw)
+void styleClassicDocks(KisMainWindow *mw, bool force = false)
 {
+    const NanquimTheme::Palette &tp = NanquimTheme::palette();
+    const QString baseQss = NanquimTheme::recolorStyle(QLatin1String(CLASSIC_DOCK_STYLE))
+                          + NanquimTheme::panelTextureRule(QStringLiteral("QDockWidget > QWidget"));
+    const QString layerExtra = NanquimTheme::layerBackgroundRule();
+
     const QStringList ids = {QStringLiteral("ColorSelectorNg"), QStringLiteral("WideGamutColorSelector"),
                              QStringLiteral("History"), QStringLiteral("sharedtooldocker"),
                              QStringLiteral("KisLayerBox"), QStringLiteral("PresetDocker")};
     Q_FOREACH (const QString &id, ids) {
         QDockWidget *dw = mw->dockWidget(id);
-        if (!dw || dw->property("nanquimStyled").toBool()) continue;
+        if (!dw || (!force && dw->property("nanquimStyled").toBool())) continue;
         dw->setProperty("nanquimStyled", true);
-        dw->setStyleSheet(QLatin1String(CLASSIC_DOCK_STYLE));
+        if (id == QLatin1String("KisLayerBox") && !layerExtra.isEmpty()) {
+            dw->setStyleSheet(baseQss + layerExtra);
+        } else {
+            dw->setStyleSheet(baseQss);
+        }
         // a lista de camadas pinta a seleção com a cor de destaque da paleta
         QPalette pal = dw->palette();
-        pal.setColor(QPalette::Highlight, QColor(0x2a, 0x3d, 0x38));
+        pal.setColor(QPalette::Highlight, tp.accentTint);
         pal.setColor(QPalette::HighlightedText, QColor(0xee, 0xea, 0xe0));
-        pal.setColor(QPalette::Base, QColor(0x2e, 0x2d, 0x29));
-        pal.setColor(QPalette::AlternateBase, QColor(0x34, 0x33, 0x2e));
-        pal.setColor(QPalette::Window, QColor(0x2e, 0x2d, 0x29));
+        pal.setColor(QPalette::Base, tp.surface);
+        pal.setColor(QPalette::AlternateBase, tp.elevated);
+        pal.setColor(QPalette::Window, tp.surface);
         dw->setPalette(pal);
     }
     // títulos em português como no protótipo
@@ -10257,7 +10311,8 @@ QDialog *makeSheet(KisMainWindow *mw, int width, int height = 0)
     d->setObjectName(QStringLiteral("nanquimSheet"));
     d->setAttribute(Qt::WA_DeleteOnClose);
     d->setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
-    d->setStyleSheet(QLatin1String(SHEET_STYLE));
+    d->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(SHEET_STYLE))
+                     + NanquimTheme::panelTextureRule(QStringLiteral("QDialog#nanquimSheet")));
     d->setModal(true);
     d->setFixedWidth(qMin(width, mw->width() - 40));
     if (height > 0) d->setFixedHeight(qMin(height, mw->height() - 40));
@@ -10814,7 +10869,7 @@ protected:
                 w->setWindowFlags(w->windowFlags() | Qt::FramelessWindowHint);
             }
             w->setAttribute(Qt::WA_StyledBackground);
-            if (w->styleSheet().isEmpty()) w->setStyleSheet(QLatin1String(MESSAGE_STYLE));
+            if (w->styleSheet().isEmpty()) w->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(MESSAGE_STYLE)));
             return false;
         }
         if (w->property("nanquimDressed").toBool()) return false;
@@ -10974,20 +11029,34 @@ void showAbout(KisMainWindow *mw)
     const Credit credits[] = {
         {"K", "Krita", "Motor de pintura, pincéis e formato .kra · comunidade KDE", "GNU GPL"},
         {"TT", "Tyson Tan", "Arte da abertura e a mascote Kiki", "CC BY-SA"},
+        {"MS", "u/Mandoart-Studios", "Inspiração do Modo Foco (redesign do Krita no r/krita; arte de fundo original por Sad_Tea)", "Design"},
+        {"JS", "u/JuhoSprite", "Inspiração do Modo Normal, retícula e personalização de cores/painéis (r/krita)", "Design"},
         {"S", "Satoshi", "Fonte da interface · Indian Type Foundry (Fontshare)", "ITF FFL"},
         {"M", "Montserrat", "Textos dos balões · Julieta Ulanovsky", "SIL OFL"},
         {"N", "Nanquim", "Interface de tablet, capítulos, balões e time-lapse", "GNU GPL"},
     };
+    QScrollArea *scroll = new QScrollArea(right);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    KisKineticScroller::createPreconfiguredScroller(scroll);
+    QWidget *listHost = new QWidget(scroll);
+    QVBoxLayout *ll = new QVBoxLayout(listHost);
+    ll->setContentsMargins(0, 0, 8, 0);
+    ll->setSpacing(6);
+    const NanquimTheme::Palette &tp = NanquimTheme::palette();
+    const QString badgeStyle = QStringLiteral("background: %1; border-radius: 12px; color: %2; font-size: 14px; font-weight: 800;")
+                               .arg(tp.elevated.name(), tp.accentLight.name());
     for (const Credit &c : credits) {
-        QWidget *row = new QWidget(right);
-        row->setMinimumHeight(58);
+        QWidget *row = new QWidget(listHost);
+        row->setMinimumHeight(54);
         QHBoxLayout *l = new QHBoxLayout(row);
-        l->setContentsMargins(0, 6, 0, 6);
+        l->setContentsMargins(0, 4, 0, 4);
         l->setSpacing(14);
         QLabel *badge = new QLabel(QString::fromUtf8(c.badge), row);
         badge->setFixedSize(42, 42);
         badge->setAlignment(Qt::AlignCenter);
-        badge->setStyleSheet(QStringLiteral("background: #2e2d29; border-radius: 12px; color: #6fbfad; font-size: 14px; font-weight: 800;"));
+        badge->setStyleSheet(badgeStyle);
         QVBoxLayout *t = new QVBoxLayout();
         t->setSpacing(2);
         t->addWidget(nqLabel(QString::fromUtf8(c.name), "nqItem", row));
@@ -10995,10 +11064,12 @@ void showAbout(KisMainWindow *mw)
         l->addWidget(badge);
         l->addLayout(t, 1);
         l->addWidget(nqLabel(QString::fromUtf8(c.license), "nqSmall", row));
-        rl->addWidget(row);
-        rl->addWidget(nqDivider(right));
+        ll->addWidget(row);
+        ll->addWidget(nqDivider(listHost));
     }
-    rl->addStretch(1);
+    ll->addStretch(1);
+    scroll->setWidget(listHost);
+    rl->addWidget(scroll, 1);
     QHBoxLayout *actions = new QHBoxLayout();
     actions->setSpacing(8);
     QPushButton *support = nqButton(i18n("Apoiar o Krita"), right, "nqPrimary");
@@ -11247,9 +11318,10 @@ QDockWidget *buildColorDock(KisMainWindow *mw)
     QWidget *body = new QWidget(dock);
     body->setObjectName(QStringLiteral("nanquimColorBody"));
     body->setAttribute(Qt::WA_StyledBackground);
-    body->setStyleSheet(QLatin1String(SHEET_STYLE) + QStringLiteral(
+    body->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(SHEET_STYLE) + QStringLiteral(
         "QWidget#nanquimColorBody { background: #2e2d29; }"
-        "QWidget#nanquimColorBody QLabel { color: #eeeae0; background: transparent; }"));
+        "QWidget#nanquimColorBody QLabel { color: #eeeae0; background: transparent; }"))
+        + NanquimTheme::panelTextureRule(QStringLiteral("QWidget#nanquimColorBody")));
     QVBoxLayout *root = new QVBoxLayout(body);
     root->setContentsMargins(18, 14, 18, 16);
     root->setSpacing(12);
@@ -11760,12 +11832,13 @@ QDockWidget *buildBrushSettingsDock(KisMainWindow *mw)
     QWidget *body = new QWidget(scroll);
     body->setObjectName(QStringLiteral("nanquimBrushSettingsBody"));
     body->setAttribute(Qt::WA_StyledBackground);
-    body->setStyleSheet(QLatin1String(SHEET_STYLE) + QStringLiteral(
+    body->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(SHEET_STYLE) + QStringLiteral(
         "QWidget#nanquimBrushSettingsBody { background: #2e2d29; }"
         "QWidget#nanquimBrushSettingsBody QLabel { background: transparent; }"
         "QPushButton#nqRow { border: none; border-top: 1px solid #4a4842; border-radius: 0; background: transparent;"
-        "  text-align: left; padding: 0; font-size: 16px; min-height: 52px; }"));
-    scroll->setStyleSheet(QStringLiteral("QScrollArea { background: #2e2d29; border: none; }"));
+        "  text-align: left; padding: 0; font-size: 16px; min-height: 52px; }"))
+        + NanquimTheme::panelTextureRule(QStringLiteral("QWidget#nanquimBrushSettingsBody")));
+    scroll->setStyleSheet(NanquimTheme::recolorStyle(QStringLiteral("QScrollArea { background: #2e2d29; border: none; }")));
     KisKineticScroller::createPreconfiguredScroller(scroll);
     QVBoxLayout *root = new QVBoxLayout(body);
     root->setContentsMargins(20, 6, 20, 16);
@@ -12772,6 +12845,392 @@ void showExport(KisMainWindow *mw)
 }
 
 // ---------------------------------------------------------------------------
+// Personalização de tema, texturas e imagem de fundo dos painéis
+// (inspirado no redesign de u/JuhoSprite no r/krita)
+// ---------------------------------------------------------------------------
+void applyNanquimTheme(KisMainWindow *mw)
+{
+    if (!mw) return;
+    const NanquimTheme::Palette &tp = NanquimTheme::palette();
+
+    // Paleta global do app e dicas (acompanha a intensidade de cor)
+    if (qApp) {
+        QPalette appPal = qApp->palette();
+        appPal.setColor(QPalette::Window, tp.bg);
+        appPal.setColor(QPalette::Base, tp.surface);
+        appPal.setColor(QPalette::AlternateBase, tp.elevated);
+        appPal.setColor(QPalette::Button, tp.elevated);
+        appPal.setColor(QPalette::Highlight, tp.accentTint);
+        appPal.setColor(QPalette::HighlightedText, QColor(0xee, 0xea, 0xe0));
+        appPal.setColor(QPalette::Link, tp.accentLight);
+        qApp->setPalette(appPal);
+
+        QPalette tip = QToolTip::palette();
+        tip.setColor(QPalette::ToolTipBase, tp.surface);
+        tip.setColor(QPalette::ToolTipText, QColor(0xee, 0xea, 0xe0));
+        tip.setColor(QPalette::Window, tp.surface);
+        tip.setColor(QPalette::WindowText, QColor(0xee, 0xea, 0xe0));
+        QToolTip::setPalette(tip);
+    }
+    {
+        QPalette winPal = mw->palette();
+        winPal.setColor(QPalette::Window, tp.bg);
+        winPal.setColor(QPalette::Base, tp.surface);
+        winPal.setColor(QPalette::AlternateBase, tp.elevated);
+        winPal.setColor(QPalette::Button, tp.elevated);
+        winPal.setColor(QPalette::Highlight, tp.accentTint);
+        mw->setPalette(winPal);
+    }
+
+    // Barra do topo (preserva safe top inset)
+    if (QToolBar *top = mw->findChild<QToolBar*>(TOP_ID)) {
+        const int inset = top->property("nanquimInset").toInt();
+        top->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(TOP_STYLE))
+                           + QStringLiteral("QToolBar#nanquimTop { padding-top: %1px; }").arg(4 + inset)
+                           + NanquimTheme::panelTextureRule(QStringLiteral("QToolBar#nanquimTop")));
+    }
+    if (QToolBar *nav = mw->findChild<QToolBar*>(NAV_ID)) {
+        nav->setStyleSheet(navStyle());
+    }
+    if (QToolButton *tab = mw->findChild<QToolButton*>(QStringLiteral("nanquimExpandTab"))) {
+        tab->setStyleSheet(expandTabStyle());
+    }
+    if (QFrame *host = mw->findChild<QFrame*>(PANEL_HOST_ID)) {
+        host->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(PANEL_HOST_STYLE))
+                            + NanquimTheme::panelTextureRule(QStringLiteral("QFrame#nanquimPanelHost")));
+        Q_FOREACH (QWidget *hdr, host->findChildren<QWidget*>(QStringLiteral("nanquimPanelHeader"))) {
+            hdr->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(PANEL_HOST_STYLE)));
+        }
+    }
+    if (QFrame *brushPanel = mw->findChild<QFrame*>(BRUSH_PANEL_ID)) {
+        brushPanel->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(BRUSH_PANEL_STYLE))
+                                  + NanquimTheme::panelTextureRule(QStringLiteral("QFrame#nanquimBrushPanel")));
+    }
+    if (QFrame *flyout = mw->findChild<QFrame*>(FLYOUT_ID)) {
+        flyout->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(FLYOUT_STYLE))
+                              + NanquimTheme::panelTextureRule(QStringLiteral("QFrame#nanquimToolsFlyout")));
+    }
+    if (QFrame *selBar = mw->findChild<QFrame*>(SELECTION_BAR_ID)) {
+        selBar->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(SELECTION_BAR_STYLE))
+                              + NanquimTheme::panelTextureRule(QStringLiteral("QFrame#nanquimSelectionBar")));
+    }
+    for (const char *fid : {"nanquimFocusFile", "nanquimFocusBrush", "nanquimFocusBar", "nanquimFocusPanels"}) {
+        if (QFrame *f = mw->findChild<QFrame*>(QLatin1String(fid))) {
+            f->setStyleSheet(focusCapsuleStyle(QLatin1String(fid)));
+        }
+    }
+    if (QWidget *colorBody = mw->findChild<QWidget*>(QStringLiteral("nanquimColorBody"))) {
+        colorBody->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(SHEET_STYLE) + QStringLiteral(
+            "QWidget#nanquimColorBody { background: #2e2d29; }"
+            "QWidget#nanquimColorBody QLabel { color: #eeeae0; background: transparent; }"))
+            + NanquimTheme::panelTextureRule(QStringLiteral("QWidget#nanquimColorBody")));
+    }
+    if (QWidget *bsBody = mw->findChild<QWidget*>(QStringLiteral("nanquimBrushSettingsBody"))) {
+        bsBody->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(SHEET_STYLE) + QStringLiteral(
+            "QWidget#nanquimBrushSettingsBody { background: #2e2d29; }"
+            "QWidget#nanquimBrushSettingsBody QLabel { background: transparent; }"
+            "QPushButton#nqRow { border: none; border-top: 1px solid #4a4842; border-radius: 0; background: transparent;"
+            "  text-align: left; padding: 0; font-size: 16px; min-height: 52px; }"))
+            + NanquimTheme::panelTextureRule(QStringLiteral("QWidget#nanquimBrushSettingsBody")));
+    }
+    if (QWidget *gallery = mw->findChild<QWidget*>(GALLERY_ID)) {
+        gallery->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(GALLERY_STYLE)));
+    }
+    if (QWidget *wheel = mw->findChild<QWidget*>(QStringLiteral("nanquimWheel"))) {
+        wheel->update();
+    }
+    styleClassicDocks(mw, true);
+}
+
+void showCustomize(KisMainWindow *mw)
+{
+    QDialog *d = makeSheet(mw, 560, 680);
+    QVBoxLayout *outer = new QVBoxLayout(d);
+    outer->setContentsMargins(24, 20, 24, 20);
+    outer->setSpacing(12);
+    outer->addLayout(sheetHeader(d, i18n("Aparência"), i18n("Personalizar")));
+
+    QScrollArea *scroll = new QScrollArea(d);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    KisKineticScroller::createPreconfiguredScroller(scroll);
+    QWidget *body = new QWidget(scroll);
+    QVBoxLayout *l = new QVBoxLayout(body);
+    l->setContentsMargins(0, 0, 8, 8);
+    l->setSpacing(12);
+
+    auto cur = std::make_shared<NanquimTheme::Settings>(NanquimTheme::settings());
+    QPointer<KisMainWindow> mwGuard(mw);
+    QPointer<QDialog> dlgGuard(d);
+
+    QTimer *debounce = new QTimer(d);
+    debounce->setSingleShot(true);
+    debounce->setInterval(45);
+
+    auto commitNow = [cur, mwGuard, dlgGuard]() {
+        NanquimTheme::saveAndRebuild(*cur);
+        if (mwGuard) applyNanquimTheme(mwGuard);
+        if (dlgGuard) {
+            dlgGuard->setStyleSheet(NanquimTheme::recolorStyle(QLatin1String(SHEET_STYLE))
+                                    + NanquimTheme::panelTextureRule(QStringLiteral("QDialog#nanquimSheet")));
+        }
+    };
+    QObject::connect(debounce, &QTimer::timeout, d, commitNow);
+    auto scheduleCommit = [debounce]() { debounce->start(); };
+
+    // --- 1. Combinações prontas ---
+    l->addWidget(nqLabel(i18n("Combinações prontas"), "nqSmall", body));
+    struct Combo { const char *name; const char *hex; int intensity; };
+    const Combo combos[] = {
+        {"Clássico", "#3e8e7e", 0},
+        {"Noite azul", "#5560d6", 75},
+        {"Floresta", "#2f9e55", 75},
+        {"Tinta vermelha", "#cc4b4b", 75},
+        {"Sépia", "#c99a2e", 65},
+    };
+    QGridLayout *comboGrid = new QGridLayout();
+    comboGrid->setSpacing(8);
+    auto comboBtns = std::make_shared<QList<QPushButton*>>();
+
+    // --- 2. Cor do tema + intensidade ---
+    struct AccentOpt { const char *name; const char *hex; };
+    const AccentOpt accents[] = {
+        {"Verdete", "#3e8e7e"}, {"Azul", "#5560d6"}, {"Verde", "#2f9e55"},
+        {"Vermelho", "#cc4b4b"}, {"Amarelo", "#c99a2e"}, {"Roxo", "#8a55d6"}, {"Rosa", "#e0608a"},
+    };
+    auto accentBtns = std::make_shared<QList<QPushButton*>>();
+
+    QLabel *intenLbl = nqLabel(i18n("Intensidade da cor: %1%", cur->intensity), "nqSmall", body);
+    QSlider *intenSlider = new QSlider(Qt::Horizontal, body);
+    intenSlider->setRange(0, 100);
+    intenSlider->setValue(cur->intensity);
+
+    auto syncColorControls = [cur, comboBtns, accentBtns, intenSlider, intenLbl]() {
+        for (int i = 0; i < comboBtns->size(); ++i) {
+            QPushButton *cb = comboBtns->at(i);
+            QSignalBlocker b(cb);
+            const QString hx = cb->property("nqHex").toString();
+            const int in = cb->property("nqInten").toInt();
+            cb->setChecked(cur->accent.compare(hx, Qt::CaseInsensitive) == 0 && cur->intensity == in);
+        }
+        for (QPushButton *ab : *accentBtns) {
+            QSignalBlocker b(ab);
+            const QString hx = ab->property("nqHex").toString();
+            ab->setChecked(cur->accent.compare(hx, Qt::CaseInsensitive) == 0);
+        }
+        QSignalBlocker sb(intenSlider);
+        intenSlider->setValue(cur->intensity);
+        intenLbl->setText(i18n("Intensidade da cor: %1%", cur->intensity));
+    };
+
+    for (int i = 0; i < 5; ++i) {
+        QPushButton *b = nqButton(i18n(combos[i].name), body);
+        b->setProperty("class", QStringLiteral("nqChip"));
+        b->setCheckable(true);
+        b->setProperty("nqHex", QLatin1String(combos[i].hex));
+        b->setProperty("nqInten", combos[i].intensity);
+        const QString hx = QLatin1String(combos[i].hex);
+        const int in = combos[i].intensity;
+        QObject::connect(b, &QPushButton::clicked, d, [cur, hx, in, syncColorControls, commitNow]() {
+            cur->accent = hx;
+            cur->intensity = in;
+            syncColorControls();
+            commitNow();
+        });
+        comboGrid->addWidget(b, i / 3, i % 3);
+        comboBtns->append(b);
+    }
+    l->addLayout(comboGrid);
+    l->addWidget(nqDivider(body));
+
+    l->addWidget(nqLabel(i18n("Cor do tema"), "nqSmall", body));
+    QHBoxLayout *accRow = new QHBoxLayout();
+    accRow->setSpacing(8);
+    for (int i = 0; i < 7; ++i) {
+        QPushButton *sw = nqButton(QString(), body);
+        sw->setProperty("class", QStringLiteral("nqSwatch"));
+        sw->setCheckable(true);
+        sw->setToolTip(i18n(accents[i].name));
+        sw->setProperty("nqHex", QLatin1String(accents[i].hex));
+        sw->setStyleSheet(QStringLiteral(
+            "QPushButton { background: %1; border: 2px solid transparent; border-radius: 10px;"
+            "  min-width: 44px; max-width: 44px; min-height: 44px; max-height: 44px; padding: 0; }"
+            "QPushButton:checked { border: 3px solid #eeeae0; }").arg(QLatin1String(accents[i].hex)));
+        const QString hx = QLatin1String(accents[i].hex);
+        QObject::connect(sw, &QPushButton::clicked, d, [cur, hx, syncColorControls, commitNow]() {
+            cur->accent = hx;
+            syncColorControls();
+            commitNow();
+        });
+        accRow->addWidget(sw);
+        accentBtns->append(sw);
+    }
+    accRow->addStretch(1);
+    l->addLayout(accRow);
+    l->addWidget(intenLbl);
+    l->addWidget(intenSlider);
+    QObject::connect(intenSlider, &QSlider::valueChanged, d, [cur, intenLbl, syncColorControls, scheduleCommit](int v) {
+        cur->intensity = v;
+        intenLbl->setText(i18n("Intensidade da cor: %1%", v));
+        syncColorControls();
+        scheduleCommit();
+    });
+    syncColorControls();
+    l->addWidget(nqDivider(body));
+
+    // --- 3. Textura dos painéis ---
+    l->addWidget(nqLabel(i18n("Textura dos painéis"), "nqSmall", body));
+    const QStringList texIds = {
+        QStringLiteral("perspectiva"), QStringLiteral("nenhuma"), QStringLiteral("pontos"),
+        QStringLiteral("favo"), QStringLiteral("reticula"), QStringLiteral("hachura"), QStringLiteral("grao")
+    };
+    const QStringList texNames = {
+        i18n("Retícula em perspectiva"), i18n("Nenhuma"), i18n("Pontos"),
+        i18n("Favo"), i18n("Retícula"), i18n("Hachura"), i18n("Grão")
+    };
+    QGridLayout *texGrid = new QGridLayout();
+    texGrid->setSpacing(8);
+    QButtonGroup *texGroup = new QButtonGroup(body);
+    for (int i = 0; i < texIds.size(); ++i) {
+        QPushButton *b = nqChip(texNames[i], body, texGroup, i);
+        b->setChecked(cur->texture == texIds[i]);
+        texGrid->addWidget(b, i / 3, i % 3);
+    }
+    l->addLayout(texGrid);
+    QObject::connect(texGroup, &QButtonGroup::idClicked, d, [cur, texIds, commitNow](int id) {
+        if (id < 0 || id >= texIds.size()) return;
+        cur->texture = texIds[id];
+        commitNow();
+    });
+
+    QLabel *texFLbl = nqLabel(i18n("Força da textura: %1%", cur->textureStrength), "nqSmall", body);
+    QSlider *texFSlider = new QSlider(Qt::Horizontal, body);
+    texFSlider->setRange(0, 100);
+    texFSlider->setValue(cur->textureStrength);
+    l->addWidget(texFLbl);
+    l->addWidget(texFSlider);
+    QObject::connect(texFSlider, &QSlider::valueChanged, d, [cur, texFLbl, scheduleCommit](int v) {
+        cur->textureStrength = v;
+        texFLbl->setText(i18n("Força da textura: %1%", v));
+        scheduleCommit();
+    });
+    l->addWidget(nqDivider(body));
+
+    // --- 4. Imagem no painel de camadas ---
+    l->addWidget(nqLabel(i18n("Imagem no painel de camadas"), "nqSmall", body));
+    const QStringList imgIds = {
+        QStringLiteral("canto"), QStringLiteral("inteira"), QStringLiteral("xadrez"), QStringLiteral("nenhuma")
+    };
+    const QStringList imgNames = {
+        i18n("Canto suave"), i18n("Imagem inteira"), i18n("Xadrez"), i18n("Nenhuma")
+    };
+    QGridLayout *imgGrid = new QGridLayout();
+    imgGrid->setSpacing(8);
+    QButtonGroup *imgGroup = new QButtonGroup(body);
+    for (int i = 0; i < imgIds.size(); ++i) {
+        QPushButton *b = nqChip(imgNames[i], body, imgGroup, i);
+        b->setChecked(cur->panelArtMode == imgIds[i]);
+        imgGrid->addWidget(b, i / 2, i % 2);
+    }
+    l->addLayout(imgGrid);
+    QObject::connect(imgGroup, &QButtonGroup::idClicked, d, [cur, imgIds, commitNow](int id) {
+        if (id < 0 || id >= imgIds.size()) return;
+        cur->panelArtMode = imgIds[id];
+        commitNow();
+    });
+
+    QHBoxLayout *uploadRow = new QHBoxLayout();
+    uploadRow->setSpacing(8);
+    QPushButton *pickImg = nqButton(NanquimTheme::hasCustomArt() ? i18n("Trocar imagem (PNG/JPG)")
+                                                                 : i18n("Enviar imagem (PNG/JPG)"), body);
+    QPushButton *clearImg = nqButton(i18n("Usar padrão"), body, "nqGhost");
+    clearImg->setVisible(NanquimTheme::hasCustomArt());
+    uploadRow->addWidget(pickImg, 1);
+    uploadRow->addWidget(clearImg);
+    l->addLayout(uploadRow);
+
+    QObject::connect(pickImg, &QPushButton::clicked, d, [mwGuard, cur, pickImg, clearImg, imgGroup, commitNow]() {
+        if (!mwGuard) return;
+        KoFileDialog dialog(mwGuard, KoFileDialog::OpenFile, QStringLiteral("NanquimThemeArt"));
+        dialog.setCaption(i18n("Escolher imagem para o painel de camadas"));
+#ifndef Q_OS_ANDROID
+        dialog.setNameFilter(i18n("Imagens (*.png *.jpg *.jpeg *.webp)"));
+#endif
+        const QString chosen = dialog.filename();
+        if (chosen.isEmpty()) return;
+        const QString local = localCopyOf(chosen);
+        if (NanquimTheme::installCustomArt(local)) {
+            if (cur->panelArtMode == QLatin1String("nenhuma") || cur->panelArtMode == QLatin1String("xadrez")) {
+                cur->panelArtMode = QStringLiteral("canto");
+                if (QAbstractButton *b = imgGroup->button(0)) b->setChecked(true);
+            }
+            pickImg->setText(i18n("Trocar imagem (PNG/JPG)"));
+            clearImg->setVisible(true);
+            commitNow();
+            showToast(mwGuard, i18n("Imagem aplicada no painel de camadas"));
+        } else {
+            showToast(mwGuard, i18n("Não foi possível abrir essa imagem"));
+        }
+    });
+    QObject::connect(clearImg, &QPushButton::clicked, d, [pickImg, clearImg, commitNow]() {
+        NanquimTheme::removeCustomArt();
+        pickImg->setText(i18n("Enviar imagem (PNG/JPG)"));
+        clearImg->setVisible(false);
+        commitNow();
+    });
+
+    QLabel *imgOpLbl = nqLabel(i18n("Opacidade da imagem: %1%", cur->panelArtOpacity), "nqSmall", body);
+    QSlider *imgOpSlider = new QSlider(Qt::Horizontal, body);
+    imgOpSlider->setRange(0, 100);
+    imgOpSlider->setValue(cur->panelArtOpacity);
+    l->addWidget(imgOpLbl);
+    l->addWidget(imgOpSlider);
+    QObject::connect(imgOpSlider, &QSlider::valueChanged, d, [cur, imgOpLbl, scheduleCommit](int v) {
+        cur->panelArtOpacity = v;
+        imgOpLbl->setText(i18n("Opacidade da imagem: %1%", v));
+        scheduleCommit();
+    });
+
+    QCheckBox *tintBox = new QCheckBox(i18n("Tingir imagem com a cor do tema"), body);
+    tintBox->setChecked(cur->panelArtTint);
+    l->addWidget(tintBox);
+    QObject::connect(tintBox, &QCheckBox::toggled, d, [cur, commitNow](bool on) {
+        cur->panelArtTint = on;
+        commitNow();
+    });
+
+    l->addStretch(1);
+    scroll->setWidget(body);
+    outer->addWidget(scroll, 1);
+
+    QHBoxLayout *foot = new QHBoxLayout();
+    QPushButton *resetBtn = nqButton(i18n("Restaurar padrão"), d, "nqGhost");
+    QPushButton *doneBtn = nqButton(i18n("Pronto"), d, "nqPrimary");
+    foot->addWidget(resetBtn);
+    foot->addStretch(1);
+    foot->addWidget(doneBtn);
+    outer->addLayout(foot);
+
+    QObject::connect(resetBtn, &QPushButton::clicked, d, [cur, d, mwGuard]() {
+        NanquimTheme::removeCustomArt();
+        NanquimTheme::saveAndRebuild(NanquimTheme::Settings());
+        if (mwGuard) applyNanquimTheme(mwGuard);
+        d->accept();
+        if (mwGuard) showToast(mwGuard, i18n("Aparência restaurada para o padrão"));
+    });
+    QObject::connect(doneBtn, &QPushButton::clicked, d, [debounce, commitNow, d]() {
+        if (debounce->isActive()) {
+            debounce->stop();
+            commitNow();
+        }
+        d->accept();
+    });
+
+    d->open();
+}
+
+// ---------------------------------------------------------------------------
 // Configurações do Nanquim
 // ---------------------------------------------------------------------------
 void switchUiMode(KisMainWindow *mw);
@@ -12802,10 +13261,10 @@ void showSettings(KisMainWindow *mw)
     QWidget *nav = new QWidget(d);
     nav->setFixedWidth(250);
     nav->setAttribute(Qt::WA_StyledBackground);
-    nav->setStyleSheet(QStringLiteral(
+    nav->setStyleSheet(NanquimTheme::recolorStyle(QStringLiteral(
         "QWidget { background: #2e2d29; border-top-left-radius: 18px; border-bottom-left-radius: 18px; }"
         "QPushButton { text-align: left; border: none; background: transparent; color: #cfcabf; font-weight: 500; border-radius: 10px; }"
-        "QPushButton:checked { background: #2a3d38; color: #cde9e1; }"));
+        "QPushButton:checked { background: #2a3d38; color: #cde9e1; }")));
     QVBoxLayout *nl = new QVBoxLayout(nav);
     nl->setContentsMargins(14, 22, 14, 18);
     nl->setSpacing(4);
@@ -12879,7 +13338,7 @@ void showSettings(KisMainWindow *mw)
             QLabel *f = new QLabel(QString::fromUtf8(g.fingers), row);
             f->setFixedSize(38, 38);
             f->setAlignment(Qt::AlignCenter);
-            f->setStyleSheet(QStringLiteral("background: #34332e; border-radius: 10px; color: #6fbfad; font-weight: 700;"));
+            f->setStyleSheet(NanquimTheme::recolorStyle(QStringLiteral("background: #34332e; border-radius: 10px; color: #6fbfad; font-weight: 700;")));
             rl2->addWidget(f);
             rl2->addWidget(nqLabel(i18n(g.what), "nqBody", row), 1);
             rl2->addWidget(nqLabel(i18n(g.action), "nqBody", row));
@@ -12945,6 +13404,11 @@ void showSettings(KisMainWindow *mw)
             QObject::connect(side, &QButtonGroup::idClicked, d, [mw](int id) { setRailSide(mw, id == 1); });
             l->addWidget(nqDivider(p));
         }
+        QPushButton *custom = nqButton(i18n("Personalizar"), p, "nqPrimary");
+        QObject::connect(custom, &QPushButton::clicked, d, [mw, d]() { d->accept(); showCustomize(mw); });
+        l->addWidget(settingRow(p, i18n("Cores, retícula e imagem nos painéis"),
+                                i18n("Tema com intensidade de cor, retícula em perspectiva e imagem no painel de camadas."), custom));
+        l->addWidget(nqDivider(p));
         QPushButton *guide = nqButton(i18n("Rever boas-vindas e guia"), p);
         QObject::connect(guide, &QPushButton::clicked, d, [mw, d]() { d->accept(); showWelcome(mw, false); });
         l->addWidget(settingRow(p, i18n("Primeiros passos"), i18n("A mensagem de boas-vindas e o guia rápido."), guide));
@@ -17376,7 +17840,12 @@ void NanquimTabletUi::install(KisMainWindow *mw)
                             if (canvasOnlyActive(guard) == on) {
                                 setKritaChromeHidden(guard, on);
                                 placeFocusWidgets(guard);
-                                if (on) refreshFocusBarInfo(guard);
+                                if (on) {
+                                    refreshFocusBarInfo(guard);
+                                    if (QFrame *host = guard->findChild<QFrame*>(PANEL_HOST_ID)) {
+                                        if (host->isVisible()) placePanelHost(guard);
+                                    }
+                                }
                             }
                         });
                     }
@@ -17426,15 +17895,7 @@ void NanquimTabletUi::install(KisMainWindow *mw)
     // variável que o tema do Android consulta antes de cada QMessageBox
     qputenv("QT_USE_ANDROID_NATIVE_DIALOGS", "0");
 #endif
-    {
-        // dicas (o quadro amarelo de memória, por exemplo) no escuro do Nanquim
-        QPalette tip = QToolTip::palette();
-        tip.setColor(QPalette::ToolTipBase, QColor(0x2e, 0x2d, 0x29));
-        tip.setColor(QPalette::ToolTipText, QColor(0xee, 0xea, 0xe0));
-        tip.setColor(QPalette::Window, QColor(0x2e, 0x2d, 0x29));
-        tip.setColor(QPalette::WindowText, QColor(0xee, 0xea, 0xe0));
-        QToolTip::setPalette(tip);
-    }
+    applyNanquimTheme(mw);
 
     // a cada desenho aberto: aviso de memória (páginas enormes) e "página salva"
     QPointer<KisMainWindow> mwGuard(mw);
